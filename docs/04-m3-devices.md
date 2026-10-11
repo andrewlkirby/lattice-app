@@ -212,6 +212,7 @@ Each phase ends with its tests passing. Phase 3b can start as soon as 3a is done
   - Tracks with less latency are delayed to match the slowest track before mixing, and the same is done for returns.
   - Meters and clip timing stay correct. Live input monitoring is delayed by the same amount; this is shown in the UI.
   - Delay lines are allocated on the message thread whenever the latency changes.
+- **"Reduced latency when monitoring"** (from the performance charter, as in Live): when it's on, armed tracks that are being monitored skip their delay-compensation delay. Playing live then feels immediate even with latency-adding devices elsewhere in the set. The tracks that are only playing back stay compensated.
 - **Parallel track processing** (moved here from post-MVP, because performance matters):
   - The routing graph built here already orders tracks and handles sidechain sources, sends, returns, and master.
   - The engine turns that graph into dependency **levels**. Tracks within one level are processed in parallel on a pool of real-time worker threads (one per physical core, minus one).

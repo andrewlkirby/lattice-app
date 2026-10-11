@@ -13,6 +13,9 @@ Planning documents for the Ableton-Live-like DAW with Push-style and generic MID
 | [06-m5-controllers.md](06-m5-controllers.md) | M5: Controller layer (capabilities, roles, modes), Virtual Push, Push 2/3 drivers, generic MIDI controller definitions and learn wizard, low-latency pad path | Draft |
 | [07-m6-plugins-external.md](07-m6-plugins-external.md) | M6: VST3/CLAP/AU hosting, scanning, crash isolation, MTS-ESP and tuning exports, retuning hardware (MPE/MTS), External Instrument, MIDI clock, Tuning Verifier | Draft |
 | [08-m7-native-drivers.md](08-m7-native-drivers.md) | M7: Native drivers for whichever controller is purchased (framework, steps, notes for each candidate, addendum template), finishing the MVP | Draft |
+| [09-performance-charter.md](09-performance-charter.md) | All milestones: latency, loading, and responsiveness targets; measurement; gates; coding and build rules | Draft |
+
+**Applies to every milestone:** [09-performance-charter.md](09-performance-charter.md) — the targets for playing feel (latency) and load time, how they're measured, the gates every change goes through, and the coding and build rules.
 
 **Rule for every plan:** the app must be fully usable with no hardware connected. Every controller feature has a mouse/keyboard equivalent. See "Design principle" in the preliminary plan.
 

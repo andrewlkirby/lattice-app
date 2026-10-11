@@ -64,6 +64,12 @@ Empty `src/{tuning,devices,hosting,control,ui}` folders appear as each milestone
   - C++20 everywhere.
   - High warning levels: `/W4` on MSVC, `-Wall -Wextra` on GCC and Clang.
   - Both GCC and Clang build on Linux. CI uses Clang, and Docker's default is GCC, so both stay working.
+- **Performance settings** (from `09-performance-charter.md` §5):
+  - Release builds use `-O2`/`/O2` plus LTO, and the CPU baseline is x86-64-v2.
+  - There's no global `-ffast-math`.
+  - A **`relwithdebinfo-rtchecks`** preset is the everyday development build.
+  - A **`linux-rtsan`** preset (Clang, `-fsanitize=realtime`).
+  - A `LATTICE_PROFILE` option that turns on Tracy.
   - Warnings are treated as errors in CI only.
 
 ## Code
@@ -86,7 +92,14 @@ Empty `src/{tuning,devices,hosting,control,ui}` folders appear as each milestone
    - A `RT_ASSERT_NOT_AUDIO_THREAD()` macro to put in lock-taking code.
    - This catches allocation on the audio thread from the first day, as the risks section of the main plan requires.
    - It works the same on every platform: standard C++ only, with nothing OS-specific.
-5. **`platform::Paths`**, the first platform interface. It gives the user data folder and the settings folder for each OS (`<userdata>`, as defined in the preliminary plan). `PropertiesFile` uses it to decide where to save settings.
+5. **Performance measurement** (charter §2, §7):
+   - an `AudioCallbackStats` lock-free histogram (p50/p99/p99.9/max as a share of the buffer period) and a dropout counter, shown in the MainWindow's CPU readout
+   - a `StartupTimeline` that logs each startup stage to `<userdata>/logs/startup.log`
+   - Tracy markers in the callback and at startup (they compile away unless `LATTICE_PROFILE` is on)
+   - the audio callback marked `[[clang::nonblocking]]`
+   - the window shown **before** the audio device opens (the device opens on a background thread)
+   - `scripts/perf-check.ps1` (a skeleton) and `docs/perf/reference-machine.md`
+6. **`platform::Paths`**, the first platform interface. It gives the user data folder and the settings folder for each OS (`<userdata>`, as defined in the preliminary plan). `PropertiesFile` uses it to decide where to save settings.
 
 ## Tests (Catch2)
 - **Tag convention (from now on):** `[slow]`, `[bench]`, `[stress]`, `[hardware]`, `[timing]`. Tests with these tags are left out of the default runs (Docker and every-commit CI) and run nightly or on demand.
@@ -94,11 +107,17 @@ Empty `src/{tuning,devices,hosting,control,ui}` folders appear as each milestone
 - With the gain ramp enabled, no sample-to-sample jump exceeds a set threshold (no clicks).
 - The RealtimeCheck guard trips when an allocation happens inside the guard (a death-style test, or a test of the flag itself).
 - `platform::Paths` gives the expected folders on each OS, including following `XDG_DATA_HOME` and `XDG_CONFIG_HOME` on Linux.
+- **Performance gates from day one:**
+  - an allocation-count test: rendering 10,000 test-tone blocks allocates 0 bytes
+  - the RTSan build runs the test suite in Docker and CI
+  - `clang-tidy` `performance-*` checks are clean
+  - the callback histogram is tested with synthetic timings
+  - the startup timeline records its stages in order
 
 ## Linux through Docker
 - **`docker/linux.Dockerfile`:**
   - **Base:** Ubuntu 24.04.
-  - **Tools:** `build-essential`, `clang-18`, `cmake`, `ninja-build`, `ccache`, `git`, `pkg-config`.
+  - **Tools:** `build-essential`, **Clang 20 or newer** (from apt.llvm.org; RTSan needs it), `clang-tidy`, `valgrind` (instruction counts), `cmake`, `ninja-build`, `ccache`, `git`, `pkg-config`.
   - **JUCE's Linux dependencies:** `libasound2-dev`, `libjack-jackd2-dev`, `libfreetype-dev`, `libfontconfig1-dev`, `libx11-dev`, `libxrandr-dev`, `libxinerama-dev`, `libxcursor-dev`, `libxext-dev`, `libxcomposite-dev`, `libgl1-mesa-dev`.
   - **For tests:** `xvfb`, `xauth`, and the `locales` package with `de_DE.UTF-8` generated (M1's locale test needs it).
   - The exact package list is fixed and checked when M0 is built.
@@ -130,6 +149,7 @@ Empty `src/{tuning,devices,hosting,control,ui}` folders appear as each milestone
 - [ ] The app launches, shows audio devices, and plays and stops a clean test tone. The device choice is saved between launches.
 - [ ] `ctest` passes locally on Windows, through `scripts/linux-test.ps1` in Docker, and in CI on Windows, Ubuntu, and macOS.
 - [ ] After the first build, a cached Docker test run finishes in under 5 minutes.
+- [ ] **Performance gate (charter §3):** RTSan and the allocation-count tests pass. On the reference machine, the window appears in ≤ 0.5 s and the app is ready to use in ≤ 1.5 s, and the test tone runs at a 64-sample buffer with 0 dropouts over 10 minutes. The reference machine's details are recorded.
 - [ ] A deliberate `new` inside the audio callback (temporary) triggers the Debug RT check.
 - [ ] `resources/tunings/colundi_scale.txt` exists (copied from `docs/colundi_scale.txt`), ready for M1.
 

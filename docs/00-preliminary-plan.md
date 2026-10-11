@@ -25,6 +25,7 @@ The user confirmed this on 2026-10-11: **sound quality and performance come befo
   - Every device and engine path has a CPU budget, tracked with benchmarks.
   - A regression counts as a failure, not just a warning.
   - The engine processes tracks in parallel.
+- **The details are in [`09-performance-charter.md`](09-performance-charter.md):** feel and loading targets, how they're measured, the gates every change goes through, the coding and build rules, and a review checklist.
 - **No hard-coded hardware sizes:**
   - Pad grids, encoder counts, macro counts, and parameter page sizes are all settings, never fixed limits.
   - "8" only appears as the default page size of an 8-encoder controller.
@@ -161,6 +162,7 @@ lattice-app/
 - No-hardware check at every milestone: with no controller connected, every new feature can be used with the mouse and keyboard.
 - Manual: launch clips from Push, play the Colundi layout on the pads and hear the right pitches, check the Push display. MTS-ESP: load a supporting synth (e.g. Surge XT, which is free) and confirm it follows the tuning.
 - Real-time safety: build in debug mode with an allocation/lock detector hook on the audio thread.
+- **Performance at every milestone:** the milestone gate in `09-performance-charter.md` §3 passes on the reference machine, including the hands-on playing check with the user.
 - **Linux at every milestone:** the default Docker run (`scripts/linux-test.ps1`) passes, and the Ubuntu CI job is green. A milestone isn't done if Linux is broken.
 
 ## Sub-plans
