@@ -28,6 +28,7 @@ lattice-app/
   cmake/CPM.cmake               # dependency fetcher
   cmake/CompilerWarnings.cmake
   .clang-format  .editorconfig  .gitignore
+  .gitattributes                # `* text=auto eol=lf`, so scripts work in the Linux container (Windows line endings break bash); `*.ps1`/`*.bat` stay CRLF
   src/app/Main.cpp              # JUCEApplication
   src/app/MainWindow.{h,cpp}
   src/engine/AudioEngine.{h,cpp}
