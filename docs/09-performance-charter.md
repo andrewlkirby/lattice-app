@@ -7,7 +7,7 @@ Lattice has to **load fast and feel immediate to play**. This charter defines wh
 **The rule:** a milestone isn't done until its performance gate passes. A change that makes a target worse is a bug, even if every feature test passes.
 
 ## 1. Targets
-All targets are measured on the **reference machine** (the user's Windows PC: CPU model and core count to be recorded in `docs/perf/reference-machine.md` at the start of M0). Unless a row says otherwise, the setup is 48 kHz with a **64-sample buffer**, on ASIO (or WASAPI exclusive).
+All targets are measured on the **reference machine**: the user's Lenovo Legion Pro 16ACH6H (Ryzen 7 5800H, 8 cores, AVX2, 32 GB), described in [`perf/reference-machine.md`](perf/reference-machine.md) together with the fixed test conditions. Unless a row says otherwise, the setup is 48 kHz with a **64-sample buffer**, on ASIO (or WASAPI exclusive).
 
 ### Feel when playing (the most important)
 | Target | Value | Notes |

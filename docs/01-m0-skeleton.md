@@ -98,7 +98,7 @@ Empty `src/{tuning,devices,hosting,control,ui}` folders appear as each milestone
    - Tracy markers in the callback and at startup (they compile away unless `LATTICE_PROFILE` is on)
    - the audio callback marked `[[clang::nonblocking]]`
    - the window shown **before** the audio device opens (the device opens on a background thread)
-   - `scripts/perf-check.ps1` (a skeleton) and `docs/perf/reference-machine.md`
+   - `scripts/perf-check.ps1` (a skeleton). `docs/perf/reference-machine.md` already exists; M0 fills in the remaining fields (OS build, storage, audio interface) and the LatencyMon result
 6. **`platform::Paths`**, the first platform interface. It gives the user data folder and the settings folder for each OS (`<userdata>`, as defined in the preliminary plan). `PropertiesFile` uses it to decide where to save settings.
 
 ## Tests (Catch2)
