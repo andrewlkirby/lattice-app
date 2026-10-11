@@ -58,7 +58,7 @@ Empty `src/{tuning,devices,hosting,control,ui}` folders appear as each milestone
   - `lattice_tests`: a Catch2 console runner. Links `lattice_core`.
 - **Linux settings in JUCE:** `JUCE_WEB_BROWSER=0` and `JUCE_USE_CURL=0`, so the build doesn't need WebKit or curl. ALSA and JACK are enabled (`JUCE_JACK=1`).
 - **Options:**
-  - `LATTICE_ENABLE_ASIO` (OFF by default; needs the SDK path)
+  - `LATTICE_ENABLE_ASIO`: OFF until the ASIO SDK license is confirmed during M0. After that, ON for Windows builds made on the user's machine, so ASIO4ALL, FlexASIO, and hardware ASIO drivers work. CI keeps it off unless the license allows the SDK to be fetched automatically.
   - `LATTICE_RT_CHECKS` (ON in Debug)
 - **Compiler settings:**
   - C++20 everywhere.
@@ -151,6 +151,7 @@ Empty `src/{tuning,devices,hosting,control,ui}` folders appear as each milestone
 - [ ] After the first build, a cached Docker test run finishes in under 5 minutes.
 - [ ] **Performance gate (charter §3):** RTSan and the allocation-count tests pass. On the reference machine, the window appears in ≤ 0.5 s and the app is ready to use in ≤ 1.5 s, and the test tone runs at a 64-sample buffer with 0 dropouts over 10 minutes. The reference machine's details are recorded.
 - [ ] A deliberate `new` inside the audio callback (temporary) triggers the Debug RT check.
+- [ ] On the reference laptop, **WASAPI exclusive and ASIO4ALL are compared** (smallest buffer with 0 dropouts over 10 minutes, and the reported latency). The chosen default is recorded in `docs/perf/reference-machine.md`.
 - [ ] `resources/tunings/colundi_scale.txt` exists (copied from `docs/colundi_scale.txt`), ready for M1.
 
 ## Not in M0

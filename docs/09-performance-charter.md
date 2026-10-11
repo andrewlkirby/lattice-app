@@ -14,7 +14,7 @@ All targets are measured on the **reference machine**: the user's Lenovo Legion 
 |--------|-------|-------|
 | Buffering added by Lattice | **None** beyond the driver's buffers | No hidden internal buffer or extra block of delay. The only exceptions are delay compensation (which the user can see) and Pipelined plugin isolation (which the user chooses) |
 | Pad / key press → sound, the part Lattice controls | **≤ 1 buffer + 1 ms** | Measured from the MIDI input timestamp to the sample being handed to the driver. At 64 samples that's about 2.3 ms on top of the driver's own latency |
-| Pad / key press → sound, total | **≤ 5 ms** at 64 samples on the reference audio interface | Includes the driver and converter latency the interface reports (measured as in M6) |
+| Pad / key press → sound, total | **≤ 5 ms** at 64 samples on a dedicated audio interface. On the reference laptop's built-in Realtek audio it's **provisional** (expected about 8–12 ms) until an interface is added | Includes the driver and converter latency the interface reports (measured as in M6). See `perf/reference-machine.md` "Audio setup" |
 | Monitoring an armed track | With **"Reduced latency when monitoring"** turned on, armed tracks skip delay compensation, as in Live | New in this charter. Implemented in M3 phase 3e |
 | Audio callback headroom | Worst-case processing **≤ 70% of the buffer period** at p99.9; **0 dropouts** | In the 32-track reference set (defined below) |
 | MIDI out jitter | **≤ 1 ms** p99 | M6 |

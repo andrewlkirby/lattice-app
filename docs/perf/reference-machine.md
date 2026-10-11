@@ -12,7 +12,20 @@ Every performance target in `../09-performance-charter.md` is measured and enfor
 | GPU | NVIDIA GeForce RTX 3070 Laptop (8 GB), plus integrated AMD Radeon | Direct2D drawing (M4). With hybrid graphics, the app may draw on the integrated GPU. Frame-time targets are measured in the mode recorded below |
 | OS | Windows (64-bit, x64); record the exact edition and build here: | |
 | Storage | (record the drive model and whether it's NVMe) | Set-loading and startup targets assume an SSD |
-| Audio interface | **(not decided yet; record it here)** | The 5 ms total pad-to-sound target depends on the interface's driver. Until one is chosen, measurements use WASAPI exclusive mode on the built-in audio and are marked "provisional" |
+| Audio | **Built-in Realtek ALC3306** (HD Audio). No external interface yet | See "Audio setup" below. The 5 ms total pad-to-sound target needs a dedicated interface with an ASIO driver. On built-in audio, total-latency results are **provisional** |
+
+## Audio setup
+- **Default: WASAPI exclusive mode** on the Realtek chip. It's built into Windows and JUCE supports it directly, with nothing extra to install.
+- **Alternative: ASIO4ALL** (and FlexASIO, an open-source alternative). These need Lattice built with ASIO support (`LATTICE_ENABLE_ASIO`, once the ASIO SDK license is confirmed in M0).
+  - In M0, measure **ASIO4ALL against WASAPI exclusive** on this laptop: the smallest buffer with zero dropouts over 10 minutes, and the latency each reports.
+  - Use whichever is better from then on, and record the choice below.
+- **Note:** both take exclusive control of the device, so other apps go silent while Lattice plays.
+- **Provisional targets on built-in audio:**
+  - The smallest stable buffer is expected around 128–256 samples (possibly 64).
+  - Total pad-to-sound is expected around **8–12 ms**.
+  - **Lattice's own share of the latency (charter §1) is enforced in full regardless of the audio hardware.**
+- **If an interface is added later** (e.g. MOTU M2, Focusrite Scarlett 2i2 4th gen, Audient EVO 4), record it here. From then on the 5 ms total target is enforced.
+- Results: smallest stable buffer, with WASAPI exclusive: ___ / with ASIO4ALL: ___ / chosen: ___
 
 ## Test conditions (keep these the same for every measurement)
 Gaming laptops vary a lot between runs unless these are fixed:
