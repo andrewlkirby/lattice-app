@@ -2,6 +2,9 @@
 // state in the document, the on/off switch, and chain changes while playing.
 
 #include "core/SettledShared.h"
+#include "devices/instruments/Sampler.h"
+#include "devices/instruments/Synth.h"
+#include "devices/midi/Arpeggiator.h"
 #include "devices/test/TestSynthDevice.h"
 #include "devices/framework/ParameterPager.h"
 #include "support/AllocationHooks.h"
@@ -586,4 +589,92 @@ TEST_CASE("SettledShared frees only versions older than the one the reader settl
     shared.resetReader(); // the reader stopped: nothing older than the latest is in use
     CHECK(shared.versionCount() == 1);
     CHECK(*shared.latest()->object == 4);
+}
+
+// --- Real-time fuzz over every built-in device ------------------------------------------------------------
+
+TEST_CASE("Real-time fuzz: every built-in device under random edits stays finite and never allocates",
+          "[devices][framework][rt][fuzz]")
+{
+    LATTICE_REQUIRE_ALLOCATION_HOOKS();
+    Fixture f(2, BlockPattern::Random);
+    std::vector<juce::String> types;
+    for (const auto& t : DeviceRegistry::builtin().types())
+        types.push_back(t.id);
+    REQUIRE(types.size() >= 4);
+
+    // A sample for any Sampler that turns up.
+    std::vector<float> wave(48000);
+    for (std::size_t i = 0; i < wave.size(); ++i)
+        wave[i] = 0.5f * std::sin(static_cast<float>(i) * 0.05f) * std::exp(-static_cast<float>(i % 12000) / 3000.0f);
+    const SamplePtr sample = SampleData::fromChannels({wave}, 44100.0, "fuzz");
+    const auto giveSamples = [&] {
+        for (int t = 0; t < 2; ++t)
+            for (const auto& d : f.chain(t))
+                if (auto* sampler = f.instance<SamplerDevice>(d); sampler != nullptr && sampler->currentSample() == nullptr)
+                    sampler->setSample(sample);
+    };
+
+    for (int t = 0; t < 2; ++t)
+    {
+        f.add(ArpeggiatorDevice::typeId, t);
+        f.add(t == 0 ? SynthDevice::typeId : SamplerDevice::typeId, t);
+        addClip(f.set(), t, 0, 4.0,
+                {NoteData{48 + t, 0.0, 1.0, 100, false}, NoteData{55, 1.0, 2.0, 90, false}, NoteData{60, 2.5, 1.0, 70, false}});
+    }
+    giveSamples();
+    f.renderer.captureAudio = true;
+    f.session.launchScene(0);
+
+    juce::Random random(2026);
+    for (int step = 0; step < 400; ++step)
+    {
+        const int t = random.nextInt(2);
+        auto chain = f.chain(t);
+        const int action = random.nextInt(10);
+        if (action < 5 && chain.getNumChildren() > 0)
+        {
+            // Several parameters of one device, anywhere in their ranges.
+            auto node = chain.getChild(random.nextInt(chain.getNumChildren()));
+            if (auto* device = f.session.snapshots().deviceFor(LiveSet::idOf(node)); device != nullptr && device->numParameters() > 0)
+                for (int k = 0; k < 4; ++k)
+                {
+                    const auto& spec = device->parameter(random.nextInt(device->numParameters())).spec();
+                    f.set().setDeviceParameter(node, spec.id, spec.minValue + random.nextDouble() * (spec.maxValue - spec.minValue));
+                }
+        }
+        else if (action == 5 && chain.getNumChildren() < 7)
+        {
+            f.set().insertDevice(chain, random.nextInt(chain.getNumChildren() + 1),
+                                 types[static_cast<std::size_t>(random.nextInt(static_cast<int>(types.size())))]);
+        }
+        else if (action == 6 && chain.getNumChildren() > 1)
+        {
+            f.set().removeDevice(chain.getChild(random.nextInt(chain.getNumChildren())));
+        }
+        else if (action == 7 && chain.getNumChildren() > 1)
+        {
+            f.set().moveDevice(chain.getChild(random.nextInt(chain.getNumChildren())), chain,
+                               random.nextInt(chain.getNumChildren()));
+        }
+        else if (chain.getNumChildren() > 0)
+        {
+            auto d = chain.getChild(random.nextInt(chain.getNumChildren()));
+            f.set().setDeviceEnabled(d, !static_cast<bool>(d[ids::enabled]));
+        }
+        f.session.flush();
+        giveSamples();
+        f.renderer.renderFor(1 + random.nextInt(3000));
+        f.session.snapshots().collectGarbage();
+        if (f.renderer.audioLeft.size() > 200000)
+        {
+            for (const float v : f.renderer.audioLeft)
+                REQUIRE(std::isfinite(v));
+            f.renderer.audioLeft.clear();
+            f.renderer.audioRight.clear();
+        }
+    }
+    for (const float v : f.renderer.audioLeft)
+        REQUIRE(std::isfinite(v));
+    // Fixture checks the violation count.
 }

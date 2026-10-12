@@ -16,6 +16,7 @@ add_executable(lattice_tests
     core/StartupTimelineTests.cpp
     devices/DspTests.cpp
     devices/FrameworkTests.cpp
+    devices/MidiEffectTests.cpp
     devices/SamplerTests.cpp
     devices/SynthTests.cpp
     devices/TuningTestSynthTests.cpp

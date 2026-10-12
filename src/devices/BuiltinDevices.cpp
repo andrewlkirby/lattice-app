@@ -1,6 +1,8 @@
 #include "devices/framework/DeviceRegistry.h"
 #include "devices/instruments/Sampler.h"
 #include "devices/instruments/Synth.h"
+#include "devices/midi/Arpeggiator.h"
+#include "devices/midi/Chord.h"
 #include "devices/test/TestSynthDevice.h"
 
 namespace lattice
@@ -12,6 +14,14 @@ void registerBuiltinDevices(DeviceRegistry& registry)
                   [](const DeviceCreateContext& c) -> std::unique_ptr<StudioDevice> {
                       jassert(c.tuning != nullptr);
                       return std::make_unique<SynthDevice>(*c.tuning);
+                  }});
+    registry.add({ArpeggiatorDevice::typeId, "Arpeggiator", "MIDI Effects", DeviceKind::MidiEffect, false,
+                  [](const DeviceCreateContext&) -> std::unique_ptr<StudioDevice> {
+                      return std::make_unique<ArpeggiatorDevice>();
+                  }});
+    registry.add({ChordDevice::typeId, "Chord", "MIDI Effects", DeviceKind::MidiEffect, false,
+                  [](const DeviceCreateContext&) -> std::unique_ptr<StudioDevice> {
+                      return std::make_unique<ChordDevice>();
                   }});
     registry.add({SamplerDevice::typeId, "Sampler", "Instruments", DeviceKind::Instrument, false,
                   [](const DeviceCreateContext& c) -> std::unique_ptr<StudioDevice> {

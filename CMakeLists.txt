@@ -168,6 +168,8 @@ add_library(lattice_core STATIC
     src/devices/framework/StudioDevice.cpp
     src/devices/instruments/Sampler.cpp
     src/devices/instruments/Synth.cpp
+    src/devices/midi/Arpeggiator.cpp
+    src/devices/midi/Chord.cpp
     src/devices/samples/SamplePool.cpp
     src/devices/test/TestSynthDevice.cpp
     src/devices/test/TuningTestSynth.cpp
