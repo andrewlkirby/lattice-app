@@ -103,6 +103,7 @@ target_compile_definitions(lattice_juce
         JUCE_JACK=$<PLATFORM_ID:Linux>
         JUCE_ALSA=$<PLATFORM_ID:Linux>
         JUCE_WASAPI=1
+        JUCE_USE_MP3AUDIOFORMAT=1
         JUCE_DIRECTSOUND=0
         JUCE_STRICT_REFCOUNTEDPOINTER=1
         JUCE_DISABLE_JUCE_VERSION_PRINTING=1
@@ -156,6 +157,7 @@ add_library(lattice_core STATIC
     src/devices/BuiltinDevices.cpp
     src/devices/dsp/Biquad.cpp
     src/devices/dsp/HalfBand.cpp
+    src/devices/dsp/SincResampler.cpp
     src/devices/dsp/VoiceFilterSimd.cpp
     src/devices/dsp/Wavetable.cpp
     src/devices/framework/DeviceChain.cpp
@@ -164,7 +166,9 @@ add_library(lattice_core STATIC
     src/devices/framework/ParameterPager.cpp
     src/devices/framework/ParameterSpec.cpp
     src/devices/framework/StudioDevice.cpp
+    src/devices/instruments/Sampler.cpp
     src/devices/instruments/Synth.cpp
+    src/devices/samples/SamplePool.cpp
     src/devices/test/TestSynthDevice.cpp
     src/devices/test/TuningTestSynth.cpp
     src/engine/AudioEngine.cpp

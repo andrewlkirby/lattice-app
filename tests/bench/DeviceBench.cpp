@@ -3,10 +3,12 @@
 //
 //   lattice_bench [--seconds N] [--filter name]
 
+#include "devices/instruments/Sampler.h"
 #include "devices/instruments/Synth.h"
 #include "tuning/Tet12.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <functional>
@@ -61,7 +63,7 @@ double run(const Case& c, int block, double seconds)
         MidiBlock out{outStorage.data(), 4096, 0, 0};
         if (b == 0)
             for (int n = 0; n < c.notes; ++n)
-                in.add(0, 0x90, static_cast<std::uint8_t>(36 + n * 3), 100);
+                in.add(0, 0x90, static_cast<std::uint8_t>(c.notes > 16 ? 48 + n : 36 + n * 3), 100);
         for (int i = 0; i < block; ++i)
             left[static_cast<std::size_t>(i)] = right[static_cast<std::size_t>(i)] =
                 0.1f * static_cast<float>((i * 7919 + b * 31) % 200 - 100) / 100.0f;
@@ -97,6 +99,25 @@ int main(int argc, char* argv[])
     tuning.setSampleRate(sampleRate);
     const auto synth = [] { return std::make_unique<SynthDevice>(tuning); };
 
+    // A 10 s stereo sample of decaying noise bursts, at 44.1 kHz (so every note resamples).
+    static const SamplePtr drums = [] {
+        std::vector<std::vector<float>> ch(2, std::vector<float>(441000));
+        std::uint32_t seed = 1;
+        for (std::size_t i = 0; i < ch[0].size(); ++i)
+        {
+            seed = seed * 1664525u + 1013904223u;
+            const float env = std::exp(-static_cast<float>(i % 22050) / 4000.0f);
+            ch[0][i] = env * (static_cast<float>(seed >> 8) / 8388608.0f - 1.0f);
+            ch[1][i] = 0.8f * ch[0][i];
+        }
+        return SampleData::fromChannels(ch, 44100.0, "bench");
+    }();
+    const auto sampler = [] {
+        auto s = std::make_unique<SamplerDevice>(tuning, SamplePool::shared());
+        s->setSample(drums);
+        return s;
+    };
+
     std::vector<Case> cases{
         {"Synth 16 voices x 2 osc, unison 1", 2.0, synth, [](StudioDevice&) {}, 16},
         {"Synth 16 voices x 2 osc, unison 4", 2.0, synth,
@@ -113,6 +134,10 @@ int main(int argc, char* argv[])
              setParam(d, "filter.type", 0.0f);
          },
          16},
+        {"Sampler 32 voices, sinc", 1.5, sampler,
+         [](StudioDevice& d) { setParam(d, "sample.root", 261.6256f); }, 32},
+        {"Sampler 32 voices, draft", 1.5, sampler,
+         [](StudioDevice& d) { setParam(d, "sample.quality", 1.0f); }, 32},
         {"Synth 16 voices, ladder", 2.0, synth,
          [](StudioDevice& d) {
              setParam(d, "filter.type", static_cast<float>(SynthDevice::FilterType::Ladder));
