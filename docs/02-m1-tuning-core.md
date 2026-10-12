@@ -157,7 +157,7 @@ Lets you play notes with no MIDI hardware, using the same keys as Live:
 - [x] With no MIDI hardware connected, the computer keyboard can play every Colundi entry that is in range, by shifting through the 17-note pages. (Checked by the user on 2026-10-11: "it sounds good so far".)
 - [x] Switching tuning while notes are held causes no glitches or crashes, and the RealtimeCheck stays quiet. (Checked by the user on 2026-10-11: "it sounds good so far".)
 - [x] A user `.scl` file loads and plays. (Checked by the user on 2026-10-11: "it sounds good so far".)
-- [ ] All tuning tests pass in CI. (Pass locally on Windows and in Docker on 2026-10-11, including TSan; CI runs on push.)
+- [x] All tuning tests pass in CI. (2026-10-11: CI run 38194459108 on `m1-tuning-core`. All 8 jobs passed: Windows Debug/Release, Linux GCC/Debug/RTSan/TSan/clang-tidy, macOS.)
 
 ## As built (2026-10-11)
 Where the code differs from the plan above, and why:
