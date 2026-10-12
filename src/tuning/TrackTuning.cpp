@@ -38,6 +38,27 @@ double TrackTuning::hzFor(int note, float bend) const noexcept
         hz = t->frequencyFor(index + static_cast<double>(bend) * bendRangeSteps.load(std::memory_order_relaxed));
     }
 
+    return applyHighNotePolicy(hz, *t);
+}
+
+double TrackTuning::hzAt(double fractionalNote, double cents) const noexcept
+{
+    const RtShared<TuningTable>::ReadScope scope(table);
+    const TuningTable* t = scope.get();
+    if (t == nullptr)
+        return 0.0;
+
+    const double index = fractionalNote + noteOffset.load(std::memory_order_relaxed);
+    if (!(index > -0.5 && index < TuningTable::numNotes - 0.5))
+        return 0.0;
+    double hz = t->frequencyFor(index);
+    if (hz > 0.0 && cents != 0.0)
+        hz *= std::exp2(cents / 1200.0);
+    return applyHighNotePolicy(hz, *t);
+}
+
+double TrackTuning::applyHighNotePolicy(double hz, const TuningTable& t) const noexcept
+{
     if (hz <= 0.0)
         return 0.0;
 
@@ -51,7 +72,7 @@ double TrackTuning::hzFor(int note, float bend) const noexcept
     if (highNotePolicy.load(std::memory_order_relaxed) == HighNotePolicy::Mute)
         return 0.0;
 
-    const double period = t->periodRatio > 1.0 ? t->periodRatio : 2.0;
+    const double period = t.periodRatio > 1.0 ? t.periodRatio : 2.0;
     while (hz >= limit)
         hz /= period;
     return hz;

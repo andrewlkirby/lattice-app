@@ -154,12 +154,16 @@ add_library(lattice_core STATIC
     src/core/model/LiveSet.cpp
     src/core/model/MidiImport.cpp
     src/devices/BuiltinDevices.cpp
+    src/devices/dsp/Biquad.cpp
+    src/devices/dsp/HalfBand.cpp
+    src/devices/dsp/Wavetable.cpp
     src/devices/framework/DeviceChain.cpp
     src/devices/framework/DeviceParameter.cpp
     src/devices/framework/DeviceRegistry.cpp
     src/devices/framework/ParameterPager.cpp
     src/devices/framework/ParameterSpec.cpp
     src/devices/framework/StudioDevice.cpp
+    src/devices/instruments/Synth.cpp
     src/devices/test/TestSynthDevice.cpp
     src/devices/test/TuningTestSynth.cpp
     src/engine/AudioEngine.cpp

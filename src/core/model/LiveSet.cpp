@@ -25,7 +25,7 @@ bool isValidDenominator(int den)
 
 juce::String& LiveSet::defaultInstrumentType()
 {
-    static juce::String type{"lattice.testSynth"};
+    static juce::String type{"lattice.synth"};
     return type;
 }
 
