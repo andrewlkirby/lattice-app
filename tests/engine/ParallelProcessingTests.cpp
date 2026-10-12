@@ -5,6 +5,7 @@
 #include "core/AudioCallbackStats.h"
 #include "engine/WorkerPool.h"
 #include "perf/ReferenceSet.h"
+#include "platform/Platform.h"
 #include "support/AllocationHooks.h"
 #include "support/OfflineRenderer.h"
 #include "support/TestDevices.h"
@@ -16,6 +17,7 @@
 #include <cmath>
 #include <cstring>
 #include <set>
+#include <thread>
 #include <vector>
 
 using namespace lattice;
@@ -48,6 +50,51 @@ Rendered renderReferenceSet(int workers, BlockPattern pattern, std::int64_t samp
     renderer.renderFor(samples - switchAt);
     return {renderer.audioLeft, renderer.audioRight};
 }
+
+/** The stress test's "audio thread": real-time priority (MMCSS Pro Audio on Windows), one block
+    per period of the real clock, as a device callback would be. */
+struct StressRender final : juce::Thread
+{
+    StressRender(AudioEngine& e, int blockSize, double periodSeconds, std::int64_t numBlocks)
+        : juce::Thread("Stress audio"), engine(e), block(blockSize), period(periodSeconds), blocks(numBlocks)
+    {
+    }
+
+    void run() override
+    {
+        platform::joinProAudioClass();
+        std::vector<float> left(static_cast<std::size_t>(block)), right(static_cast<std::size_t>(block));
+        float* outputs[2] = {left.data(), right.data()};
+        for (int i = 0; i < 200; ++i) // warm up: caches, voices, the workers' first wake
+            engine.process(outputs, 2, block);
+        const auto start = std::chrono::steady_clock::now();
+        const std::chrono::duration<double> periodDuration(period);
+        for (std::int64_t i = 0; i < blocks && !threadShouldExit(); ++i)
+        {
+            const auto due = start + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                         periodDuration * static_cast<double>(i));
+            while (std::chrono::steady_clock::now() < due)
+                std::this_thread::yield();
+            const auto t0 = std::chrono::steady_clock::now();
+            engine.process(outputs, 2, block);
+            const double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+            stats.recordCallback(took, period);
+            worst = std::max(worst, took);
+            if (took > period)
+                ++late;
+        }
+        finished = true;
+    }
+
+    AudioEngine& engine;
+    const int block;
+    const double period;
+    const std::int64_t blocks;
+    AudioCallbackStats stats;
+    double worst = 0.0;
+    int late = 0;
+    std::atomic<bool> finished{false};
+};
 
 double rms(const std::vector<float>& x)
 {
@@ -169,34 +216,31 @@ TEST_CASE("Parallel processing: the reference set plays 10 minutes at 64-sample 
     session.launchScene(0);
     session.flush();
 
-    std::vector<float> left(block), right(block);
-    float* outputs[2] = {left.data(), right.data()};
+    // The "audio thread": real-time priority (MMCSS Pro Audio on Windows), one block per period of
+    // the real clock, as a device callback would be (so the workers sleep between blocks and the
+    // wake-up is measured too). Scene changes come from this (message) thread meanwhile.
     const double period = block / sampleRate;
-    AudioCallbackStats stats;
-    for (int i = 0; i < 200; ++i) // warm up: caches, voices, the workers' first wake
-        engine.process(outputs, 2, block);
-
-    int late = 0;
-    double worst = 0.0;
-    const auto blocks = static_cast<std::int64_t>(seconds * sampleRate / block);
-    const auto blocksPerScene = static_cast<std::int64_t>(30.0 * sampleRate / block);
-    for (std::int64_t i = 0; i < blocks; ++i)
+    StressRender render(engine, block, period, static_cast<std::int64_t>(seconds * sampleRate / block));
+    juce::Thread::RealtimeOptions options;
+    if (!render.startRealtimeThread(options.withPriority(10)))
+        render.startThread(juce::Thread::Priority::highest);
+    int scene = 0;
+    auto nextScene = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (!render.finished)
     {
-        if (i > 0 && i % blocksPerScene == 0)
+        juce::Thread::sleep(20);
+        session.flush();
+        engine.collectGarbage();
+        if (std::chrono::steady_clock::now() >= nextScene)
         {
-            // A new scene every 30 s (the message thread's work, between blocks here).
-            session.launchScene(static_cast<int>((i / blocksPerScene) % perf::referenceScenes));
-            session.flush();
-            engine.collectGarbage();
+            session.launchScene(++scene % perf::referenceScenes);
+            nextScene += std::chrono::seconds(30);
         }
-        const auto t0 = std::chrono::steady_clock::now();
-        engine.process(outputs, 2, block);
-        const double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-        stats.recordCallback(took, period);
-        worst = std::max(worst, took);
-        if (took > period)
-            ++late;
     }
+    render.stopThread(1000);
+    const auto& stats = render.stats;
+    const int late = render.late;
+    const double worst = render.worst;
     const auto load = stats.summary();
     INFO(seconds << " s, " << workers << " workers: load p50 " << 100.0 * load.p50 << "%, p99 " << 100.0 * load.p99
                  << "%, p99.9 " << 100.0 * load.p999 << "%, worst block " << 1000.0 * worst << " ms of "

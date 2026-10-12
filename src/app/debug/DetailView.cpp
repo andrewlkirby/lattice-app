@@ -195,6 +195,7 @@ DetailView::DetailView(SessionController& s, AudioEngine& engine, juce::Properti
               }},
       browser(context, settings)
 {
+    context.presetsChanged = [this] { browser.refresh(); };
     browser.onInsert = [this](const juce::String& description) {
         if (row != nullptr)
             row->insertFromDescription(description, -1);

@@ -339,6 +339,142 @@ All tests run in `OfflineRenderer` under `ScopedAudioThread` (from M2) at severa
 - [ ] All device tests pass in CI, and all benchmarks are within budget on the reference machine.
 - [ ] A 32-track set plays without dropouts at a 64-sample buffer on the reference machine, using parallel processing.
 
+## As built (2026-10-12)
+Where the code differs from the plan above, and why. Each device's header describes it in full.
+
+### Framework (`src/devices/framework/`)
+- **`StudioDevice`** declares its parameters as `ParameterSpec`s (`ParameterSpec.h`); each becomes a
+  `DeviceParameter`, a `juce::RangedAudioParameter` holding the document's base value plus an atomic
+  override (how rack macros drive parameters without touching the document). A spec's skew centre
+  defaults to "none" (a centre of 0 used to skew ranges that span 0).
+- **Pages:** `ParameterPager` as planned; racks lay out their own pages (macros first).
+- **Document:** a chain is `DEVICES / DEVICE (type, enabled) / PARAMS + STATE`, set format version 3
+  (sets from versions 1 and 2 are migrated: every track gets the default instrument, the Synth).
+- **Chain changes** go through `SettledShared<T>` (`src/core/`): the engine publishes a track's new
+  `DeviceChainLayout` and frees the old one only after the audio thread has switched away from it.
+  A chain change fades the track out and in over 3 ms. Parameter, on/off and state changes go
+  straight to the live instance, with no rebuild.
+- **On/off** crossfades over 5 ms; a latency-adding effect switched off keeps its delay (its dry
+  path is delayed by its latency), so nothing shifts. A MIDI effect switched off ends its notes.
+- **Unknown device types** (a newer set, a removed device) load as a pass-through `MissingDevice`
+  that keeps the saved state, so saving loses nothing.
+
+### DSP building blocks (`src/devices/dsp/`)
+- Oscillators: mipmapped band-limited wavetables (2 tables per octave, crossfaded), SSE paths that
+  run 4 unison copies or voices at once. Filters: TPT SVF, the nonlinear ZDF ladder at 2× through
+  half-band filters, matched biquads, and `VoiceFilterSimd` (4 voice filters per SSE register).
+  Envelopes render in blocks. Delay lines interpolate with Lagrange; `LevelDetector` for dynamics.
+- **Sample interpolation (deviation):** the windowed-sinc kernel has 64 taps at unity, not 32.
+  32 taps can't give both −90 dB aliasing and 0.1 dB flatness to 0.9 × Nyquist; 64 do (measured).
+  Kernels are stored for 33 bandwidths (1/8 octave apart, down to 4 octaves up), polyphase with
+  linear interpolation between phases.
+- **CPU dispatch:** AVX2 + FMA kernels live in `*Avx2.cpp` files, compiled alone with the AVX2 flags
+  and outside link-time optimisation, and are chosen at run time (`SincBlock.h`). Only the
+  Sampler's sinc path uses one so far.
+
+### Instruments and MIDI effects
+- **Synth:** as planned, plus a staged voice renderer (control block 64; four unison copies per
+  SSE register; voice filters four at a time). Stolen voices fade out over 3 ms in spare voice
+  slots while the new note starts at once.
+- **Sampler:** Classic, One-Shot and Slice (transient, beat grid, manual) modes; sinc or Draft
+  (Hermite) quality; "Tuning: Fixed" (12-TET from C4) for Drum Rack pads. Samples load in the
+  background through the shared `SamplePool` and are padded with silence so the kernels never read
+  outside them. A choke stops every voice with a short fade.
+- **Arpeggiator and Chord** as planned (offsets and distances in table steps).
+
+### Audio effects
+- All nine are built as planned. The Reverb's tail has 8 (Eco), 16 (High) or 32 (Ultra, at 2× the
+  sample rate) lines; freeze turns off the line modulation and rounds the line lengths to whole
+  samples, so a frozen tail holds without drifting. The Saturator oversamples with linear-phase FIR
+  half-bands.
+
+### Racks (`src/devices/racks/`)
+- The rack's structure (`RackLayout`) is part of the track's chain layout and is handed to the
+  rack on the audio thread with it. Chain mix values (volume, pan, mute, solo) are live atomics,
+  so a fader move needs no rebuild. Macros (0–64) drive parameters through the overrides.
+- Variations store the macro values with 17 significant digits, so recalling one is exact.
+- **Deviation:** a rack switched off isn't latency-aligned (its chains' compensation applies only
+  while it runs).
+
+### Returns, sends, sidechain, delay compensation (`src/engine/`)
+- Tracks render in stages: every chain, level by level (sidechain sources before listeners); then
+  a serial mix of faders and sends; then the returns; then the master chain.
+- **Delay compensation:** tracks line up with the slowest track, returns with the slowest return,
+  and the master's input waits for the slowest return. Compensation is capped at 0.5 s. "Reduced
+  latency when monitoring" and solo in place work as planned.
+- **Deviation:** a sidechain takes the source track's *uncompensated* chain output (before or after
+  its effects). The editor offers only sources that can't form a loop
+  (`devices/ChainEditing.h`), rather than refusing one with an explanation.
+- **Parallel processing:** `WorkerPool` (one real-time worker per physical core, minus one; Windows
+  workers join MMCSS "Pro Audio"). The audio thread and the workers take a level's tracks, then the
+  returns, from one atomic ticket that also carries the job's task count, so a late worker can never
+  run a task of the next job. Workers spin briefly, then sleep; the audio thread wakes sleepers
+  with a futex wake, its only system call (it never waits). Output is bit-identical with 0, 1, 2, 4
+  and N workers (tested). "Multi-threaded audio" in the Audio tab switches the workers off.
+- **Deviation:** on Linux and macOS the workers ask for real-time priority through
+  `juce::Thread::startRealtimeThread` and run at normal priority if that's refused; rtkit, the
+  warning, and macOS audio workgroups are not done yet.
+
+### Presets, device list, generic editor (3f)
+- **Presets** (`src/devices/presets/`): `.lpreset` XML (a device or a whole rack, with the preset
+  and set format versions). Sidechain sources stay behind (they name tracks of another set). User
+  presets go in `<userdata>/Library/Presets/<Device>/`. Factory presets (Colundi Pad, Colundi Bass,
+  Colundi Arp Chords) are built in `tests/support/FactoryPresets.h`, written to `resources/presets/`
+  by `lattice_tests "[.write-factory-presets]"` and embedded; a test fails while they disagree.
+- **Chain rules** (`src/devices/ChainEditing.h`): MIDI effects, then one instrument (a new one
+  replaces it), then audio effects; audio-only chains on returns, the master and Audio Effect
+  Racks; racks nest at most 4 deep and never in themselves.
+- **Editor** (`src/app/debug/`, the `lattice_debug_ui` library): a detail view below the session
+  grid with the device list (devices, presets, sample folders) and the shown chain's devices.
+  Panels are built from the `ParameterSpec`s; right-click a control to type a value or map it to an
+  enclosing rack's macro (full range; ranges and curves get their editor in M4). Racks show macros,
+  variations, the chain list with zones, and the selected chain; the Drum Rack shows the 4×4 pads
+  (clicking a pad arms its track, as Live's selection arm would). The mixer has return strips and a
+  send knob per return. The editor is tested headless, and `"[.ui-snapshot]"` renders it to PNGs.
+
+### Tests and tools
+- **Deviation:** benchmarks are a custom harness (`tests/bench/DeviceBench.cpp`, `lattice_bench`),
+  not Catch2 BENCHMARK, so it can report load at 64- and 256-sample blocks against the budgets.
+- `scripts/profile-bench.sh` profiles one benchmark under callgrind in the Linux container.
+- The reference set (`tests/perf/ReferenceSet.h`) now uses the M3 devices: EQs, sidechained
+  compressors, Reverb and Delay returns and a master Limiter. The engine benchmark takes
+  `--workers`; the callgrind baseline was updated for the new set.
+
+### Performance (end of M3; reference laptop, one core, % of real time at 48 kHz)
+`lattice_bench` (Release, Windows, the reference laptop), typical of several 10-second runs; the
+first figure is at 64-sample blocks, the second at 256. Each device runs on one core.
+
+| Device | Load (% of one core) | Starting budget | Proposed budget |
+|--------|----------------------|-----------------|-----------------|
+| Synth, 16 voices × 2 osc, unison 1 | 1.8 / 1.75 | 2 | 2 |
+| Synth, 16 voices × 2 osc, unison 4 | 2.7 / 2.7 | 2 | 3 |
+| Synth, 16 voices, ladder | 2.55 / 2.5 | 2 | 3 |
+| Sampler, 32 voices, sinc | 2.5 / 2.3 | 1.5 | 3 |
+| Sampler, 32 voices, Draft | 1.0 / 1.0 | 1.5 | 1.5 |
+| Reverb, High | 0.8 / 0.75 | 1 | 1 |
+| Reverb, Ultra | 2.7 / 2.5 | 2 | 3 |
+| Reverb, Eco | 0.54 / 0.49 | 0.5 | 0.6 |
+| Saturator 4× | 0.27 / 0.26 | 0.5 | 0.5 |
+| EQ Eight, Compressor, Delay, Chorus, Auto Filter, Saturator 2×, Limiter, Utility | 0.003 – 0.33 | 0.5 | 0.5 |
+
+What the performance pass did: the Sampler's sinc kernel in AVX2 + FMA over blocks of positions
+(6.4 → 2.4%) and its Draft path four positions at a time (1.9 → 1.0%); the Reverb's tail four lines
+per SSE register (High 1.06 → 0.8%); the half-band filters and the Saturator in blocks (4×: 0.95 →
+0.27%), with Ultra changing rate in blocks too (3.9 → 2.6%).
+
+Why the proposed budgets: the sinc kernel's 64 taps are what the −90 dB / 0.1 dB quality spec needs
+(a Kaiser design for that transition band needs about 57), and the profile shows the kernel's
+multiply-adds are three quarters of the cost. The Synth's oscillators and ladder are already
+vectorised across unison copies and voices; going further means AVX2 rewrites of both (or a cheaper
+ladder solver, which would change the sound). Ultra is the luxury setting: 32 lines at twice the
+rate.
+
+**The reference set** (32 tracks, `[stress][timing]` test): 10 minutes at 64-sample blocks, one block
+per period of the real clock on a real-time (MMCSS Pro Audio) thread with 7 workers: no block late;
+load 8% of the period at the median, 10% at the 99th percentile, 66% for the worst block.
+
+The `lattice_bench` budgets stay at their starting values until the new ones are agreed.
+
 ## Interfaces kept for later milestones
 - **M4 UI:** custom device panels replace the generic editor and read the same `ParameterSpec`s and parameter groups. The EQ spectrum FIFO and the Drum Rack pad grid get finished visuals.
 - **M5 Push and Virtual Push:**

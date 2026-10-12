@@ -23,6 +23,8 @@ struct EditorContext
     std::function<void(const juce::String& title, const juce::String& patterns,
                        std::function<void(const juce::File&)> chosen)>
         chooseFile;
+    /** Called after a preset was saved (the device list shows it). */
+    std::function<void()> presetsChanged;
 
     LiveSet& set() const { return session.set(); }
     juce::UndoManager& undo() const { return session.undoManager(); }

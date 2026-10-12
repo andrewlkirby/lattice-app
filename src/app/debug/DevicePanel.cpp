@@ -328,7 +328,7 @@ private:
 
     void rename(juce::ValueTree chain)
     {
-        askForText("Rename chain", "Name", chain[ids::name].toString(),
+        askForText(*this, "Rename chain", "Name", chain[ids::name].toString(),
                    [this, chain](const juce::String& name) mutable {
                        context.undo().beginNewTransaction("Rename chain");
                        chain.setProperty(ids::name, name, context.set().undoManager());
@@ -350,7 +350,7 @@ private:
 
     void editZone(const juce::ValueTree& chain, bool key)
     {
-        askForText(key ? "Key zone" : "Velocity zone", "low-high fadeLow fadeHigh", zoneText(chain, key),
+        askForText(*this, key ? "Key zone" : "Velocity zone", "low-high fadeLow fadeHigh", zoneText(chain, key),
                    [this, chain, key](const juce::String& text) {
                        const auto parts = juce::StringArray::fromTokens(text.replaceCharacter('-', ' '), " ", {});
                        if (parts.size() < 2)
@@ -865,7 +865,7 @@ void DevicePanel::build()
             control->extendMenu = [this, m](juce::PopupMenu& menu) {
                 menu.addSeparator();
                 menu.addItem("Rename macro...", [this, m] {
-                    askForText("Rename macro", "Name", racks::macroName(node, m), [this, m](const juce::String& name) {
+                    askForText(*this, "Rename macro", "Name", racks::macroName(node, m), [this, m](const juce::String& name) {
                         context.undo().beginNewTransaction("Rename macro");
                         racks::setMacroName(context.set(), node, m, name);
                     });
@@ -1070,12 +1070,14 @@ void DevicePanel::showPresetMenu()
     juce::PopupMenu menu;
     const auto type = node[ids::deviceType].toString();
     menu.addItem("Save as preset...", [this] {
-        askForText("Save preset", "Name", deviceName(context, node), [this](const juce::String& name) {
+        askForText(*this, "Save preset", "Name", deviceName(context, node), [this](const juce::String& name) {
             juce::File written;
             const auto result = context.presets.saveUserPreset(node, name, written);
             if (result.failed())
                 juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Could not save the preset",
                                                        result.getErrorMessage());
+            else if (context.presetsChanged)
+                context.presetsChanged();
         });
     });
     const auto list = context.presets.presetsFor(type);

@@ -304,7 +304,7 @@ void MixerStrip::mouseDown(const juce::MouseEvent& e)
     {
         juce::PopupMenu menu;
         menu.addItem("Rename...", [this] {
-            askForText("Rename return", "Name", node()[ids::name].toString(), [this](const juce::String& name) {
+            askForText(*this, "Rename return", "Name", node()[ids::name].toString(), [this](const juce::String& name) {
                 session.undoManager().beginNewTransaction("Rename return");
                 session.set().setReturnName(index, name);
             });
