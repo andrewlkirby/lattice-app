@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 3 * * *" # nightly: heavy tags
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CPM_SOURCE_CACHE: ${{ github.workspace }}/.cpm-cache
+  LATTICE_WARNINGS_AS_ERRORS: "ON"
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [debug, release]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: .cpm-cache
+          key: cpm-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'tests/CMakeLists.txt') }}
+      - name: Configure
+        run: cmake --preset windows-${{ matrix.config }} -DLATTICE_WARNINGS_AS_ERRORS=ON
+      - name: Build
+        run: cmake --build --preset windows-${{ matrix.config }}
+      - name: Test
+        if: github.event_name != 'schedule'
+        run: ctest --preset windows-${{ matrix.config }}
+      - name: Test (all tags, nightly)
+        if: github.event_name == 'schedule'
+        run: ctest --test-dir build/windows-${{ matrix.config }} -C ${{ matrix.config == 'debug' && 'Debug' || 'Release' }} --output-on-failure -LE "bench|hardware|timing"
+
+  linux:
+    # Built inside the same Docker image as scripts/linux-test.sh, so CI and local runs match.
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: ["", "--debug", "--rtsan", "--tidy"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/lattice-cache
+          key: linux-cache-${{ matrix.mode }}-${{ github.sha }}
+          restore-keys: linux-cache-${{ matrix.mode }}-
+      - name: Build image
+        run: docker build -t lattice-linux:latest -f docker/linux.Dockerfile docker
+      - name: Build and test
+        run: |
+          docker run --rm -e LATTICE_WARNINGS_AS_ERRORS=ON \
+            -v "$PWD:/src" -v "$HOME/lattice-cache:/cache" \
+            lattice-linux:latest \
+            bash /src/scripts/linux-test.sh --inside ${{ matrix.mode }} \
+            ${{ github.event_name == 'schedule' && '--all-tests' || '' }}
+
+  macos:
+    # Tier 3: build plus fast tests.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: .cpm-cache
+          key: cpm-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'tests/CMakeLists.txt') }}
+      - run: brew install ninja
+      - name: Configure
+        run: cmake --preset macos-release -DLATTICE_WARNINGS_AS_ERRORS=ON
+      - name: Build
+        run: cmake --build --preset macos-release
+      - name: Test
+        run: ctest --preset macos-release

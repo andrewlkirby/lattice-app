@@ -1,0 +1,124 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}"
+    },
+    {
+      "name": "windows-base",
+      "hidden": true,
+      "inherits": "base",
+      "description": "Visual Studio (newest installed), x64",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "windows-debug",
+      "displayName": "Windows Debug",
+      "inherits": "windows-base"
+    },
+    {
+      "name": "windows-release",
+      "displayName": "Windows Release",
+      "inherits": "windows-base"
+    },
+    {
+      "name": "windows-relwithdebinfo-rtchecks",
+      "displayName": "Windows RelWithDebInfo + RT checks (everyday development build)",
+      "inherits": "windows-base",
+      "cacheVariables": { "LATTICE_RT_CHECKS": "ON" }
+    },
+    {
+      "name": "unix-base",
+      "hidden": true,
+      "inherits": "base",
+      "generator": "Ninja"
+    },
+    {
+      "name": "linux-base",
+      "hidden": true,
+      "inherits": "unix-base",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
+    },
+    {
+      "name": "linux-debug",
+      "displayName": "Linux Debug",
+      "inherits": "linux-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "linux-release",
+      "displayName": "Linux Release",
+      "inherits": "linux-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "linux-relwithdebinfo-rtchecks",
+      "displayName": "Linux RelWithDebInfo + RT checks",
+      "inherits": "linux-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo", "LATTICE_RT_CHECKS": "ON" }
+    },
+    {
+      "name": "linux-rtsan",
+      "displayName": "Linux Clang + RealtimeSanitizer",
+      "inherits": "linux-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "LATTICE_RTSAN": "ON",
+        "LATTICE_BUILD_APP": "OFF"
+      }
+    },
+    {
+      "name": "macos-base",
+      "hidden": true,
+      "inherits": "unix-base",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" },
+      "cacheVariables": { "CMAKE_OSX_DEPLOYMENT_TARGET": "11.0" }
+    },
+    {
+      "name": "macos-debug",
+      "displayName": "macOS Debug",
+      "inherits": "macos-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "macos-release",
+      "displayName": "macOS Release",
+      "inherits": "macos-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "windows-debug", "configurePreset": "windows-debug", "configuration": "Debug" },
+    { "name": "windows-release", "configurePreset": "windows-release", "configuration": "Release" },
+    { "name": "windows-relwithdebinfo-rtchecks", "configurePreset": "windows-relwithdebinfo-rtchecks", "configuration": "RelWithDebInfo" },
+    { "name": "linux-debug", "configurePreset": "linux-debug" },
+    { "name": "linux-release", "configurePreset": "linux-release" },
+    { "name": "linux-relwithdebinfo-rtchecks", "configurePreset": "linux-relwithdebinfo-rtchecks" },
+    { "name": "linux-rtsan", "configurePreset": "linux-rtsan" },
+    { "name": "macos-debug", "configurePreset": "macos-debug" },
+    { "name": "macos-release", "configurePreset": "macos-release" }
+  ],
+  "testPresets": [
+    {
+      "name": "test-base",
+      "hidden": true,
+      "output": { "outputOnFailure": true },
+      "filter": { "exclude": { "label": "slow|bench|stress|hardware|timing" } },
+      "execution": { "noTestsAction": "error" }
+    },
+    { "name": "windows-debug", "inherits": "test-base", "configurePreset": "windows-debug", "configuration": "Debug" },
+    { "name": "windows-release", "inherits": "test-base", "configurePreset": "windows-release", "configuration": "Release" },
+    { "name": "windows-relwithdebinfo-rtchecks", "inherits": "test-base", "configurePreset": "windows-relwithdebinfo-rtchecks", "configuration": "RelWithDebInfo" },
+    { "name": "linux-debug", "inherits": "test-base", "configurePreset": "linux-debug" },
+    { "name": "linux-release", "inherits": "test-base", "configurePreset": "linux-release" },
+    { "name": "linux-relwithdebinfo-rtchecks", "inherits": "test-base", "configurePreset": "linux-relwithdebinfo-rtchecks" },
+    { "name": "linux-rtsan", "inherits": "test-base", "configurePreset": "linux-rtsan" },
+    { "name": "macos-debug", "inherits": "test-base", "configurePreset": "macos-debug" },
+    { "name": "macos-release", "inherits": "test-base", "configurePreset": "macos-release" }
+  ]
+}

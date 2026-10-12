@@ -19,6 +19,7 @@ Get to a buildable, testable, runnable JUCE app as early as possible. Every late
 - **Licensing, decide before release (not a blocker for development):**
   - JUCE 8 is dual-licensed: AGPLv3 or a commercial license. A closed-source release needs a JUCE license.
   - ASIO support needs Steinberg's ASIO SDK. Check its current license terms. WASAPI works without it, so ASIO is an optional build flag.
+  - **Decided 2026-10-11:** Lattice is for personal use and won't be released as closed source. JUCE is used under AGPLv3. The ASIO SDK (2.3.4, dual-licensed: Steinberg ASIO License or GPLv3) is used under GPLv3. `LATTICE_ENABLE_ASIO` is ON by default on Windows. CMake downloads the SDK from Steinberg with a pinned SHA-256 hash, and it's never committed. Revisit both licenses if a release is ever planned.
 - **Git:** the repo already exists at `lattice-app/` (set up by the user).
 
 ## Repository layout created in M0
@@ -145,14 +146,27 @@ Empty `src/{tuning,devices,hosting,control,ui}` folders appear as each milestone
 - **A nightly job** runs the heavy tags (`[slow]`, `[stress]`) on Windows and Linux. `[bench]` is not run on shared runners for pass/fail (see M3).
 
 ## Definition of done
-- [ ] A fresh clone runs `cmake --preset windows-debug && cmake --build --preset windows-debug` and builds with no manual steps.
-- [ ] The app launches, shows audio devices, and plays and stops a clean test tone. The device choice is saved between launches.
+- [x] A fresh clone runs `cmake --preset windows-debug && cmake --build --preset windows-debug` and builds with no manual steps.
+- [x] The app launches, shows audio devices, and plays and stops a clean test tone. The device choice is saved between launches. (Checked by the user, 2026-10-11.)
 - [ ] `ctest` passes locally on Windows, through `scripts/linux-test.ps1` in Docker, and in CI on Windows, Ubuntu, and macOS.
-- [ ] After the first build, a cached Docker test run finishes in under 5 minutes.
-- [ ] **Performance gate (charter §3):** RTSan and the allocation-count tests pass. On the reference machine, the window appears in ≤ 0.5 s and the app is ready to use in ≤ 1.5 s, and the test tone runs at a 64-sample buffer with 0 dropouts over 10 minutes. The reference machine's details are recorded.
-- [ ] A deliberate `new` inside the audio callback (temporary) triggers the Debug RT check.
-- [ ] On the reference laptop, **WASAPI exclusive and ASIO4ALL are compared** (smallest buffer with 0 dropouts over 10 minutes, and the reported latency). The chosen default is recorded in `docs/perf/reference-machine.md`.
-- [ ] `resources/tunings/colundi_scale.txt` exists (copied from `docs/colundi_scale.txt`), ready for M1.
+- [x] After the first build, a cached Docker test run finishes in under 5 minutes. (2026-10-11: cold GCC build 4.5 min; cached runs 50–56 s.)
+- [x] **Performance gate (charter §3):** RTSan and the allocation-count tests pass. On the reference machine, the window appears in ≤ 0.5 s and the app is ready to use in ≤ 1.5 s, and the test tone runs at a 64-sample buffer with 0 dropouts over 10 minutes. The reference machine's details are recorded.
+  - 2026-10-11: RTSan and the allocation-count tests pass. Startup: 0.36 s / 0.53 s. **Soak: 0 dropouts over 10 minutes at 3 ms (144 samples at 48 kHz), which is the smallest buffer the reference output (Schiit Magni Unity) allows through WASAPI.** **64 samples: 0 dropouts over 10 minutes through ASIO4ALL on the Magni** (it lowers the buffer but not the reported latency; see the comparison). The soak is now automated: `scripts\perf-check.ps1 -Soak` (Lattice `--soak-seconds/--buffer-size/--sample-rate/--device-type`; writes `<userdata>/logs/soak.log`). LatencyMon crashes on this Windows build (see `perf/reference-machine.md`).
+- [x] A deliberate `new` inside the audio callback (temporary) triggers the Debug RT check.
+- [x] On the reference laptop, **WASAPI exclusive and ASIO4ALL are compared** (smallest buffer with 0 dropouts over 10 minutes, and the reported latency). The chosen default is recorded in `docs/perf/reference-machine.md`. (2026-10-11: both stable over 10 minutes. ASIO4ALL at 64 samples / 7.62 ms reported, WASAPI exclusive at 144 / 6.00 ms. **WASAPI exclusive stays the default.**)
+- [x] `resources/tunings/colundi_scale.txt` exists (copied from `docs/colundi_scale.txt`), ready for M1.
+
+## As built (2026-10-11)
+Where the code differs from the plan above, and why:
+- **One compiled copy of JUCE.** `lattice_juce` is a static library that compiles every JUCE module once (including the GUI modules) and passes the include paths and module settings on to `lattice_core`, the app, and the tests. Linking the JUCE modules straight into `lattice_core` would make the app and the tests each compile JUCE again. JUCE's IDE source groups are off: with them on, a build without the app (the RTSan preset) compiled module files on their own and failed.
+- **`JUCE_JACK` and `JUCE_ALSA` are set on Linux only.** JUCE builds JACK support on Windows too if asked, and fails without the JACK headers.
+- **`LATTICE_RT_CHECKS` takes `AUTO` (Debug only), `ON`, or `OFF`.** The allocation hooks (`src/core/AllocationHooks.cpp`, replacement `operator new`/`delete`) are a separate object library. The tests always link it, so the allocation-count tests also run in Release, in Docker, and under RTSan. The app links it according to the option.
+- **`LATTICE_NONBLOCKING`** expands to `[[clang::nonblocking]]` on Clang. It's checked to be live: RTSan aborts on a `malloc` inside such a function.
+- **The audio device opens on a background thread, started before the window is built** (`AudioEngine::openDeviceAsync`). Device types are still created on the message thread, because WASAPI's device-change detector is a window. The open thread joins COM (`platform::ScopedAudioDeviceThread`). ASIO is opened on the message thread (`platform::audioDeviceTypeNeedsMessageThread`). This was needed for the startup gate: WASAPI exclusive mode takes about 1.2 s to open on the reference laptop (see `perf/reference-machine.md`). Until the open finishes, nothing else touches the `AudioDeviceManager`; the device selector is created only afterwards.
+- **No saved setup:** the first type in `platform::preferredAudioDeviceTypes()` that opens is used, with its default output device. Windows prefers WASAPI exclusive, then Low Latency, then shared. Linux prefers JACK, then ALSA.
+- **Startup stages logged:** app init, settings loaded, engine created, audio open started, native window created, content created, window laid out, window visible, window created, window shown, audio started, ready. Times are measured from the moment the OS created the process. `--quit-when-ready` exits after "ready", for `scripts/perf-check.ps1`.
+- **Docker:** LLVM 21 from apt.llvm.org (≥ 20 is required). Builds go in a named volume (`lattice-build`), and ccache plus the CPM cache go in another (`lattice-cache`), so nothing is written to the source tree. `scripts/linux-test.sh` also works from Git Bash.
+- **Tests:** 30 Catch2 cases. Tags become ctest labels, and the test presets leave out the heavy tags.
 
 ## Not in M0
 MIDI input, the tuning system, any project model, and plugin hosting.
