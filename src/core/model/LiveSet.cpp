@@ -340,11 +340,11 @@ void LiveSet::moveDevice(const juce::ValueTree& device, juce::ValueTree toChain,
             from.moveChild(current, toIndex, undo);
         return;
     }
-    auto moved = device; // keep a reference while it is out of the tree
-    from.removeChild(moved, undo);
+    // The caller's reference keeps the node alive while it is out of the tree.
+    from.removeChild(device, undo);
     if (toIndex < 0 || toIndex > toChain.getNumChildren())
         toIndex = toChain.getNumChildren();
-    toChain.addChild(moved, toIndex, undo);
+    toChain.addChild(device, toIndex, undo);
 }
 
 void LiveSet::setDeviceEnabled(juce::ValueTree device, bool on)

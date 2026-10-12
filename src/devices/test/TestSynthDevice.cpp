@@ -6,7 +6,7 @@ namespace lattice
 {
 namespace
 {
-enum Param
+enum Param : std::uint8_t
 {
     sawMix
 };

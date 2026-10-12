@@ -20,11 +20,16 @@ public:
     static constexpr const char* typeId = "lattice.delay";
     static constexpr double maxSeconds = 20.0;
 
-    enum Param : int
+    /** Parameter indices, in declaration order. (In a struct, so the names don't fill the
+        class scope.) */
+    struct Param
     {
-        mode, sync, syncLeft, syncRight, msLeft, msRight, link,
-        feedback, lowCut, highCut, modRate, modDepth, freeze, mix,
-        numParams
+        enum : std::uint8_t
+        {
+            mode, sync, syncLeft, syncRight, msLeft, msRight, link,
+            feedback, lowCut, highCut, modRate, modDepth, freeze, mix,
+            numParams
+        };
     };
 
     DelayDevice();

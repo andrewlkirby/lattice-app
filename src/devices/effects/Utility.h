@@ -14,9 +14,14 @@ class UtilityDevice final : public StudioDevice
 public:
     static constexpr const char* typeId = "lattice.utility";
 
-    enum Param : int
+    /** Parameter indices, in declaration order. (In a struct, so the names don't fill the
+        class scope.) */
+    struct Param
     {
-        gain, balance, width, mono, invertLeft, invertRight, dcFilter, numParams
+        enum : std::uint8_t
+        {
+            gain, balance, width, mono, invertLeft, invertRight, dcFilter, numParams
+        };
     };
 
     UtilityDevice();

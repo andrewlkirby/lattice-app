@@ -109,29 +109,33 @@ public:
         Legato
     };
 
-    /** Parameter indices, in declaration order (the IDs are in Synth.cpp). */
-    enum Param : int
+    /** Parameter indices, in declaration order. (In a struct, so the names don't fill the
+        class scope.) */
+    struct Param
     {
-        osc1Shape, osc1Level, osc1Transpose, osc1Detune, osc1Pw, osc1Table, osc1Position,
-        osc2Shape, osc2Level, osc2Transpose, osc2Detune, osc2Pw, osc2Table, osc2Position, osc2Sync,
-        subLevel, subOctave, noiseLevel, noiseColour,
-        unisonVoices, unisonDetune, unisonSpread,
-        filterType, filterCutoff, filterResonance, filterDrive, filterKeytrack, filterEnvAmount, filterVelocity,
-        ampAttack, ampDecay, ampSustain, ampRelease, ampVelocity,
-        env2Attack, env2Decay, env2Sustain, env2Release,
-        lfo1Shape, lfo1Rate, lfo1Sync, lfo1SyncRate, lfo1Retrigger,
-        lfo2Shape, lfo2Rate, lfo2Sync, lfo2SyncRate, lfo2Retrigger,
-        mod1Source, mod1Dest, mod1Amount,
-        mod2Source, mod2Dest, mod2Amount,
-        mod3Source, mod3Dest, mod3Amount,
-        mod4Source, mod4Dest, mod4Amount,
-        mod5Source, mod5Dest, mod5Amount,
-        mod6Source, mod6Dest, mod6Amount,
-        mod7Source, mod7Dest, mod7Amount,
-        mod8Source, mod8Dest, mod8Amount,
-        voiceMode, polyphony, glideTime,
-        outVolume, outPan,
-        numParams
+        enum : std::uint8_t
+        {
+            osc1Shape, osc1Level, osc1Transpose, osc1Detune, osc1Pw, osc1Table, osc1Position,
+            osc2Shape, osc2Level, osc2Transpose, osc2Detune, osc2Pw, osc2Table, osc2Position, osc2Sync,
+            subLevel, subOctave, noiseLevel, noiseColour,
+            unisonVoices, unisonDetune, unisonSpread,
+            filterType, filterCutoff, filterResonance, filterDrive, filterKeytrack, filterEnvAmount, filterVelocity,
+            ampAttack, ampDecay, ampSustain, ampRelease, ampVelocity,
+            env2Attack, env2Decay, env2Sustain, env2Release,
+            lfo1Shape, lfo1Rate, lfo1Sync, lfo1SyncRate, lfo1Retrigger,
+            lfo2Shape, lfo2Rate, lfo2Sync, lfo2SyncRate, lfo2Retrigger,
+            mod1Source, mod1Dest, mod1Amount,
+            mod2Source, mod2Dest, mod2Amount,
+            mod3Source, mod3Dest, mod3Amount,
+            mod4Source, mod4Dest, mod4Amount,
+            mod5Source, mod5Dest, mod5Amount,
+            mod6Source, mod6Dest, mod6Amount,
+            mod7Source, mod7Dest, mod7Amount,
+            mod8Source, mod8Dest, mod8Amount,
+            voiceMode, polyphony, glideTime,
+            outVolume, outPan,
+            numParams
+        };
     };
 
     explicit SynthDevice(const TrackTuning& tuning);

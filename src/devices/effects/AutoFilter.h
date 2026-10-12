@@ -19,12 +19,17 @@ public:
     static constexpr const char* typeId = "lattice.autofilter";
     static constexpr int controlBlock = 16;
 
-    enum Param : int
+    /** Parameter indices, in declaration order. (In a struct, so the names don't fill the
+        class scope.) */
+    struct Param
     {
-        type, cutoff, resonance, drive,
-        lfoAmount, lfoShape, lfoRate, lfoSync, lfoSyncRate, lfoPhase,
-        envAmount, envAttack, envRelease,
-        mix, numParams
+        enum : std::uint8_t
+        {
+            type, cutoff, resonance, drive,
+            lfoAmount, lfoShape, lfoRate, lfoSync, lfoSyncRate, lfoPhase,
+            envAmount, envAttack, envRelease,
+            mix, numParams
+        };
     };
 
     AutoFilterDevice();

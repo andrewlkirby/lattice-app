@@ -14,9 +14,14 @@ class ChorusDevice final : public StudioDevice
 public:
     static constexpr const char* typeId = "lattice.chorus";
 
-    enum Param : int
+    /** Parameter indices, in declaration order. (In a struct, so the names don't fill the
+        class scope.) */
+    struct Param
     {
-        voices, rate, depth, delay, feedback, width, mix, numParams
+        enum : std::uint8_t
+        {
+            voices, rate, depth, delay, feedback, width, mix, numParams
+        };
     };
 
     ChorusDevice();

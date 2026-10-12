@@ -29,9 +29,14 @@ public:
         SineFold
     };
 
-    enum Param : int
+    /** Parameter indices, in declaration order. (In a struct, so the names don't fill the
+        class scope.) */
+    struct Param
     {
-        curve, drive, output, oversampling, mix, numParams
+        enum : std::uint8_t
+        {
+            curve, drive, output, oversampling, mix, numParams
+        };
     };
 
     SaturatorDevice();

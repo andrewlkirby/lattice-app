@@ -15,6 +15,7 @@ namespace lattice::dsp
 {
 namespace
 {
+#if LATTICE_FILTER_SSE2
 constexpr float steepFirstK = 1.0f / 0.54119610f;
 
 float steepSecondK(float resonance)
@@ -22,7 +23,6 @@ float steepSecondK(float resonance)
     return 1.0f / (1.30656296f * std::pow(36.0f, std::clamp(resonance, 0.0f, 1.0f)));
 }
 
-#if LATTICE_FILTER_SSE2
 /** Loads one float from each of four lanes' buffers at index i. */
 inline __m128 gather(float* const* buffers, int i) noexcept
 {
@@ -121,17 +121,19 @@ void svfGroup(FilterLane* const* lanes, int numSamples, bool steep, float inputG
 /** A chain of first-order all-pass sections for four lanes (half-band polyphase path). */
 struct AllpassChain4
 {
-    std::array<__m128, HalfBand2x::maxCoefficients> c, x, y;
+    // Plain arrays: std::array<__m128> drops the vector type's alignment attributes (GCC warns).
+    __m128 c[HalfBand2x::maxCoefficients];
+    __m128 x[HalfBand2x::maxCoefficients];
+    __m128 y[HalfBand2x::maxCoefficients];
     int n = 0;
 
     __m128 process(__m128 in) noexcept
     {
         for (int i = 0; i < n; ++i)
         {
-            const __m128 out = _mm_add_ps(_mm_mul_ps(c[static_cast<std::size_t>(i)], _mm_sub_ps(in, y[static_cast<std::size_t>(i)])),
-                                          x[static_cast<std::size_t>(i)]);
-            x[static_cast<std::size_t>(i)] = in;
-            y[static_cast<std::size_t>(i)] = out;
+            const __m128 out = _mm_add_ps(_mm_mul_ps(c[i], _mm_sub_ps(in, y[i])), x[i]);
+            x[i] = in;
+            y[i] = out;
             in = out;
         }
         return in;
@@ -210,9 +212,9 @@ void VoiceFilterSimd::ladder(FilterLane* lanes, int count, int numSamples, float
             for (int i = 0; i < reference.n; ++i)
             {
                 const auto si = static_cast<std::size_t>(i);
-                chains[c].c[si] = _mm_set1_ps(reference.c[si]);
-                chains[c].x[si] = lanes4([&](int l) { return chainOf(ladderOf(l).oversampler, c).x[si]; });
-                chains[c].y[si] = lanes4([&](int l) { return chainOf(ladderOf(l).oversampler, c).y[si]; });
+                chains[c].c[i] = _mm_set1_ps(reference.c[si]);
+                chains[c].x[i] = lanes4([&](int l) { return chainOf(ladderOf(l).oversampler, c).x[si]; });
+                chains[c].y[i] = lanes4([&](int l) { return chainOf(ladderOf(l).oversampler, c).y[si]; });
             }
         }
 
@@ -299,8 +301,8 @@ void VoiceFilterSimd::ladder(FilterLane* lanes, int count, int numSamples, float
             for (int i = 0; i < chains[c].n; ++i)
             {
                 const auto si = static_cast<std::size_t>(i);
-                unlanes4(chains[c].x[si], [&](int l, float v) { chainOf(ladderOf(l).oversampler, c).x[si] = v; });
-                unlanes4(chains[c].y[si], [&](int l, float v) { chainOf(ladderOf(l).oversampler, c).y[si] = v; });
+                unlanes4(chains[c].x[i], [&](int l, float v) { chainOf(ladderOf(l).oversampler, c).x[si] = v; });
+                unlanes4(chains[c].y[i], [&](int l, float v) { chainOf(ladderOf(l).oversampler, c).y[si] = v; });
             }
         // Keep the scalar coefficients in step, so a later scalar block continues seamlessly.
         for (int l = 0; l < 4; ++l)

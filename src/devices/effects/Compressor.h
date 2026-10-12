@@ -20,11 +20,16 @@ class CompressorDevice final : public StudioDevice
 public:
     static constexpr const char* typeId = "lattice.compressor";
 
-    enum Param : int
+    /** Parameter indices, in declaration order. (In a struct, so the names don't fill the
+        class scope.) */
+    struct Param
     {
-        threshold, ratio, attack, release, knee, makeup, mix, detection,
-        sidechainOn, sidechainGain, eqOn, eqType, eqFrequency, eqQ, eqGain,
-        numParams
+        enum : std::uint8_t
+        {
+            threshold, ratio, attack, release, knee, makeup, mix, detection,
+            sidechainOn, sidechainGain, eqOn, eqType, eqFrequency, eqQ, eqGain,
+            numParams
+        };
     };
 
     CompressorDevice();

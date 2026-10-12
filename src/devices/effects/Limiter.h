@@ -23,9 +23,14 @@ public:
     static constexpr const char* typeId = "lattice.limiter";
     static constexpr double lookaheadSeconds = 0.0015;
 
-    enum Param : int
+    /** Parameter indices, in declaration order. (In a struct, so the names don't fill the
+        class scope.) */
+    struct Param
     {
-        gain, ceiling, release, numParams
+        enum : std::uint8_t
+        {
+            gain, ceiling, release, numParams
+        };
     };
 
     LimiterDevice();

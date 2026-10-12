@@ -87,8 +87,9 @@ public:
         and send note-offs for what they were playing. Called when the chain's MIDI path changes. */
     virtual void releaseAllNotes() noexcept LATTICE_NONBLOCKING {}
 
-    /** Audio thread: clears internal state (delay lines, voices, filters). */
-    virtual void reset() noexcept LATTICE_NONBLOCKING {}
+    /** Audio thread: clears internal state (delay lines, voices, filters). (Also
+        juce::AudioProcessor's reset().) */
+    void reset() noexcept LATTICE_NONBLOCKING override {}
 
     /** How the on/off switch treats the device: racks act as an instrument or an audio effect. */
     virtual DeviceKind switchKind() const noexcept { return deviceKind; }

@@ -41,9 +41,14 @@ public:
         Beat
     };
 
-    enum Param : int
+    /** Parameter indices, in declaration order. (In a struct, so the names don't fill the
+        class scope.) */
+    struct Param
     {
-        style, rate, gate, range, distance, transpose, retrigger, retriggerRate, hold, numParams
+        enum : std::uint8_t
+        {
+            style, rate, gate, range, distance, transpose, retrigger, retriggerRate, hold, numParams
+        };
     };
 
     ArpeggiatorDevice();

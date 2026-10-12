@@ -54,12 +54,17 @@ public:
         Plate
     };
 
-    enum Param : int
+    /** Parameter indices, in declaration order. (In a struct, so the names don't fill the
+        class scope.) */
+    struct Param
     {
-        size, decay, lowDecay, highDecay, lowCrossover, highCrossover,
-        predelay, predelaySync, predelayBeats, diffusion, shape,
-        earlyLevel, lateLevel, modulation, width, lowCut, highCut, freeze, quality, mix,
-        numParams
+        enum : std::uint8_t
+        {
+            size, decay, lowDecay, highDecay, lowCrossover, highCrossover,
+            predelay, predelaySync, predelayBeats, diffusion, shape,
+            earlyLevel, lateLevel, modulation, width, lowCut, highCut, freeze, quality, mix,
+            numParams
+        };
     };
 
     ReverbDevice();

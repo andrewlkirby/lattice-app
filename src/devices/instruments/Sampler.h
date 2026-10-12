@@ -61,17 +61,22 @@ public:
         Manual
     };
 
-    enum Param : int
+    /** Parameter indices, in declaration order. (In a struct, so the names don't fill the
+        class scope.) */
+    struct Param
     {
-        root, transpose, detune, tuningMode, start, end, mode, quality,
-        loopOn, loopStart, loopLength, loopCrossfade,
-        fadeIn, fadeOut,
-        ampAttack, ampDecay, ampSustain, ampRelease, ampVelocity,
-        filterOn, filterType, filterCutoff, filterResonance,
-        sliceBy, sliceSensitivity, sliceDivision, sliceTempo,
-        polyphony, choke, spread,
-        outVolume, outPan,
-        numParams
+        enum : std::uint8_t
+        {
+            root, transpose, detune, tuningMode, start, end, mode, quality,
+            loopOn, loopStart, loopLength, loopCrossfade,
+            fadeIn, fadeOut,
+            ampAttack, ampDecay, ampSustain, ampRelease, ampVelocity,
+            filterOn, filterType, filterCutoff, filterResonance,
+            sliceBy, sliceSensitivity, sliceDivision, sliceTempo,
+            polyphony, choke, spread,
+            outVolume, outPan,
+            numParams
+        };
     };
 
     SamplerDevice(const TrackTuning& tuning, SamplePool& pool);

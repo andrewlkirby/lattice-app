@@ -7,7 +7,7 @@ namespace lattice
 {
 namespace
 {
-enum Field
+enum Field : std::uint8_t
 {
     fieldOn,
     fieldShape,
