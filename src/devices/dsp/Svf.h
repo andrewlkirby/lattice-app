@@ -9,6 +9,8 @@
 namespace lattice::dsp
 {
 
+struct VoiceFilterSimd;
+
 enum class SvfMode : std::uint8_t
 {
     LowPass,
@@ -89,6 +91,8 @@ struct SvfStage
 class Svf
 {
 public:
+    friend struct VoiceFilterSimd; // processes four filters at once, on their state
+
     void reset() noexcept
     {
         first.reset();
@@ -118,7 +122,56 @@ public:
         return second.process(x, c2, mode);
     }
 
+    /** The two stages' state (the 12 dB filter uses only the second). */
+    SvfStage& stage(int index) noexcept { return index == 0 ? first : second; }
+
+    /** A block in place, with an input gain; the mode is chosen once, outside the loop. */
+    void processBlock(float* x, int n, float inputGain, SvfMode mode) noexcept LATTICE_NONBLOCKING
+    {
+        switch (mode)
+        {
+        case SvfMode::LowPass: run<SvfMode::LowPass>(x, n, inputGain); break;
+        case SvfMode::HighPass: run<SvfMode::HighPass>(x, n, inputGain); break;
+        case SvfMode::BandPass: run<SvfMode::BandPass>(x, n, inputGain); break;
+        case SvfMode::Notch: run<SvfMode::Notch>(x, n, inputGain); break;
+        }
+    }
+
 private:
+    template <SvfMode mode>
+    static float tick(float x, float& ic1, float& ic2, const SvfCoefficients& c) noexcept
+    {
+        const float v3 = x - ic2;
+        const float v1 = c.a1 * ic1 + c.a2 * v3;
+        const float v2 = ic2 + c.a2 * ic1 + c.a3 * v3;
+        ic1 = 2.0f * v1 - ic1;
+        ic2 = 2.0f * v2 - ic2;
+        if constexpr (mode == SvfMode::LowPass)
+            return v2;
+        else if constexpr (mode == SvfMode::HighPass)
+            return x - c.k * v1 - v2;
+        else if constexpr (mode == SvfMode::BandPass)
+            return v1;
+        else
+            return x - c.k * v1;
+    }
+
+    template <SvfMode mode>
+    void run(float* x, int n, float inputGain) noexcept
+    {
+        float a1 = first.ic1, a2 = first.ic2, b1 = second.ic1, b2 = second.ic2;
+        if (isSteep)
+            for (int i = 0; i < n; ++i)
+                x[i] = tick<mode>(tick<mode>(x[i] * inputGain, a1, a2, c1), b1, b2, c2);
+        else
+            for (int i = 0; i < n; ++i)
+                x[i] = tick<mode>(x[i] * inputGain, b1, b2, c2);
+        first.ic1 = a1;
+        first.ic2 = a2;
+        second.ic1 = b1;
+        second.ic2 = b2;
+    }
+
     SvfStage first;
     SvfStage second;
     SvfCoefficients c1;

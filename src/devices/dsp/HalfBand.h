@@ -8,6 +8,8 @@
 namespace lattice::dsp
 {
 
+struct VoiceFilterSimd;
+
 /** Coefficients of a polyphase IIR half-band filter: two parallel chains of first-order all-pass
     sections (elliptic design, after Laurent de Soras' HIIR). Cheap and steep, with a small
     nonlinear phase in the passband. Used for 2x oversampling. */
@@ -25,6 +27,8 @@ struct HalfBandDesign
 class HalfBand2x
 {
 public:
+    friend struct VoiceFilterSimd; // processes four filters at once, on their state
+
     static constexpr int maxCoefficients = 16;
 
     explicit HalfBand2x(const HalfBandDesign& design);

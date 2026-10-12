@@ -156,6 +156,7 @@ add_library(lattice_core STATIC
     src/devices/BuiltinDevices.cpp
     src/devices/dsp/Biquad.cpp
     src/devices/dsp/HalfBand.cpp
+    src/devices/dsp/VoiceFilterSimd.cpp
     src/devices/dsp/Wavetable.cpp
     src/devices/framework/DeviceChain.cpp
     src/devices/framework/DeviceParameter.cpp

@@ -41,7 +41,7 @@ public:
     static constexpr int spareVoices = 4; // where stolen voices fade out
     static constexpr int voiceSlots = maxPolyphony + spareVoices;
     static constexpr int maxUnison = 8;
-    static constexpr int controlBlock = 32;
+    static constexpr int controlBlock = 64;
     static constexpr int numModSlots = 8;
     static constexpr double stealFadeSeconds = 0.003;
 
@@ -189,6 +189,16 @@ private:
         float lastPan = 0.0f;
         bool started = false; // increments are set (no interpolation from zero)
 
+        // The current control block, between the stages
+        std::array<float, controlBlock> bufL{};
+        std::array<float, controlBlock> bufR{};
+        float blockG = 0.0f;
+        float blockGStep = 0.0f;
+        float blockResonance = 0.0f;
+        bool blockStereo = false;
+        float blockGain = 0.0f;
+        float panFromL = 0.0f, panFromR = 0.0f, panStepL = 0.0f, panStepR = 0.0f;
+
         bool isActive() const noexcept { return amp.isActive(); }
     };
 
@@ -200,8 +210,12 @@ private:
     void setSustain(bool down) noexcept LATTICE_NONBLOCKING;
     void renderSegment(float* left, float* right, int numSamples, const DeviceTimeInfo& time,
                        int offset) noexcept LATTICE_NONBLOCKING;
-    void renderVoice(Voice& v, float* left, float* right, int numSamples, const DeviceTimeInfo& time,
-                     int offset) noexcept LATTICE_NONBLOCKING;
+    /** One control block of a voice up to its filter: modulation, oscillators, sub and noise into
+        the voice's buffers, and the filter and amplitude settings for the block. */
+    void renderVoiceBlock(Voice& v, int start, int numSamples, const DeviceTimeInfo& time,
+                          int offset) noexcept LATTICE_NONBLOCKING;
+    /** The rest of the block after the filter: drive, amplitude envelope and pan, into the output. */
+    void finishVoiceBlock(Voice& v, float* outL, float* outR, int numSamples) noexcept LATTICE_NONBLOCKING;
     void readPatch() noexcept LATTICE_NONBLOCKING;
     int heldNoteForMono() const noexcept;
 

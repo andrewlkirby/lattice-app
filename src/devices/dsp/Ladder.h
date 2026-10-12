@@ -9,6 +9,8 @@
 namespace lattice::dsp
 {
 
+struct VoiceFilterSimd;
+
 /** A fast tanh: a rational approximation, exact at 0, within 0.2% everywhere, saturating at +-1. */
 inline float fastTanh(float x) noexcept
 {
@@ -28,6 +30,8 @@ inline float fastTanh(float x) noexcept
 class LadderFilter
 {
 public:
+    friend struct VoiceFilterSimd; // processes four filters at once, on their state
+
     void reset() noexcept
     {
         s1 = s2 = s3 = s4 = 0.0f;

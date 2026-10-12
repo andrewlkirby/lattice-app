@@ -1,6 +1,8 @@
 #include "devices/instruments/Synth.h"
 
+#include "devices/dsp/OscillatorSimd.h"
 #include "devices/dsp/SyncRates.h"
+#include "devices/dsp/VoiceFilterSimd.h"
 
 #include <algorithm>
 #include <cmath>
@@ -633,13 +635,66 @@ void SynthDevice::process(DeviceBuffers& io, const DeviceTimeInfo& time) noexcep
 void SynthDevice::renderSegment(float* left, float* right, int numSamples, const DeviceTimeInfo& time,
                                 int offset) noexcept
 {
+    const bool ladder = patch.filter == FilterType::Ladder;
+    const bool steep = patch.filter == FilterType::LowPass24 || patch.filter == FilterType::HighPass24;
+    dsp::SvfMode svfMode = dsp::SvfMode::LowPass;
+    if (patch.filter == FilterType::HighPass12 || patch.filter == FilterType::HighPass24)
+        svfMode = dsp::SvfMode::HighPass;
+    else if (patch.filter == FilterType::BandPass)
+        svfMode = dsp::SvfMode::BandPass;
+    else if (patch.filter == FilterType::Notch)
+        svfMode = dsp::SvfMode::Notch;
+
+    // Each control block in three stages: every voice's oscillators, then all the voice filters
+    // side by side (four per SIMD register), then every voice's amplitude and pan.
+    for (int start = 0; start < numSamples; start += controlBlock)
+    {
+        const int m = std::min(controlBlock, numSamples - start);
+        std::array<Voice*, voiceSlots> active{};
+        int numActive = 0;
+        for (auto& v : voices)
+            if (v.isActive())
+                active[static_cast<std::size_t>(numActive++)] = &v;
+        if (numActive == 0)
+            return;
+
+        std::array<dsp::FilterLane, voiceSlots * 2> lanes{};
+        int numLanes = 0;
+        for (int i = 0; i < numActive; ++i)
+        {
+            auto& v = *active[static_cast<std::size_t>(i)];
+            renderVoiceBlock(v, start, m, time, offset);
+            for (int ch = 0; ch < (v.blockStereo ? 2 : 1); ++ch)
+            {
+                auto& lane = lanes[static_cast<std::size_t>(numLanes++)];
+                lane.buffer = ch == 0 ? v.bufL.data() : v.bufR.data();
+                lane.svf = &v.svf[ch];
+                lane.ladder = &v.ladder[ch];
+                lane.g = v.blockG;
+                lane.gStep = v.blockGStep;
+                lane.resonance = v.blockResonance;
+            }
+        }
+
+        if (ladder)
+            dsp::VoiceFilterSimd::ladder(lanes.data(), numLanes, m, patch.drive);
+        else
+            dsp::VoiceFilterSimd::svf(lanes.data(), numLanes, m, steep, svfMode, patch.drive);
+
+        for (int i = 0; i < numActive; ++i)
+            finishVoiceBlock(*active[static_cast<std::size_t>(i)], left + start, right + start, m);
+    }
+
     for (auto& v : voices)
-        if (v.isActive())
-            renderVoice(v, left, right, numSamples, time, offset);
+        if (!v.isActive() && v.note >= 0)
+        {
+            v.note = -1;
+            v.stealing = false;
+            v.gate = v.keyDown = false;
+        }
 }
 
-void SynthDevice::renderVoice(Voice& v, float* left, float* right, int numSamples, const DeviceTimeInfo& time,
-                              int offset) noexcept
+void SynthDevice::renderVoiceBlock(Voice& v, int start, int m, const DeviceTimeInfo& time, int offset) noexcept
 {
     const auto& p = patch;
     const double sr = sampleRate();
@@ -655,14 +710,10 @@ void SynthDevice::renderVoice(Voice& v, float* left, float* right, int numSample
     else if (p.filter == FilterType::Notch)
         svfMode = dsp::SvfMode::Notch;
 
-    for (int start = 0; start < numSamples && v.isActive(); start += controlBlock)
     {
-        const int m = std::min(controlBlock, numSamples - start);
 
         // --- Control rate: modulation sources -------------------------------------------------------
-        float env2Value = 0.0f;
-        for (int i = 0; i < m; ++i)
-            env2Value = v.env2.next();
+        const float env2Value = v.env2.advance(m);
         float lfoValue[2];
         float modSum[static_cast<int>(ModDest::count)]{};
         // LFO rates may themselves be modulated (by the previous block's sums would be circular:
@@ -811,8 +862,6 @@ void SynthDevice::renderVoice(Voice& v, float* left, float* right, int numSample
         panGains(panTarget, panToL, panToR);
         const float panStepL = (panToL - panFromL) / static_cast<float>(m);
         const float panStepR = (panToR - panFromR) / static_cast<float>(m);
-        float panL = panFromL;
-        float panR = panFromR;
         const float noiseCoef = 0.02f + 0.98f * p.noiseColour * p.noiseColour;
         v.started = true;
 
@@ -839,35 +888,41 @@ void SynthDevice::renderVoice(Voice& v, float* left, float* right, int numSample
         const bool osc2On = (level2 > 0.0f || p.sync) && oscHz[1] > 0.0;
         const bool sync = p.sync && osc2On;
 
-        float* outL = left + start;
-        float* outR = right + start;
-        for (int i = 0; i < m; ++i)
+        // The block is built in stages, each a tight loop: oscillators (the shape chosen outside the
+        // loop), sub and noise, filter, then amplitude and pan.
+        float* bufL = v.bufL.data();
+        float* bufR = v.bufR.data();
+        std::fill_n(bufL, m, 0.0f);
+        std::fill_n(bufR, m, 0.0f);
+
+        if (sync)
         {
-            float l = 0.0f;
-            float r = 0.0f;
-            for (int u = 0; u < unison; ++u)
+            // Hard sync needs osc 1's wraps sample by sample: one combined loop.
+            for (int i = 0; i < m; ++i)
             {
-                auto& c1 = v.osc1[static_cast<std::size_t>(u)];
-                auto& c2 = v.osc2[static_cast<std::size_t>(u)];
-                c1.inc = static_cast<std::uint32_t>(static_cast<std::int64_t>(c1.inc) + incStep[0][u]);
-                c2.inc = static_cast<std::uint32_t>(static_cast<std::int64_t>(c2.inc) + incStep[1][u]);
-
-                float s = 0.0f;
-                if (osc1On)
-                    s += level1 * oscSample(0, c1.phase, at[0][u]);
-                const std::uint32_t before = c1.phase;
-                c1.phase += c1.inc;
-                const bool wrapped = c1.phase < before;
-
-                if (osc2On)
+                float l = 0.0f;
+                float r = 0.0f;
+                for (int u = 0; u < unison; ++u)
                 {
+                    auto& c1 = v.osc1[static_cast<std::size_t>(u)];
+                    auto& c2 = v.osc2[static_cast<std::size_t>(u)];
+                    c1.inc = static_cast<std::uint32_t>(static_cast<std::int64_t>(c1.inc) + incStep[0][u]);
+                    c2.inc = static_cast<std::uint32_t>(static_cast<std::int64_t>(c2.inc) + incStep[1][u]);
+
+                    float s = 0.0f;
+                    if (osc1On)
+                        s += level1 * oscSample(0, c1.phase, at[0][u]);
+                    const std::uint32_t before = c1.phase;
+                    c1.phase += c1.inc;
+                    const bool wrapped = c1.phase < before;
+
                     float y = oscSample(1, c2.phase, at[1][u]) + c2.blep;
                     c2.blep = 0.0f;
-                    if (sync && wrapped && c1.inc > 0)
+                    if (wrapped && c1.inc > 0)
                     {
                         // Osc 1 starts a new cycle tau of the way to the next sample, and osc 2
                         // restarts with it. A two-point polyBLEP spreads the jump over this sample and
-                        // the next, so the restart doesn't alias.
+                        // the next, so the restart does not alias.
                         const double tau = 1.0 - static_cast<double>(c1.phase) / static_cast<double>(c1.inc);
                         const auto partial = static_cast<std::uint32_t>(tau * c2.inc);
                         const float jump = oscSample(1, 0, at[1][u]) - oscSample(1, c2.phase + partial, at[1][u]);
@@ -881,88 +936,177 @@ void SynthDevice::renderVoice(Voice& v, float* left, float* right, int numSample
                         c2.phase += c2.inc;
                     }
                     s += level2 * y;
+                    l += s * (stereo ? p.unisonLeft[static_cast<std::size_t>(u)] : 1.0f);
+                    r += s * (stereo ? p.unisonRight[static_cast<std::size_t>(u)] : 0.0f);
                 }
-
-                if (stereo)
-                {
-                    l += s * p.unisonLeft[static_cast<std::size_t>(u)];
-                    r += s * p.unisonRight[static_cast<std::size_t>(u)];
-                }
-                else
-                {
-                    l += s;
-                }
-            }
-
-            float extra = 0.0f;
-            if (subLevel > 0.0f)
-            {
-                v.subInc = static_cast<std::uint32_t>(static_cast<std::int64_t>(v.subInc) + subStep);
-                extra += subLevel * waves.shape(dsp::WaveformLibrary::Shape::Sine).sample(v.subPhase, subAt);
-                v.subPhase += v.subInc;
-            }
-            if (noiseLevel > 0.0f)
-            {
-                v.noiseSeed ^= v.noiseSeed << 13;
-                v.noiseSeed ^= v.noiseSeed >> 17;
-                v.noiseSeed ^= v.noiseSeed << 5;
-                const float white = static_cast<float>(v.noiseSeed) * 4.6566128730773926e-10f - 1.0f;
-                v.noiseState += noiseCoef * (white - v.noiseState);
-                extra += noiseLevel * v.noiseState;
-            }
-            if (stereo)
-            {
-                l += extra * 0.70710678f;
-                r += extra * 0.70710678f;
-            }
-            else
-            {
-                l += extra;
-            }
-
-            // Filter (coefficients interpolated per sample).
-            v.filterG += gStep;
-            if (ladder)
-            {
-                v.ladder[0].setCoefficients(v.filterG, resonance, p.drive);
-                l = v.ladder[0].process(l);
-                if (stereo)
-                {
-                    v.ladder[1].setCoefficients(v.filterG, resonance, p.drive);
-                    r = v.ladder[1].process(r);
-                }
-            }
-            else
-            {
-                v.svf[0].setCoefficients(v.filterG, resonance, steep);
-                l = v.svf[0].process(l * p.drive, svfMode);
-                if (stereo)
-                {
-                    v.svf[1].setCoefficients(v.filterG, resonance, steep);
-                    r = v.svf[1].process(r * p.drive, svfMode);
-                }
-                if (p.drive > 1.0f)
-                {
-                    const float makeUp = 1.0f / std::sqrt(p.drive);
-                    l = dsp::fastTanh(l) * makeUp;
-                    r = stereo ? dsp::fastTanh(r) * makeUp : r;
-                }
-            }
-
-            const float gain = v.amp.next() * velocityGain * ampMod;
-            panL += panStepL;
-            panR += panStepR;
-            if (stereo)
-            {
-                outL[i] += l * gain * panL * 1.41421356f;
-                outR[i] += r * gain * panR * 1.41421356f;
-            }
-            else
-            {
-                outL[i] += l * gain * panL;
-                outR[i] += l * gain * panR;
+                bufL[i] = l;
+                bufR[i] = r;
             }
         }
+        else
+        {
+            for (int o = 0; o < 2; ++o)
+            {
+                if (!(o == 0 ? osc1On : osc2On))
+                    continue;
+                const float level = o == 0 ? level1 : level2;
+                auto& copies = o == 0 ? v.osc1 : v.osc2;
+                int firstSingle = 0;
+                // Unison: groups of four copies, one SSE lane each.
+                if (p.shape[o] != Shape::Wavetable)
+                {
+                    const auto& w = p.shape[o] == Shape::Pulse ? saw : *wave[o];
+                    for (int g = 0; g + 4 <= unison; g += 4)
+                    {
+                        // Copies detuned across a table boundary share the sparser table (alias-free
+                        // for all of them; the richer one would only add top harmonics to some).
+                        int groupLevel = 0;
+                        bool usable = true;
+                        for (int k = 0; k < 4; ++k)
+                        {
+                            usable = usable && !at[o][g + k].silent;
+                            groupLevel = std::max(groupLevel, at[o][g + k].level);
+                        }
+                        for (int k = 0; k < 4; ++k)
+                            usable = usable && at[o][g + k].level >= groupLevel - 1;
+                        if (!usable)
+                            break;
+                        std::uint32_t phases[4];
+                        std::uint32_t incs[4];
+                        std::int32_t steps[4];
+                        float blends[4];
+                        float gl[4];
+                        float gr[4];
+                        for (int k = 0; k < 4; ++k)
+                        {
+                            const auto u = static_cast<std::size_t>(g + k);
+                            phases[k] = copies[u].phase;
+                            incs[k] = copies[u].inc;
+                            steps[k] = static_cast<std::int32_t>(incStep[o][g + k]);
+                            blends[k] = at[o][g + k].level == groupLevel ? at[o][g + k].blend : 0.0f;
+                            gl[k] = level * (stereo ? p.unisonLeft[u] : 1.0f);
+                            gr[k] = level * (stereo ? p.unisonRight[u] : 0.0f);
+                        }
+                        if (!dsp::renderFourCopies(w, groupLevel, blends, phases, incs, steps,
+                                                   p.shape[o] == Shape::Pulse ? pwOff[o] : 0u, gl, gr, bufL, bufR, m))
+                            break;
+                        for (int k = 0; k < 4; ++k)
+                        {
+                            copies[static_cast<std::size_t>(g + k)].phase = phases[k];
+                            copies[static_cast<std::size_t>(g + k)].inc = incs[k];
+                        }
+                        firstSingle = g + 4;
+                    }
+                }
+                for (int u = firstSingle; u < unison; ++u)
+                {
+                    auto& c = (o == 0 ? v.osc1 : v.osc2)[static_cast<std::size_t>(u)];
+                    const auto& pos = at[o][u];
+                    const float gl = level * (stereo ? p.unisonLeft[static_cast<std::size_t>(u)] : 1.0f);
+                    const float gr = level * (stereo ? p.unisonRight[static_cast<std::size_t>(u)] : 0.0f);
+                    const std::int64_t step = incStep[o][u];
+                    const auto run = [&](auto&& read) {
+                        std::uint32_t phase = c.phase;
+                        auto inc = static_cast<std::int64_t>(c.inc);
+                        for (int i = 0; i < m; ++i)
+                        {
+                            inc += step;
+                            const float x = read(phase);
+                            phase += static_cast<std::uint32_t>(inc);
+                            bufL[i] += x * gl;
+                            bufR[i] += x * gr;
+                        }
+                        c.phase = phase;
+                        c.inc = static_cast<std::uint32_t>(inc);
+                    };
+                    if (pos.silent)
+                    {
+                        run([](std::uint32_t) { return 0.0f; });
+                        continue;
+                    }
+                    // The usual shapes: four samples at a time (SSE2).
+                    if (p.shape[o] != Shape::Wavetable)
+                    {
+                        const bool pulse = p.shape[o] == Shape::Pulse;
+                        if (dsp::renderCopy(pulse ? saw : *wave[o], pos, c.phase, c.inc, static_cast<std::int32_t>(step),
+                                            pulse ? pwOff[o] : 0u, gl, gr, bufL, bufR, m))
+                            continue;
+                    }
+                    switch (p.shape[o])
+                    {
+                    case Shape::Pulse:
+                    {
+                        const std::uint32_t off = pwOff[o];
+                        if (pos.blend <= 0.0f)
+                            run([&](std::uint32_t ph) {
+                                return saw.readLevel(pos.level, ph) - saw.readLevel(pos.level, ph + off);
+                            });
+                        else
+                            run([&](std::uint32_t ph) { return saw.sample(ph, pos) - saw.sample(ph + off, pos); });
+                        break;
+                    }
+                    case Shape::Wavetable:
+                    {
+                        const auto* t = table[o];
+                        const float morph = position[o];
+                        run([&](std::uint32_t ph) { return t->sample(ph, pos, morph); });
+                        break;
+                    }
+                    case Shape::Sine:
+                    case Shape::Triangle:
+                    case Shape::Saw:
+                    {
+                        const auto* w = wave[o];
+                        if (pos.blend <= 0.0f)
+                            run([&](std::uint32_t ph) { return w->readLevel(pos.level, ph); });
+                        else
+                            run([&](std::uint32_t ph) { return w->sample(ph, pos); });
+                        break;
+                    }
+                    }
+                }
+            }
+        }
+
+        if (subLevel > 0.0f || noiseLevel > 0.0f)
+        {
+            const float side = stereo ? 0.70710678f : 1.0f;
+            const auto& sine = waves.shape(dsp::WaveformLibrary::Shape::Sine);
+            for (int i = 0; i < m; ++i)
+            {
+                float extra = 0.0f;
+                if (subLevel > 0.0f)
+                {
+                    v.subInc = static_cast<std::uint32_t>(static_cast<std::int64_t>(v.subInc) + subStep);
+                    extra += subLevel * sine.sample(v.subPhase, subAt);
+                    v.subPhase += v.subInc;
+                }
+                if (noiseLevel > 0.0f)
+                {
+                    v.noiseSeed ^= v.noiseSeed << 13;
+                    v.noiseSeed ^= v.noiseSeed >> 17;
+                    v.noiseSeed ^= v.noiseSeed << 5;
+                    const float white = static_cast<float>(v.noiseSeed) * 4.6566128730773926e-10f - 1.0f;
+                    v.noiseState += noiseCoef * (white - v.noiseState);
+                    extra += noiseLevel * v.noiseState;
+                }
+                bufL[i] += extra * side;
+                bufR[i] += extra * side;
+            }
+        }
+
+        // What the filter and amplitude stages need (they run across voices, in renderSegment).
+        v.blockG = v.filterG;
+        v.blockGStep = gStep;
+        v.blockResonance = resonance;
+        v.blockStereo = stereo;
+        v.blockGain = velocityGain * ampMod * (stereo ? 1.41421356f : 1.0f);
+        v.panFromL = panFromL;
+        v.panFromR = panFromR;
+        v.panStepL = panStepL;
+        v.panStepR = panStepR;
+        juce::ignoreUnused(start, ladder, steep, svfMode);
+
         // The increments ended exactly on target (integer division left a remainder).
         for (int u = 0; u < unison; ++u)
         {
@@ -973,12 +1117,35 @@ void SynthDevice::renderVoice(Voice& v, float* left, float* right, int numSample
         v.filterG = gTarget;
         v.lastPan = panTarget;
     }
+}
 
-    if (!v.isActive())
+void SynthDevice::finishVoiceBlock(Voice& v, float* outL, float* outR, int m) noexcept
+{
+    float* bufL = v.bufL.data();
+    float* bufR = v.bufR.data();
+    const bool stereo = v.blockStereo;
+    if (patch.filter != FilterType::Ladder && patch.drive > 1.0f)
     {
-        v.note = -1;
-        v.stealing = false;
-        v.gate = v.keyDown = false;
+        const float makeUp = 1.0f / std::sqrt(patch.drive);
+        for (int i = 0; i < m; ++i)
+        {
+            bufL[i] = dsp::fastTanh(bufL[i]) * makeUp;
+            bufR[i] = stereo ? dsp::fastTanh(bufR[i]) * makeUp : bufR[i];
+        }
+    }
+
+    float ampBuf[controlBlock];
+    v.amp.renderBlock(ampBuf, m);
+    const float* rightSource = stereo ? bufR : bufL;
+    float panL = v.panFromL;
+    float panR = v.panFromR;
+    for (int i = 0; i < m; ++i)
+    {
+        const float gain = ampBuf[i] * v.blockGain;
+        panL += v.panStepL;
+        panR += v.panStepR;
+        outL[i] += bufL[i] * gain * panL;
+        outR[i] += rightSource[i] * gain * panR;
     }
 }
 

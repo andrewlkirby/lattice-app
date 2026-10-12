@@ -63,6 +63,16 @@ public:
         return a + at.blend * (b - a);
     }
 
+    /** One level's sample, no blending (for loops that hoist the position). */
+    float readLevel(int level, std::uint32_t phase) const noexcept LATTICE_NONBLOCKING
+    {
+        return read(levels[static_cast<std::size_t>(level)], phase);
+    }
+
+    /** A level's table: `1 << bits` samples, with `guard` samples before and after. */
+    const float* levelData(int level) const noexcept { return levels[static_cast<std::size_t>(level)].table.data(); }
+    int levelBits(int level) const noexcept { return levels[static_cast<std::size_t>(level)].bits; }
+
     /** The harmonic count of a level (for tests). */
     int harmonicsAt(int level) const noexcept { return levels[static_cast<std::size_t>(level)].harmonics; }
     std::size_t memoryBytes() const noexcept;

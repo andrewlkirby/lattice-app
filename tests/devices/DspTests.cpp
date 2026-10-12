@@ -6,12 +6,14 @@
 #include "devices/dsp/HalfBand.h"
 #include "devices/dsp/Ladder.h"
 #include "devices/dsp/Svf.h"
+#include "devices/dsp/VoiceFilterSimd.h"
 #include "devices/dsp/Wavetable.h"
 #include "support/Spectrum.h"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <cmath>
 #include <vector>
 
@@ -416,4 +418,61 @@ TEST_CASE("Delay line: integer delays are exact, fractional ones accurate", "[de
         }
     }
     CHECK(worst < 1e-3);
+}
+
+TEST_CASE("Voice filters: four at once give the same output as one at a time", "[devices][dsp][filter]")
+{
+    constexpr int lanesCount = 6; // one SIMD group of four, then two scalar lanes
+    constexpr int n = 64;
+    for (const bool useLadder : {false, true})
+    {
+        INFO((useLadder ? "ladder" : "SVF"));
+        std::array<dsp::Svf, lanesCount> svfA{}, svfB{};
+        std::array<dsp::LadderFilter, lanesCount> ladderA{}, ladderB{};
+        std::array<std::array<float, n>, lanesCount> bufA{}, bufB{};
+        juce::Random random(3);
+        double worst = 0.0;
+        for (int block = 0; block < 200; ++block)
+        {
+            std::array<dsp::FilterLane, lanesCount> lanesA{}, lanesB{};
+            for (int l = 0; l < lanesCount; ++l)
+            {
+                for (int i = 0; i < n; ++i)
+                    bufA[static_cast<std::size_t>(l)][static_cast<std::size_t>(i)] =
+                        bufB[static_cast<std::size_t>(l)][static_cast<std::size_t>(i)] = random.nextFloat() * 2.0f - 1.0f;
+                const double fc = 100.0 * std::pow(150.0, (l + block % 7) / 12.0);
+                const float g = useLadder ? dsp::LadderFilter::prewarpOversampled(fc, sr) : dsp::SvfCoefficients::prewarp(fc, sr);
+                for (auto* lanes : {&lanesA, &lanesB})
+                {
+                    auto& lane = (*lanes)[static_cast<std::size_t>(l)];
+                    lane.g = g;
+                    lane.gStep = g * 0.001f;
+                    lane.resonance = 0.15f * static_cast<float>(l);
+                }
+                lanesA[static_cast<std::size_t>(l)].buffer = bufA[static_cast<std::size_t>(l)].data();
+                lanesB[static_cast<std::size_t>(l)].buffer = bufB[static_cast<std::size_t>(l)].data();
+                lanesA[static_cast<std::size_t>(l)].svf = &svfA[static_cast<std::size_t>(l)];
+                lanesB[static_cast<std::size_t>(l)].svf = &svfB[static_cast<std::size_t>(l)];
+                lanesA[static_cast<std::size_t>(l)].ladder = &ladderA[static_cast<std::size_t>(l)];
+                lanesB[static_cast<std::size_t>(l)].ladder = &ladderB[static_cast<std::size_t>(l)];
+            }
+            if (useLadder)
+            {
+                dsp::VoiceFilterSimd::ladder(lanesA.data(), lanesCount, n, 2.0f);
+                for (auto& lane : lanesB)
+                    dsp::VoiceFilterSimd::ladderScalar(lane, n, 2.0f);
+            }
+            else
+            {
+                dsp::VoiceFilterSimd::svf(lanesA.data(), lanesCount, n, true, dsp::SvfMode::LowPass, 1.5f);
+                for (auto& lane : lanesB)
+                    dsp::VoiceFilterSimd::svfScalar(lane, n, true, dsp::SvfMode::LowPass, 1.5f);
+            }
+            for (int l = 0; l < lanesCount; ++l)
+                for (int i = 0; i < n; ++i)
+                    worst = std::max(worst, static_cast<double>(std::abs(bufA[static_cast<std::size_t>(l)][static_cast<std::size_t>(i)] -
+                                                                          bufB[static_cast<std::size_t>(l)][static_cast<std::size_t>(i)])));
+        }
+        CHECK(worst < 1.0e-4);
+    }
 }

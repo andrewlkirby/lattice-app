@@ -48,3 +48,9 @@ add_executable(lattice_engine_bench bench/EngineBench.cpp)
 target_include_directories(lattice_engine_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(lattice_engine_bench PRIVATE lattice_core)
 lattice_set_warnings(lattice_engine_bench)
+
+# Device benchmarks (docs/04-m3-devices.md, "Tests" 11): each device's share of one core.
+add_executable(lattice_bench bench/DeviceBench.cpp)
+target_include_directories(lattice_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(lattice_bench PRIVATE lattice_core)
+lattice_set_warnings(lattice_bench)
