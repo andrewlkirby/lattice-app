@@ -102,6 +102,7 @@ public:
             time.blockStartSample = position;
             {
                 const rt::ScopedAudioThread audioThread;
+                const juce::ScopedNoDenormals noDenormals; // as in the engine's callback
                 device.processInChain(io, time);
             }
             audioLeft.insert(audioLeft.end(), left.begin(), left.begin() + n);

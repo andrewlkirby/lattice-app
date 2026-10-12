@@ -40,6 +40,21 @@ public:
         return true;
     }
 
+    /** Producer side. Pushes as many of the items as fit; returns how many (the rest count as
+        dropped). */
+    int pushMany(const T* source, int count) noexcept LATTICE_NONBLOCKING
+    {
+        const auto scope = fifo.write(juce::jmin(count, fifo.getFreeSpace()));
+        int read = 0;
+        for (int i = 0; i < scope.blockSize1; ++i)
+            items[static_cast<std::size_t>(scope.startIndex1 + i)] = source[read++];
+        for (int i = 0; i < scope.blockSize2; ++i)
+            items[static_cast<std::size_t>(scope.startIndex2 + i)] = source[read++];
+        if (read < count)
+            dropped.fetch_add(static_cast<std::uint32_t>(count - read), std::memory_order_relaxed);
+        return read;
+    }
+
     /** Consumer side. Returns false if the FIFO is empty. */
     bool pop(T& item) noexcept LATTICE_NONBLOCKING
     {

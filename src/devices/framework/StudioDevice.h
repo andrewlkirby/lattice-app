@@ -45,7 +45,7 @@ public:
                  std::vector<ParameterSpec> parameterSpecs);
     ~StudioDevice() override;
 
-    const juce::String& typeId() const noexcept { return type; }
+    const juce::String& typeId() const noexcept { return deviceType; }
     DeviceKind kind() const noexcept { return deviceKind; }
 
     // --- Parameters -------------------------------------------------------------------------------
@@ -136,13 +136,13 @@ private:
     void processAudioEffect(DeviceBuffers& io, const DeviceTimeInfo& time, float target) noexcept LATTICE_NONBLOCKING;
     void processInstrument(DeviceBuffers& io, const DeviceTimeInfo& time, float target) noexcept LATTICE_NONBLOCKING;
     void processMidiEffect(DeviceBuffers& io, const DeviceTimeInfo& time) noexcept LATTICE_NONBLOCKING;
-    /** Pushes the block's input through the dry delay line, leaving the delayed signal in `dry`. */
+    /** Pushes the block's input through the dry delay line, leaving the delayed signal in `dryBuffer`. */
     void delayDry(const DeviceBuffers& io) noexcept LATTICE_NONBLOCKING;
     void trackOutputNotes(const MidiBlock& out) noexcept LATTICE_NONBLOCKING;
     /** Note-offs for every note held at the output, at offset 0. */
     void flushOutputNotes(MidiBlock& out) noexcept LATTICE_NONBLOCKING;
 
-    const juce::String type;
+    const juce::String deviceType;
     const juce::String name;
     const DeviceKind deviceKind;
     std::vector<DeviceParameter*> params; // owned by juce::AudioProcessor
@@ -155,9 +155,9 @@ private:
     // On/off switch
     std::atomic<bool> enabled{true};
     float onMix = 1.0f; // 1 = fully on
-    float mixStep = 1.0f;
+    float onMixStep = 1.0f;
     bool midiEffectWasOn = true;
-    juce::AudioBuffer<float> dry;
+    juce::AudioBuffer<float> dryBuffer;
     juce::AudioBuffer<float> dryDelay; // ring buffer, latency samples per channel
     int dryDelayPos = 0;
     std::array<std::uint16_t, 128> heldOutput{}; // MIDI effects: a bit per channel for each note

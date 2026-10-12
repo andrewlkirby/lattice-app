@@ -8,7 +8,7 @@ namespace lattice
 StudioDevice::StudioDevice(juce::String typeId, juce::String displayName, DeviceKind kind,
                            std::vector<ParameterSpec> parameterSpecs)
     : juce::AudioProcessor(BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)),
-      type(std::move(typeId)),
+      deviceType(std::move(typeId)),
       name(std::move(displayName)),
       deviceKind(kind),
       stateCopy("STATE")
@@ -63,11 +63,11 @@ void StudioDevice::prepareDevice(double newSampleRate, int maxBlockSize)
     setRateAndBufferSizeDetails(newSampleRate, maxBlockSize);
     prepare(newSampleRate, maxBlockSize);
 
-    mixStep = static_cast<float>(1.0 / std::max(1.0, bypassFadeSeconds * newSampleRate));
+    onMixStep = static_cast<float>(1.0 / std::max(1.0, bypassFadeSeconds * newSampleRate));
     onMix = isEnabled() ? 1.0f : 0.0f;
     midiEffectWasOn = isEnabled();
-    dry.setSize(2, maxBlockSize, false, true, false);
-    dry.clear();
+    dryBuffer.setSize(2, maxBlockSize, false, true, false);
+    dryBuffer.clear();
     const int latency = latencySamples();
     dryDelay.setSize(2, std::max(latency, 1), false, true, false);
     dryDelay.clear();
@@ -126,7 +126,7 @@ void StudioDevice::delayDry(const DeviceBuffers& io) noexcept
     for (int ch = 0; ch < 2; ++ch)
     {
         const float* in = io.channels[std::min(ch, io.numChannels - 1)];
-        float* out = dry.getWritePointer(ch);
+        float* out = dryBuffer.getWritePointer(ch);
         if (latency == 0)
         {
             std::copy_n(in, n, out);
@@ -158,7 +158,7 @@ void StudioDevice::processAudioEffect(DeviceBuffers& io, const DeviceTimeInfo& t
         {
             delayDry(io);
             for (int ch = 0; ch < io.numChannels; ++ch)
-                std::copy_n(dry.getReadPointer(std::min(ch, 1)), n, io.channels[ch]);
+                std::copy_n(dryBuffer.getReadPointer(std::min(ch, 1)), n, io.channels[ch]);
         }
         return;
     }
@@ -174,14 +174,14 @@ void StudioDevice::processAudioEffect(DeviceBuffers& io, const DeviceTimeInfo& t
     if (!fading)
         return;
     float m = onMix;
-    const float step = target > onMix ? mixStep : -mixStep;
+    const float step = target > onMix ? onMixStep : -onMixStep;
     for (int i = 0; i < n; ++i)
     {
         m = juce::jlimit(0.0f, 1.0f, m + step);
         for (int ch = 0; ch < io.numChannels; ++ch)
         {
             float* out = io.channels[ch];
-            const float d = dry.getSample(std::min(ch, 1), i);
+            const float d = dryBuffer.getSample(std::min(ch, 1), i);
             out[i] = d + m * (out[i] - d);
         }
     }
@@ -205,7 +205,7 @@ void StudioDevice::processInstrument(DeviceBuffers& io, const DeviceTimeInfo& ti
     if (onMix == target)
         return;
     float m = onMix;
-    const float step = target > onMix ? mixStep : -mixStep;
+    const float step = target > onMix ? onMixStep : -onMixStep;
     for (int i = 0; i < n; ++i)
     {
         m = juce::jlimit(0.0f, 1.0f, m + step);
@@ -312,7 +312,7 @@ void StudioDevice::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuff
 void StudioDevice::getStateInformation(juce::MemoryBlock& destination)
 {
     juce::ValueTree root("DEVICE");
-    root.setProperty("type", type, nullptr);
+    root.setProperty("type", deviceType, nullptr);
     juce::ValueTree values("PARAMS");
     for (const auto* p : params)
         values.setProperty(p->id(), p->base(), nullptr);

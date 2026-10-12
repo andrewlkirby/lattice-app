@@ -3,6 +3,15 @@
 //
 //   lattice_bench [--seconds N] [--filter name]
 
+#include "devices/effects/AutoFilter.h"
+#include "devices/effects/Chorus.h"
+#include "devices/effects/Compressor.h"
+#include "devices/effects/Delay.h"
+#include "devices/effects/EqEight.h"
+#include "devices/effects/Limiter.h"
+#include "devices/effects/Reverb.h"
+#include "devices/effects/Saturator.h"
+#include "devices/effects/Utility.h"
 #include "devices/instruments/Sampler.h"
 #include "devices/instruments/Synth.h"
 #include "tuning/Tet12.h"
@@ -138,6 +147,31 @@ int main(int argc, char* argv[])
          [](StudioDevice& d) { setParam(d, "sample.root", 261.6256f); }, 32},
         {"Sampler 32 voices, draft", 1.5, sampler,
          [](StudioDevice& d) { setParam(d, "sample.quality", 1.0f); }, 32},
+        {"Reverb, High", 1.0, [] { return std::make_unique<ReverbDevice>(); }, [](StudioDevice&) {}, 0},
+        {"Reverb, Ultra", 2.0, [] { return std::make_unique<ReverbDevice>(); },
+         [](StudioDevice& d) { setParam(d, "reverb.quality", 2.0f); }, 0},
+        {"Reverb, Eco", 0.5, [] { return std::make_unique<ReverbDevice>(); },
+         [](StudioDevice& d) { setParam(d, "reverb.quality", 0.0f); }, 0},
+        {"EQ Eight, 8 bands", 0.5, [] { return std::make_unique<EqEightDevice>(); },
+         [](StudioDevice& d) {
+             for (int b = 1; b <= 8; ++b)
+             {
+                 setParam(d, ("band" + juce::String(b) + ".on").toRawUTF8(), 1.0f);
+                 setParam(d, ("band" + juce::String(b) + ".gain").toRawUTF8(), 3.0f);
+             }
+             setParam(d, "band1.shape", 0.0f); // a 48 dB cut too
+         },
+         0},
+        {"Compressor", 0.5, [] { return std::make_unique<CompressorDevice>(); }, [](StudioDevice&) {}, 0},
+        {"Delay", 0.5, [] { return std::make_unique<DelayDevice>(); },
+         [](StudioDevice& d) { setParam(d, "delay.modDepth", 2.0f); }, 0},
+        {"Chorus", 0.5, [] { return std::make_unique<ChorusDevice>(); }, [](StudioDevice&) {}, 0},
+        {"Auto Filter", 0.5, [] { return std::make_unique<AutoFilterDevice>(); }, [](StudioDevice&) {}, 0},
+        {"Saturator 2x", 0.5, [] { return std::make_unique<SaturatorDevice>(); }, [](StudioDevice&) {}, 0},
+        {"Saturator 4x", 0.5, [] { return std::make_unique<SaturatorDevice>(); },
+         [](StudioDevice& d) { setParam(d, "sat.oversampling", 1.0f); }, 0},
+        {"Limiter", 0.5, [] { return std::make_unique<LimiterDevice>(); }, [](StudioDevice&) {}, 0},
+        {"Utility", 0.5, [] { return std::make_unique<UtilityDevice>(); }, [](StudioDevice&) {}, 0},
         {"Synth 16 voices, ladder", 2.0, synth,
          [](StudioDevice& d) {
              setParam(d, "filter.type", static_cast<float>(SynthDevice::FilterType::Ladder));

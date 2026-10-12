@@ -82,7 +82,7 @@ inline std::vector<double> amplitudeSpectrum(const std::vector<float>& signal, i
 /** Aliasing of a periodic signal with fundamental f0: the strongest component that is not near a
     harmonic (or DC), in dB relative to the fundamental. */
 inline double aliasingDb(const std::vector<float>& signal, double f0, double sampleRate = 48000.0, int order = 16,
-                         bool deep = false)
+                         bool deep = false, double maxHz = 1.0e9)
 {
     const auto spectrum = amplitudeSpectrum(signal, order, deep);
     const double binHz = sampleRate / (1 << order);
@@ -97,7 +97,7 @@ inline double aliasingDb(const std::vector<float>& signal, double f0, double sam
     for (int b = std::max(1, f0Bin - guardBins); b <= f0Bin + guardBins; ++b)
         fundamental = std::max(fundamental, spectrum[static_cast<std::size_t>(b)]);
     double worst = 0.0;
-    for (int b = guardBins + 1; b < static_cast<int>(spectrum.size()); ++b)
+    for (int b = guardBins + 1; b < static_cast<int>(spectrum.size()) && b * binHz <= maxHz; ++b)
         if (!nearHarmonic(b))
             worst = std::max(worst, spectrum[static_cast<std::size_t>(b)]);
     return 20.0 * std::log10(std::max(worst, 1e-15) / fundamental);

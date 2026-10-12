@@ -156,10 +156,20 @@ add_library(lattice_core STATIC
     src/core/model/MidiImport.cpp
     src/devices/BuiltinDevices.cpp
     src/devices/dsp/Biquad.cpp
+    src/devices/dsp/FirHalfBand.cpp
     src/devices/dsp/HalfBand.cpp
     src/devices/dsp/SincResampler.cpp
     src/devices/dsp/VoiceFilterSimd.cpp
     src/devices/dsp/Wavetable.cpp
+    src/devices/effects/AutoFilter.cpp
+    src/devices/effects/Chorus.cpp
+    src/devices/effects/Compressor.cpp
+    src/devices/effects/Delay.cpp
+    src/devices/effects/EqEight.cpp
+    src/devices/effects/Limiter.cpp
+    src/devices/effects/Reverb.cpp
+    src/devices/effects/Saturator.cpp
+    src/devices/effects/Utility.cpp
     src/devices/framework/DeviceChain.cpp
     src/devices/framework/DeviceParameter.cpp
     src/devices/framework/DeviceRegistry.cpp
