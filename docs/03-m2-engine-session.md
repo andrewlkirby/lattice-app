@@ -263,14 +263,14 @@ All engine tests use an **`OfflineRenderer`**:
 11. **Snapshots:** a stress test edits a playing clip 1,000 times a second for 10 s. It runs with no crash, no data race (TSan on macOS CI), and no free on the audio thread.
 
 ## Definition of done
-- [ ] Create 4 tracks × 8 scenes and import MIDI files into slots.
-- [ ] Launch clips and scenes from the debug UI with quantization, and hear them loop in time with the metronome.
-- [ ] A track set to Colundi plays its clip at Colundi pitches.
-- [ ] Record a MIDI clip from a keyboard on an armed track, then overdub it.
-- [ ] With no MIDI or controller hardware connected, use only the mouse, keyboard shortcuts, and computer keyboard to build, record, launch, and save a 4-track session.
-- [ ] Volume, pan, mute, solo, and meters behave as described.
-- [ ] Save, quit, reopen: the set comes back exactly as it was.
-- [ ] All tests pass at every block size. The RealtimeCheck stays silent during long playback sessions.
+- [x] Create 4 tracks × 8 scenes and import MIDI files into slots. (Checked by the user on 2026-10-11.)
+- [x] Launch clips and scenes from the debug UI with quantization, and hear them loop in time with the metronome. (Checked by the user on 2026-10-11.)
+- [x] A track set to Colundi plays its clip at Colundi pitches. (Checked by the user on 2026-10-11.)
+- [x] Record a MIDI clip from a keyboard on an armed track, then overdub it. (Checked by the user on 2026-10-11.)
+- [x] With no MIDI or controller hardware connected, use only the mouse, keyboard shortcuts, and computer keyboard to build, record, launch, and save a 4-track session. (Checked by the user on 2026-10-11.)
+- [x] Volume, pan, mute, solo, and meters behave as described. (Checked by the user on 2026-10-11.)
+- [x] Save, quit, reopen: the set comes back exactly as it was. (Checked by the user on 2026-10-11.)
+- [x] All tests pass at every block size. The RealtimeCheck stays silent during long playback sessions. (CI run 38199621023: all 8 jobs pass, including ThreadSanitizer and RTSan; the user ran the Debug build with RT checks on.)
 
 ## As built (2026-10-11)
 Where the code differs from the plan above, and why.
