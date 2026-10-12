@@ -57,13 +57,19 @@ float SaturatorDevice::shape(Curve c, float x) noexcept
     return x;
 }
 
-void SaturatorDevice::prepare(double sr, int)
+void SaturatorDevice::prepare(double sr, int maxBlock)
 {
     for (auto& c : channels)
     {
         c.stageA = std::make_unique<dsp::FirHalfBand>(stageATaps, attenuation);
         c.stageB = std::make_unique<dsp::FirHalfBand>(stageBTaps, attenuation);
+        c.stageA->prepareBlocks(maxBlock);
+        c.stageB->prepareBlocks(2 * maxBlock);
     }
+    // 2x: 2n samples, plus one for the 4x path's half-sample shift.
+    up2.assign(static_cast<std::size_t>(2 * maxBlock + 1), 0.0f);
+    up4.assign(static_cast<std::size_t>(4 * maxBlock), 0.0f);
+    wetScratch.assign(static_cast<std::size_t>(maxBlock), 0.0f);
     // 4x: stage A's round trip, stage B's (in 2x samples, so half in base samples), plus the extra
     // 2x sample that makes it whole.
     const int a = channels[0].stageA->roundTripLatency();
@@ -97,35 +103,60 @@ void SaturatorDevice::reset() noexcept
     }
 }
 
-float SaturatorDevice::wet2x(Channel& c, float x, Curve curveType, float drive) noexcept
+void SaturatorDevice::shapeBlock(Curve c, float* x, int count, int factor, float drive0, float driveStep) noexcept
 {
-    float a0 = 0.0f;
-    float a1 = 0.0f;
-    c.stageA->upsample(x, a0, a1);
-    const float y = c.stageA->downsample(shape(curveType, a0 * drive), shape(curveType, a1 * drive));
-    // Padded to the 4x path's latency.
-    const float out = c.pad[static_cast<std::size_t>(c.padPos)];
-    c.pad[static_cast<std::size_t>(c.padPos)] = y;
-    c.padPos = (c.padPos + 1) % padLength;
-    return out;
+    // The curve is chosen once per block; the drive ramps once per base sample.
+    const auto apply = [&](auto&& curve) {
+        for (int i = 0, base = 0; i < count; i += factor, ++base)
+        {
+            const float drive = drive0 + driveStep * static_cast<float>(base + 1);
+            for (int k = i; k < i + factor; ++k)
+                x[k] = curve(x[k] * drive);
+        }
+    };
+    switch (c)
+    {
+    case Curve::Soft:
+        apply([](float v) { return dsp::fastTanh(v); });
+        return;
+    case Curve::Hard:
+        apply([](float v) { return std::clamp(v, -1.0f, 1.0f); });
+        return;
+    case Curve::Tube:
+    case Curve::SineFold:
+        apply([c](float v) { return shape(c, v); });
+        return;
+    }
 }
 
-float SaturatorDevice::wet4x(Channel& c, float x, Curve curveType, float drive) noexcept
+void SaturatorDevice::wetBlock(Channel& c, const float* in, int n, bool four, Curve curveType, float drive0,
+                               float driveStep, float* wet) noexcept
 {
-    float a[2];
-    c.stageA->upsample(x, a[0], a[1]);
-    float down[2];
-    for (int k = 0; k < 2; ++k)
+    float* a = up2.data();
+    c.stageA->upsampleBlock(in, n, a); // 2n at 2x
+    if (!four)
     {
-        float b0 = 0.0f;
-        float b1 = 0.0f;
-        c.stageB->upsample(a[k], b0, b1);
-        down[k] = c.stageB->downsample(shape(curveType, b0 * drive), shape(curveType, b1 * drive));
+        shapeBlock(curveType, a, 2 * n, 2, drive0, driveStep);
+        c.stageA->downsampleBlock(a, n, wet);
+        // Padded to the 4x path's latency, so switching never shifts the sound.
+        for (int i = 0; i < n; ++i)
+        {
+            const float y = c.pad[static_cast<std::size_t>(c.padPos)];
+            c.pad[static_cast<std::size_t>(c.padPos)] = wet[i];
+            if (++c.padPos == padLength)
+                c.padPos = 0;
+            wet[i] = y;
+        }
+        return;
     }
-    // One sample of delay at 2x (half a base sample) makes the latency whole.
-    const float y0 = c.half;
-    c.half = down[1];
-    return c.stageA->downsample(y0, down[0]);
+    float* b = up4.data();
+    c.stageB->upsampleBlock(a, 2 * n, b); // 4n at 4x
+    shapeBlock(curveType, b, 4 * n, 4, drive0, driveStep);
+    // Back to 2x, one 2x sample later (that makes the latency whole): the first goes into a[1].
+    c.stageB->downsampleBlock(b, 2 * n, a + 1);
+    a[0] = c.half;
+    c.half = a[2 * n];
+    c.stageA->downsampleBlock(a, n, wet);
 }
 
 void SaturatorDevice::process(DeviceBuffers& io, const DeviceTimeInfo&) noexcept
@@ -145,16 +176,16 @@ void SaturatorDevice::process(DeviceBuffers& io, const DeviceTimeInfo&) noexcept
     {
         auto& c = channels[ch];
         float* x = io.channels[ch];
-        float drive = d0;
+        float* wetBlockOut = wetScratch.data();
+        wetBlock(c, x, n, four, curveType, d0, driveStep, wetBlockOut);
         float out = o0;
         float mix = m0;
         for (int i = 0; i < n; ++i)
         {
-            drive += driveStep;
             out += outputStep;
             mix += mixStep;
             const float in = x[i];
-            float wet = four ? wet4x(c, in, curveType, drive) : wet2x(c, in, curveType, drive);
+            float wet = wetBlockOut[i];
             if (curveType == Curve::Tube)
             {
                 const float y = wet - c.dcIn + dcCoefficient * c.dcOut;
@@ -165,7 +196,8 @@ void SaturatorDevice::process(DeviceBuffers& io, const DeviceTimeInfo&) noexcept
             // The dry signal, delayed to line up with the wet one.
             const float dry = c.dry[static_cast<std::size_t>(c.dryPos)];
             c.dry[static_cast<std::size_t>(c.dryPos)] = in;
-            c.dryPos = (c.dryPos + 1) % latency;
+            if (++c.dryPos == latency)
+                c.dryPos = 0;
             x[i] = dry + mix * (wet * out - dry);
         }
     }

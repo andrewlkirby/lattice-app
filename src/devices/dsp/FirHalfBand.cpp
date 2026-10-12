@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 #if defined(__SSE2__) || defined(_M_X64) || defined(_M_AMD64)
 #include <xmmintrin.h>
@@ -95,12 +96,94 @@ void FirHalfBand::reset() noexcept
     std::fill(downEven.begin(), downEven.end(), 0.0f);
     std::fill(downOdd.begin(), downOdd.end(), 0.0f);
     upPos = downPos = 0;
+    std::fill(blockUp.begin(), blockUp.end(), 0.0f);
+    std::fill(blockEven.begin(), blockEven.end(), 0.0f);
+    std::fill(blockOdd.begin(), blockOdd.end(), 0.0f);
+}
+
+void FirHalfBand::prepareBlocks(int maxInput)
+{
+    // The even branch reaches back evenTaps - 1 inputs; the odd ones less.
+    historyLength = static_cast<int>(evenTaps.size()) - 1;
+    const auto size = static_cast<std::size_t>(historyLength + std::max(1, maxInput) + 4);
+    blockUp.assign(size, 0.0f);
+    blockEven.assign(size, 0.0f);
+    blockOdd.assign(size, 0.0f);
+}
+
+namespace
+{
+/** y[m] = sum over j of taps[j] * x[m - j], for m in [0, n): x[-j] reaches into the history before
+    x[0]. Four outputs at a time. */
+void convolve(const float* taps, int numTaps, const float* x, int n, float* y) noexcept
+{
+    int m = 0;
+#if LATTICE_FIR_SSE
+    for (; m + 4 <= n; m += 4)
+    {
+        __m128 acc = _mm_setzero_ps();
+        for (int j = 0; j < numTaps; ++j)
+            acc = _mm_add_ps(acc, _mm_mul_ps(_mm_set1_ps(taps[j]), _mm_loadu_ps(x + m - j)));
+        _mm_storeu_ps(y + m, acc);
+    }
+#endif
+    for (; m < n; ++m)
+    {
+        float acc = 0.0f;
+        for (int j = 0; j < numTaps; ++j)
+            acc += taps[j] * x[m - j];
+        y[m] = acc;
+    }
+}
+
+/** Keeps the last `history` samples of a linear buffer for the next block. */
+void keepHistory(std::vector<float>& buffer, int history, int n) noexcept
+{
+    std::memmove(buffer.data(), buffer.data() + n, static_cast<std::size_t>(history) * sizeof(float));
+}
+} // namespace
+
+void FirHalfBand::upsampleBlock(const float* in, int n, float* out) noexcept
+{
+    const int taps = static_cast<int>(evenTaps.size());
+    const int oddDelay = (centre - 1) / 2; // the centre tap (1/2, doubled) is a pure delay
+    float* x = blockUp.data() + historyLength;
+    std::copy_n(in, n, x);
+    // Even outputs into the second half of `out` first, then interleave in place from the front.
+    float* even = out + n;
+    convolve(evenTaps.data(), taps, x, n, even);
+    for (int m = 0; m < n; ++m)
+    {
+        const float e = 2.0f * even[m];
+        out[2 * m + 1] = x[m - oddDelay];
+        out[2 * m] = e; // out[2m] lies at or before even[m]'s slot, which is already read
+    }
+    keepHistory(blockUp, historyLength, n);
+}
+
+void FirHalfBand::downsampleBlock(const float* in, int n, float* out) noexcept
+{
+    const int taps = static_cast<int>(evenTaps.size());
+    const int oddDelay = (centre + 1) / 2;
+    float* even = blockEven.data() + historyLength;
+    float* odd = blockOdd.data() + historyLength;
+    for (int m = 0; m < n; ++m)
+    {
+        even[m] = in[2 * m];
+        odd[m] = in[2 * m + 1];
+    }
+    convolve(evenTaps.data(), taps, even, n, out);
+    for (int m = 0; m < n; ++m)
+        out[m] += 0.5f * odd[m - oddDelay];
+    keepHistory(blockEven, historyLength, n);
+    keepHistory(blockOdd, historyLength, n);
 }
 
 void FirHalfBand::upsample(float in, float& out0, float& out1) noexcept
 {
     // Written twice, so the window ending at upPos + length is always contiguous.
-    upPos = (upPos + 1) % length;
+    if (++upPos == length) // (no %: a division per sample costs more than the filter)
+        upPos = 0;
     upHistory[static_cast<std::size_t>(upPos)] = in;
     upHistory[static_cast<std::size_t>(upPos + length)] = in;
     const float* newest = upHistory.data() + upPos + length; // newest[-j] = x[m - j]
@@ -111,7 +194,8 @@ void FirHalfBand::upsample(float in, float& out0, float& out1) noexcept
 
 float FirHalfBand::downsample(float in0, float in1) noexcept
 {
-    downPos = (downPos + 1) % length;
+    if (++downPos == length)
+        downPos = 0;
     downEven[static_cast<std::size_t>(downPos)] = in0;
     downEven[static_cast<std::size_t>(downPos + length)] = in0;
     downOdd[static_cast<std::size_t>(downPos)] = in1;

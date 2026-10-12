@@ -5,6 +5,13 @@
 #include <algorithm>
 #include <cmath>
 
+#if defined(__SSE2__) || defined(_M_X64) || defined(_M_AMD64)
+#define LATTICE_REVERB_SSE 1
+#include <xmmintrin.h>
+#else
+#define LATTICE_REVERB_SSE 0
+#endif
+
 namespace lattice
 {
 namespace
@@ -103,7 +110,7 @@ double ReverbDevice::bandDecay(int band) const noexcept
     return band == 0 ? mid * value(P::lowDecay) : (band == 2 ? mid * value(P::highDecay) : mid);
 }
 
-void ReverbDevice::prepare(double sr, int)
+void ReverbDevice::prepare(double sr, int maxBlock)
 {
     // Sized for the largest room at the tail's highest rate (Ultra: twice the sample rate).
     const double maxTailRate = 2.0 * sr;
@@ -124,6 +131,14 @@ void ReverbDevice::prepare(double sr, int)
     upsampler = std::make_unique<dsp::FirHalfBand>(47, 90.0);
     downsamplerL = std::make_unique<dsp::FirHalfBand>(47, 90.0);
     downsamplerR = std::make_unique<dsp::FirHalfBand>(47, 90.0);
+    upsampler->prepareBlocks(maxBlock);
+    downsamplerL->prepareBlocks(maxBlock);
+    downsamplerR->prepareBlocks(maxBlock);
+    // Per block: the tail's input, early reflections, and the tail's output (at up to 2x).
+    for (auto* v : {&tailIn, &earlyOutL, &earlyOutR, &lateOutL, &lateOutR})
+        v->assign(static_cast<std::size_t>(maxBlock), 0.0f);
+    for (auto* v : {&tailIn2x, &tailOut2xL, &tailOut2xR})
+        v->assign(static_cast<std::size_t>(2 * maxBlock), 0.0f);
     lastSize = -1.0f;
     lastShape = -1;
     lastLowCut = lastHighCut = -1.0f;
@@ -274,20 +289,83 @@ void ReverbDevice::tailTick(float in, float& outL, float& outR) noexcept
             l.modStep = (next - l.modOffset) / modulationBlock;
         }
     }
-    alignas(16) float raw[maxLines];
+    // Four lines at a time: their interpolated reads, band filters, the Householder feedback and
+    // the stereo sums (n is a multiple of 4).
+    alignas(16) float outputs[maxLines];
+#if LATTICE_REVERB_SSE
+    const __m128 third = _mm_set1_ps(1.0f / 3.0f), sixth = _mm_set1_ps(1.0f / 6.0f), half = _mm_set1_ps(0.5f);
+    const __m128 lowC = _mm_set1_ps(lowCoef), highC = _mm_set1_ps(highCoef);
+    __m128 sumV = _mm_setzero_ps();
+    for (int g = 0; g < n; g += 4)
+    {
+        alignas(16) float frac[4];
+        __m128 p[4];
+        for (int j = 0; j < 4; ++j)
+        {
+            auto& l = lines[static_cast<std::size_t>(g + j)];
+            l.modOffset += l.modStep;
+            const float delay = std::clamp(static_cast<float>(l.modOffset - 1.0), 1.0f, static_cast<float>(l.delay.capacity()));
+            const int whole = static_cast<int>(delay);
+            frac[j] = delay - static_cast<float>(whole);
+            p[j] = _mm_loadu_ps(l.delay.window(whole)); // y2, y1, y0, ym1
+        }
+        _MM_TRANSPOSE4_PS(p[0], p[1], p[2], p[3]); // p[0] = y2 of each line, ... p[3] = ym1
+        const __m128 y2 = p[0], y1 = p[1], y0 = p[2], ym1 = p[3];
+        const __m128 x = _mm_load_ps(frac);
+        // Third-order Lagrange through x = -1, 0, 1, 2 (as DelayLine::read).
+        const __m128 c1 = _mm_sub_ps(_mm_sub_ps(_mm_sub_ps(y1, _mm_mul_ps(ym1, third)), _mm_mul_ps(half, y0)),
+                                     _mm_mul_ps(y2, sixth));
+        const __m128 c2 = _mm_sub_ps(_mm_mul_ps(half, _mm_add_ps(ym1, y1)), y0);
+        const __m128 c3 = _mm_add_ps(_mm_mul_ps(_mm_sub_ps(y2, ym1), sixth), _mm_mul_ps(half, _mm_sub_ps(y0, y1)));
+        const __m128 raw = _mm_add_ps(_mm_mul_ps(_mm_add_ps(_mm_mul_ps(_mm_add_ps(_mm_mul_ps(c3, x), c2), x), c1), x), y0);
+
+        // Three bands (below the low crossover, between, above the high one), each with its own
+        // gain per trip.
+        __m128 low = _mm_load_ps(lowState + g);
+        low = _mm_add_ps(low, _mm_mul_ps(lowC, _mm_sub_ps(raw, low)));
+        _mm_store_ps(lowState + g, low);
+        const __m128 rest = _mm_sub_ps(raw, low);
+        __m128 high = _mm_load_ps(highState + g);
+        high = _mm_add_ps(high, _mm_mul_ps(highC, _mm_sub_ps(rest, high)));
+        _mm_store_ps(highState + g, high);
+        const __m128 out = _mm_add_ps(_mm_add_ps(_mm_mul_ps(_mm_loadu_ps(lowGain.data() + g), low),
+                                                 _mm_mul_ps(_mm_loadu_ps(lineGain.data() + g), high)),
+                                      _mm_mul_ps(_mm_loadu_ps(highGain.data() + g), _mm_sub_ps(rest, high)));
+        _mm_store_ps(outputs + g, out);
+        sumV = _mm_add_ps(sumV, out);
+    }
+    // Householder feedback: each line gets its own output minus 2/N of them all. Lines alternate
+    // left and right, with signs + + - - in each group of four.
+    sumV = _mm_add_ps(sumV, _mm_movehl_ps(sumV, sumV));
+    const float sum = _mm_cvtss_f32(_mm_add_ss(sumV, _mm_shuffle_ps(sumV, sumV, 0x55)));
+    const __m128 feedbackSum = _mm_set1_ps(2.0f / static_cast<float>(n) * sum);
+    const __m128 input = _mm_mul_ps(_mm_set1_ps(in), _mm_setr_ps(1.0f, 1.0f, -1.0f, -1.0f));
+    const __m128 leftWeights = _mm_setr_ps(1.0f, 0.0f, -1.0f, 0.0f);
+    const __m128 rightWeights = _mm_setr_ps(0.0f, 1.0f, 0.0f, -1.0f);
+    __m128 leftV = _mm_setzero_ps(), rightV = _mm_setzero_ps();
+    for (int g = 0; g < n; g += 4)
+    {
+        const __m128 out = _mm_load_ps(outputs + g);
+        leftV = _mm_add_ps(leftV, _mm_mul_ps(out, leftWeights));
+        rightV = _mm_add_ps(rightV, _mm_mul_ps(out, rightWeights));
+        alignas(16) float feed[4];
+        _mm_store_ps(feed, _mm_add_ps(_mm_sub_ps(out, feedbackSum), input));
+        for (int j = 0; j < 4; ++j)
+            lines[static_cast<std::size_t>(g + j)].delay.push(feed[j]);
+    }
+    const __m128 lr = _mm_add_ps(_mm_unpacklo_ps(leftV, rightV), _mm_unpackhi_ps(leftV, rightV)); // l01 r01 l23 r23
+    alignas(16) float sums[4];
+    _mm_store_ps(sums, _mm_add_ps(lr, _mm_movehl_ps(lr, lr)));
+    outL = sums[0] * outputNorm;
+    outR = sums[1] * outputNorm;
+#else
     for (int i = 0; i < n; ++i)
     {
         auto& l = lines[static_cast<std::size_t>(i)];
         l.modOffset += l.modStep;
-        raw[i] = l.delay.read(static_cast<float>(l.modOffset - 1.0));
-    }
-    // Three bands per line (below the low crossover, between, above the high one), each with its
-    // own gain per trip. Plain loops over arrays: the compiler vectorises them.
-    alignas(16) float outputs[maxLines];
-    for (int i = 0; i < n; ++i)
-    {
-        lowState[i] += lowCoef * (raw[i] - lowState[i]);
-        const float rest = raw[i] - lowState[i];
+        const float raw = l.delay.read(static_cast<float>(l.modOffset - 1.0));
+        lowState[i] += lowCoef * (raw - lowState[i]);
+        const float rest = raw - lowState[i];
         highState[i] += highCoef * (rest - highState[i]);
         outputs[i] = lowGain[static_cast<std::size_t>(i)] * lowState[i] + lineGain[static_cast<std::size_t>(i)] * highState[i] +
                      highGain[static_cast<std::size_t>(i)] * (rest - highState[i]);
@@ -308,9 +386,9 @@ void ReverbDevice::tailTick(float in, float& outL, float& outR) noexcept
         else
             right += sign * outputs[i];
     }
-    const float norm = 1.0f / std::sqrt(static_cast<float>(n / 2));
-    outL = left * norm;
-    outR = right * norm;
+    outL = left * outputNorm;
+    outR = right * outputNorm;
+#endif
 }
 
 void ReverbDevice::process(DeviceBuffers& io, const DeviceTimeInfo& time) noexcept
@@ -333,15 +411,18 @@ void ReverbDevice::process(DeviceBuffers& io, const DeviceTimeInfo& time) noexce
     const float mixStep = (targetMix - mixValue) / static_cast<float>(n);
     const bool ultra = currentQuality == Quality::Ultra;
     const float inputScale = 1.0f / std::sqrt(static_cast<float>(numLines));
+    outputNorm = 1.0f / std::sqrt(static_cast<float>(numLines / 2));
+    // A whole number of samples: nothing to interpolate, and no dulling of the input.
+    const int predelayTap = static_cast<int>(std::lround(predelaySamples));
 
+    // 1. The input: pre-delay, early reflections, input diffusion.
     for (int i = 0; i < n; ++i)
     {
         const float dryL = l[i];
         const float dryR = r[i];
         const float mono = frozen ? 0.0f : 0.5f * (dryL + dryR);
         predelayLine.push(mono);
-        // A whole number of samples: nothing to interpolate, and no dulling of the input.
-        const float delayed = predelayLine.tap(static_cast<int>(std::lround(predelaySamples))); // pushed just now: tap 0
+        const float delayed = predelayLine.tap(predelayTap); // pushed just now: tap 0
 
         // Early reflections from the pre-delayed input.
         earlyLine.push(delayed);
@@ -380,26 +461,37 @@ void ReverbDevice::process(DeviceBuffers& io, const DeviceTimeInfo& time) noexce
             d.delay.push(w);
             x = y;
         }
-        x *= inputScale;
+        tailIn[static_cast<std::size_t>(i)] = x * inputScale;
+        earlyOutL[static_cast<std::size_t>(i)] = earlyL;
+        earlyOutR[static_cast<std::size_t>(i)] = earlyR;
+    }
 
-        float lateL = 0.0f;
-        float lateR = 0.0f;
-        if (ultra)
-        {
-            float u0 = 0.0f;
-            float u1 = 0.0f;
-            upsampler->upsample(x, u0, u1);
-            float a0 = 0.0f, a1 = 0.0f, b0 = 0.0f, b1 = 0.0f;
-            tailTick(u0, a0, b0);
-            tailTick(u1, a1, b1);
-            lateL = downsamplerL->downsample(a0, a1);
-            lateR = downsamplerR->downsample(b0, b1);
-        }
-        else
-        {
-            tailTick(x, lateL, lateR);
-        }
+    // 2. The tail: at the sample rate, or (Ultra) at twice it, with the rate changes done in blocks.
+    if (ultra)
+    {
+        upsampler->upsampleBlock(tailIn.data(), n, tailIn2x.data());
+        for (int k = 0; k < 2 * n; ++k)
+            tailTick(tailIn2x[static_cast<std::size_t>(k)], tailOut2xL[static_cast<std::size_t>(k)],
+                     tailOut2xR[static_cast<std::size_t>(k)]);
+        downsamplerL->downsampleBlock(tailOut2xL.data(), n, lateOutL.data());
+        downsamplerR->downsampleBlock(tailOut2xR.data(), n, lateOutR.data());
+    }
+    else
+    {
+        for (int i = 0; i < n; ++i)
+            tailTick(tailIn[static_cast<std::size_t>(i)], lateOutL[static_cast<std::size_t>(i)],
+                     lateOutR[static_cast<std::size_t>(i)]);
+    }
 
+    // 3. Early and late together, width, the wet signal's filters, and the mix.
+    for (int i = 0; i < n; ++i)
+    {
+        const float dryL = l[i];
+        const float dryR = r[i];
+        const float earlyL = earlyOutL[static_cast<std::size_t>(i)];
+        const float earlyR = earlyOutR[static_cast<std::size_t>(i)];
+        const float lateL = lateOutL[static_cast<std::size_t>(i)];
+        const float lateR = lateOutR[static_cast<std::size_t>(i)];
         float wetL = early * earlyL + late * lateL;
         float wetR = early * earlyR + late * lateR;
         // Width (mid/side), then the wet signal's high and low cut.

@@ -62,10 +62,15 @@ private:
         float dcIn = 0.0f, dcOut = 0.0f;
     };
 
-    float wet4x(Channel& c, float x, Curve curveType, float drive) noexcept LATTICE_NONBLOCKING;
-    float wet2x(Channel& c, float x, Curve curveType, float drive) noexcept LATTICE_NONBLOCKING;
+    /** The wet signal for one channel's block, oversampled 2x or 4x, into `wet` (base rate). */
+    void wetBlock(Channel& c, const float* in, int n, bool four, Curve curveType, float drive0, float driveStep,
+                  float* wet) noexcept LATTICE_NONBLOCKING;
+    /** Shapes `count` samples at `factor` times the base rate, the drive ramping per base sample. */
+    static void shapeBlock(Curve c, float* x, int count, int factor, float drive0, float driveStep) noexcept
+        LATTICE_NONBLOCKING;
 
     Channel channels[2];
+    std::vector<float> up2, up4, wetScratch; // block buffers (2x, 4x, base rate)
     int latency = 0;
     int padLength = 0;
     float driveValue = 1.0f;

@@ -3,6 +3,7 @@
 #include "devices/dsp/Biquad.h"
 #include "devices/dsp/DelayLine.h"
 #include "devices/dsp/Envelope.h"
+#include "devices/dsp/FirHalfBand.h"
 #include "devices/dsp/HalfBand.h"
 #include "devices/dsp/SincBlock.h"
 #include "devices/dsp/SincResampler.h"
@@ -531,5 +532,57 @@ TEST_CASE("Block interpolators: the SIMD versions match the reference ones", "[d
         dsp::hermiteInterpolate(data, 2, index[i], fraction[i], out);
         CHECK(std::abs(out[0] - b0[i]) < 1e-6f);
         CHECK(std::abs(out[1] - b1[i]) < 1e-6f);
+    }
+}
+
+TEST_CASE("FIR half-band: blocks give the same output as sample by sample", "[devices][dsp][filter]")
+{
+    for (const int taps : {23, 47, 59})
+    {
+        CAPTURE(taps);
+        dsp::FirHalfBand single(taps, 90.0), blocks(taps, 90.0);
+        blocks.prepareBlocks(64);
+        std::mt19937 rng(static_cast<std::uint32_t>(taps));
+        std::uniform_real_distribution<float> noise(-1.0f, 1.0f);
+        std::uniform_int_distribution<int> size(1, 64);
+        std::vector<float> in(64), up(128), down(64);
+        for (int round = 0; round < 200; ++round)
+        {
+            const int n = size(rng);
+            for (int i = 0; i < n; ++i)
+                in[static_cast<std::size_t>(i)] = noise(rng);
+            blocks.upsampleBlock(in.data(), n, up.data());
+            for (int i = 0; i < n; ++i)
+            {
+                float a = 0.0f, b = 0.0f;
+                single.upsample(in[static_cast<std::size_t>(i)], a, b);
+                REQUIRE(std::abs(a - up[static_cast<std::size_t>(2 * i)]) < 1e-6f);
+                REQUIRE(std::abs(b - up[static_cast<std::size_t>(2 * i + 1)]) < 1e-6f);
+            }
+            // Down again: the same pairs through both.
+            blocks.downsampleBlock(up.data(), n, down.data());
+            for (int i = 0; i < n; ++i)
+                REQUIRE(std::abs(single.downsample(up[static_cast<std::size_t>(2 * i)], up[static_cast<std::size_t>(2 * i + 1)]) -
+                                 down[static_cast<std::size_t>(i)]) < 1e-6f);
+        }
+    }
+}
+
+TEST_CASE("Delay line: window() holds the four points read() interpolates, across the wrap",
+          "[devices][dsp]")
+{
+    dsp::DelayLine line;
+    line.prepare(13); // a 32-sample ring: the writes wrap many times
+    for (int t = 0; t < 200; ++t)
+    {
+        line.push(static_cast<float>(t));
+        for (int whole = 1; whole <= 12; ++whole)
+        {
+            const float* w = line.window(whole);
+            CHECK(w[0] == line.tap(whole + 2));
+            CHECK(w[1] == line.tap(whole + 1));
+            CHECK(w[2] == line.tap(whole));
+            CHECK(w[3] == line.tap(whole - 1));
+        }
     }
 }

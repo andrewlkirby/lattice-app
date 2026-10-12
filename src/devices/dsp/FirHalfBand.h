@@ -27,6 +27,15 @@ public:
     /** Two samples in at twice the rate, one out. */
     float downsample(float in0, float in1) noexcept LATTICE_NONBLOCKING;
 
+    // --- Blocks: the same filter over whole blocks, SIMD across outputs (much less overhead per
+    // sample). An instance is used either sample by sample or in blocks, not both.
+    /** Not on the audio thread: room for blocks of up to maxInput samples at the lower rate. */
+    void prepareBlocks(int maxInput);
+    /** n samples in, 2n out (interleaved in time: out[2m], out[2m + 1]). */
+    void upsampleBlock(const float* in, int n, float* out) noexcept LATTICE_NONBLOCKING;
+    /** 2n samples in at twice the rate, n out. */
+    void downsampleBlock(const float* in, int n, float* out) noexcept LATTICE_NONBLOCKING;
+
     int taps() const noexcept { return numTaps; }
     /** Round-trip latency (up then down) in samples at the lower rate. */
     int roundTripLatency() const noexcept { return (numTaps - 1) / 2; }
@@ -46,6 +55,12 @@ private:
     std::vector<float> downOdd;
     int downPos = 0;
     int length = 0; // history length per branch
+
+    // Block state: the last `historyLength` inputs, then the block, in one linear buffer per branch.
+    int historyLength = 0;
+    std::vector<float> blockUp;
+    std::vector<float> blockEven;
+    std::vector<float> blockOdd;
 };
 
 } // namespace lattice::dsp

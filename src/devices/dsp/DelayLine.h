@@ -11,7 +11,9 @@ namespace lattice::dsp
 
 /** A fractional delay line (docs/04-m3-devices.md, "Delay lines"). The buffer is a power of two,
     sized in prepare() (message thread) for the longest delay; reading interpolates with a 4-point,
-    3rd-order Lagrange interpolator (flat, low phase error) or linearly. */
+    3rd-order Lagrange interpolator (flat, low phase error) or linearly. The first samples are
+    mirrored past the end, so the four points of any read sit next to each other in memory
+    (window()), for SIMD readers. */
 class DelayLine
 {
 public:
@@ -21,7 +23,7 @@ public:
         int size = 4;
         while (size < maxDelaySamples + 4)
             size <<= 1;
-        buffer.assign(static_cast<std::size_t>(size), 0.0f);
+        buffer.assign(static_cast<std::size_t>(size + guard), 0.0f);
         mask = size - 1;
         writePos = 0;
     }
@@ -33,6 +35,15 @@ public:
     {
         writePos = (writePos + 1) & mask;
         buffer[static_cast<std::size_t>(writePos)] = x;
+        if (writePos < guard)
+            buffer[static_cast<std::size_t>(mask + 1 + writePos)] = x;
+    }
+
+    /** The four points around delay `whole` in memory order: delays whole + 2, whole + 1, whole and
+        whole - 1 (what read() interpolates between). */
+    const float* window(int whole) const noexcept LATTICE_NONBLOCKING
+    {
+        return buffer.data() + ((writePos - whole - 2) & mask);
     }
 
     /** The sample pushed `delay` samples ago (integer). delay 0 is the latest. */
@@ -71,7 +82,8 @@ public:
     }
 
 private:
-    std::vector<float> buffer{0.0f, 0.0f, 0.0f, 0.0f};
+    static constexpr int guard = 3;
+    std::vector<float> buffer{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     int mask = 3;
     int writePos = 0;
 };

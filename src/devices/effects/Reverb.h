@@ -119,6 +119,7 @@ private:
     dsp::DelayLine earlyLine;
     std::array<Tap, numTaps> taps{};
     float tapDampState[numTaps]{};
+    float outputNorm = 0.25f;                // 1 / sqrt(lines / 2): the tail's level
     alignas(16) float lowState[maxLines]{};  // crossover one-poles of each line
     alignas(16) float highState[maxLines]{};
     std::array<float, maxLines> lineGain{}; // per band: computed in configure
@@ -132,6 +133,9 @@ private:
     dsp::Biquad highCutFilter[2];
     float lastLowCut = -1.0f, lastHighCut = -1.0f;
     std::unique_ptr<dsp::FirHalfBand> upsampler, downsamplerL, downsamplerR;
+    // Block buffers (sized in prepare): the tail's input, the early reflections, the tail's output.
+    std::vector<float> tailIn, earlyOutL, earlyOutR, lateOutL, lateOutR;
+    std::vector<float> tailIn2x, tailOut2xL, tailOut2xR; // Ultra
     std::uint32_t random = 0x9e3779b9u;
     float mixValue = 0.3f;
 };
