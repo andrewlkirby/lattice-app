@@ -1,11 +1,15 @@
 #pragma once
 
 #include "core/AudioCallbackStats.h"
+#include "core/LatencyStats.h"
 #include "core/RealtimeCheck.h"
-#include "devices/test/TuningTestSynth.h"
+#include "core/RtFifo.h"
+#include "core/RtShared.h"
+#include "engine/EngineCommands.h"
+#include "engine/EngineSnapshot.h"
 #include "engine/MidiInputQueue.h"
 #include "engine/TestToneSource.h"
-#include "tuning/TrackTuning.h"
+#include "engine/session/SessionProcessor.h"
 
 #include <juce_audio_devices/juce_audio_devices.h>
 
@@ -13,15 +17,17 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <thread>
 #include <vector>
 
 namespace lattice
 {
 
-/** Owns the audio device and the single audio-callback entry point. Renders the test tone and,
-    since M1, one "track": live MIDI -> TuningTestSynth tuned by a TrackTuning. In M2 it grows into
-    the real engine (docs/03-m2-engine-session.md).
+/** Owns the audio device and the single audio-callback entry point, and hosts the session engine
+    (docs/03-m2-engine-session.md): the message thread publishes EngineSnapshots and sends
+    EngineCommands; the audio thread renders the tracks, the metronome and the test tone, and sends
+    EngineEvents back.
 
     Threading: device methods are message-thread only. process() is the audio thread's work and can
     also be driven directly (offline) by tests after prepare(). */
@@ -35,13 +41,32 @@ public:
 
     juce::AudioDeviceManager& getDeviceManager() noexcept { return deviceManager; }
     TestToneSource& testTone() noexcept { return tone; }
-    TrackTuning& trackTuning() noexcept { return tuning; }
-    TuningTestSynth& synth() noexcept { return testSynth; }
 
-    /** Live MIDI into the track (any thread except the audio thread). Enabled MIDI input devices
-        are routed here automatically. */
+    /** Live MIDI to the armed tracks (any thread except the audio thread). Enabled MIDI input
+        devices are routed here automatically. */
     MidiInputQueue& midiInput() noexcept { return midiQueue; }
     AudioCallbackStats& callbackStats() noexcept { return stats; }
+    /** Input latency probe: MIDI arrival to the end of the callback that plays it. */
+    LatencyStats& inputLatency() noexcept { return latency; }
+
+    // --- Session engine -------------------------------------------------------------------------
+    /** Message thread. Makes snapshot the one the audio thread uses from its next block. */
+    void publishSnapshot(std::shared_ptr<const EngineSnapshot> snapshot);
+    /** Message thread. The snapshot published last. */
+    const std::shared_ptr<const EngineSnapshot>& currentSnapshot() const noexcept { return snapshots.published(); }
+    /** Message thread. Frees snapshots the audio thread has finished with. */
+    void collectGarbage() { snapshots.collect(); }
+
+    /** Any thread except the audio thread. Returns false if the queue was full. */
+    bool sendCommand(const EngineCommand& command) { return commands.push(command); }
+    /** Message thread (the single consumer). Events from the audio thread. */
+    SpscFifo<EngineEvent>& engineEvents() noexcept { return events; }
+    /** Transport state and master peaks (any thread, see SessionProcessor). */
+    SessionProcessor& session() noexcept { return sessionProcessor; }
+
+    /** Message thread. A new track processor, already prepared for the current device settings,
+        and re-prepared whenever they change. */
+    std::shared_ptr<TrackProcessor> createTrackProcessor(std::int64_t trackId);
 
     /** Message thread. Opens the saved device setup if there is one, otherwise the first device
         type in platform::preferredAudioDeviceTypes() that opens. Returns an error message, or an
@@ -76,6 +101,9 @@ public:
     void audioDeviceStopped() override;
 
     static constexpr int maxEventsPerBlock = 512;
+    static constexpr int maxCommandsPerBlock = 256;
+    static constexpr int commandQueueSize = 1024;
+    static constexpr int eventQueueSize = 16384;
 
 private:
     void handleIncomingMidiMessage(juce::MidiInput* source, const juce::MidiMessage& message) override;
@@ -86,14 +114,26 @@ private:
     juce::AudioDeviceManager deviceManager;
     TestToneSource tone;
     AudioCallbackStats stats;
-    TrackTuning tuning;
-    TuningTestSynth testSynth{tuning};
+    LatencyStats latency;
     MidiInputQueue midiQueue;
+    MpscQueue<EngineCommand> commands{commandQueueSize};
+    SpscFifo<EngineEvent> events{eventQueueSize};
+    RtShared<EngineSnapshot> snapshots;
+    SessionProcessor sessionProcessor{events};
+
+    // Track processors to re-prepare when the device settings change.
+    std::mutex processorsMutex;
+    std::vector<std::weak_ptr<TrackProcessor>> processors;
+    double preparedSampleRate = 48000.0;
+    int preparedBlockSize = 512;
 
     // Sized in prepare(); never resized on the audio thread.
-    std::vector<float> scratch;
+    std::vector<float> left;
+    std::vector<float> right;
     std::vector<float> toneScratch;
-    std::array<TimedMidi, maxEventsPerBlock> events{};
+    std::array<TimedMidi, maxEventsPerBlock> liveEvents{};
+    std::array<double, maxEventsPerBlock> liveArrivals{};
+    std::array<EngineCommand, maxCommandsPerBlock> commandScratch{};
     double sampleRate = 0.0;
     bool callbackRegistered = false;
 

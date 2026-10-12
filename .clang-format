@@ -3,7 +3,27 @@ Language: Cpp
 Standard: c++20
 IndentWidth: 4
 ColumnLimit: 110
-BreakBeforeBraces: Allman
+# Allman, except that lambda bodies open on the same line ([this] { ... }).
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterCaseLabel: true
+  AfterClass: true
+  AfterControlStatement: Always
+  AfterEnum: true
+  AfterFunction: true
+  AfterNamespace: true
+  AfterStruct: true
+  AfterUnion: true
+  AfterExternBlock: true
+  BeforeCatch: true
+  BeforeElse: true
+  BeforeLambdaBody: false
+  BeforeWhile: false
+  IndentBraces: false
+  SplitEmptyFunction: true
+  SplitEmptyRecord: true
+  SplitEmptyNamespace: true
+AlwaysBreakTemplateDeclarations: Yes
 AllowShortFunctionsOnASingleLine: Inline
 AllowShortIfStatementsOnASingleLine: Never
 AllowShortLambdasOnASingleLine: Inline
@@ -11,5 +31,15 @@ AccessModifierOffset: -4
 NamespaceIndentation: None
 PointerAlignment: Left
 SpaceBeforeParens: ControlStatements
+# Include blocks: the file's own header, Lattice headers, JUCE, Catch2, then the standard library.
 IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^"'
+    Priority: 1
+  - Regex: '^<juce_'
+    Priority: 2
+  - Regex: '^<catch2/'
+    Priority: 3
+  - Regex: '^<'
+    Priority: 4
 SortIncludes: CaseSensitive

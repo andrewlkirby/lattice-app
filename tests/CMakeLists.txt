@@ -10,11 +10,14 @@ add_executable(lattice_tests
     test_main.cpp
     control/ComputerKeyboardTests.cpp
     core/AudioCallbackStatsTests.cpp
+    core/LiveSetTests.cpp
     core/RealtimeCheckTests.cpp
     core/RtSharedTests.cpp
     core/StartupTimelineTests.cpp
     devices/TuningTestSynthTests.cpp
     engine/AudioEngineTests.cpp
+    engine/SessionEngineTests.cpp
+    engine/SnapshotStressTests.cpp
     engine/TestToneTests.cpp
     platform/PathsTests.cpp
     resources/ResourceTests.cpp
@@ -35,3 +38,10 @@ catch_discover_tests(lattice_tests
     ADD_TAGS_AS_LABELS
     DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 120)
+
+# Engine benchmark: renders the performance reference set offline (docs/09-performance-charter.md).
+# scripts/linux-test.sh --callgrind counts its instructions against docs/perf/baselines/.
+add_executable(lattice_engine_bench bench/EngineBench.cpp)
+target_include_directories(lattice_engine_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(lattice_engine_bench PRIVATE lattice_core)
+lattice_set_warnings(lattice_engine_bench)

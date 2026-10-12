@@ -62,7 +62,8 @@ jobs:
             -v "$PWD:/src" -v "$HOME/lattice-cache:/cache" \
             lattice-linux:latest \
             bash /src/scripts/linux-test.sh --inside ${{ matrix.mode }} \
-            ${{ github.event_name == 'schedule' && '--all-tests' || '' }}
+            ${{ github.event_name == 'schedule' && '--all-tests' || '' }} \
+            ${{ github.event_name == 'schedule' && matrix.mode == '' && '--callgrind' || '' }}
 
   macos:
     # Tier 3: build plus fast tests.

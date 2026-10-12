@@ -144,17 +144,45 @@ void AudioEngine::prepare(double newSampleRate, int maxBlockSize)
 {
     RT_ASSERT_NOT_AUDIO_THREAD();
     sampleRate = newSampleRate;
-    scratch.assign(static_cast<std::size_t>(std::max(maxBlockSize, 1)), 0.0f);
-    toneScratch.assign(scratch.size(), 0.0f);
+    const auto block = static_cast<std::size_t>(std::max(maxBlockSize, 1));
+    left.assign(block, 0.0f);
+    right.assign(block, 0.0f);
+    toneScratch.assign(block, 0.0f);
     tone.prepare(newSampleRate);
-    tuning.setSampleRate(newSampleRate);
-    testSynth.prepare(newSampleRate);
+    sessionProcessor.prepare(newSampleRate, static_cast<int>(block));
     stats.reset();
+
+    const std::scoped_lock lock(processorsMutex);
+    preparedSampleRate = newSampleRate;
+    preparedBlockSize = static_cast<int>(block);
+    processors.erase(std::remove_if(processors.begin(), processors.end(), [](const auto& p) { return p.expired(); }),
+                     processors.end());
+    for (const auto& weak : processors)
+        if (const auto p = weak.lock())
+            p->prepare(newSampleRate, static_cast<int>(block));
+}
+
+std::shared_ptr<TrackProcessor> AudioEngine::createTrackProcessor(std::int64_t trackId)
+{
+    RT_ASSERT_NOT_AUDIO_THREAD();
+    auto processor = std::make_shared<TrackProcessor>(trackId);
+    const std::scoped_lock lock(processorsMutex);
+    processor->prepare(preparedSampleRate, preparedBlockSize);
+    if (processors.size() > 64)
+        processors.erase(std::remove_if(processors.begin(), processors.end(), [](const auto& p) { return p.expired(); }),
+                         processors.end());
+    processors.push_back(processor);
+    return processor;
+}
+
+void AudioEngine::publishSnapshot(std::shared_ptr<const EngineSnapshot> snapshot)
+{
+    snapshots.publish(std::move(snapshot));
 }
 
 void AudioEngine::process(float* const* outputs, int numOutputs, int numSamples) noexcept
 {
-    const int chunkSize = static_cast<int>(scratch.size());
+    const int chunkSize = static_cast<int>(left.size());
     if (sampleRate <= 0.0 || chunkSize == 0)
     {
         for (int ch = 0; ch < numOutputs; ++ch)
@@ -163,24 +191,57 @@ void AudioEngine::process(float* const* outputs, int numOutputs, int numSamples)
         return;
     }
 
+    // Commands first, then the snapshot: a command is always pushed after the snapshot it refers
+    // to was published, so the snapshot read below is at least that new.
+    int numCommands = commands.popInto(commandScratch.data(), maxCommandsPerBlock);
     // Live MIDI that arrived since the last block plays at the start of this one.
-    int numEvents = midiQueue.popInto(events.data(), maxEventsPerBlock);
+    int numLive = midiQueue.popInto(liveEvents.data(), maxEventsPerBlock, liveArrivals.data());
+    const int liveReceived = numLive;
 
     // Some drivers deliver blocks larger than the size they announced; render in chunks rather
     // than ever resizing on this thread.
     for (int offset = 0; offset < numSamples; offset += chunkSize)
     {
         const int n = std::min(chunkSize, numSamples - offset);
-        testSynth.render(scratch.data(), n, events.data(), numEvents);
-        numEvents = 0; // all events were at offset 0 of the first chunk
+        {
+            const RtShared<EngineSnapshot>::ReadScope scope(snapshots);
+            sessionProcessor.process(scope.get(), commandScratch.data(), numCommands, liveEvents.data(), numLive, n,
+                                     left.data(), right.data());
+        }
+        numCommands = 0; // commands and live input belong to the first chunk
+        numLive = 0;
 
         tone.render(toneScratch.data(), n);
-        for (int i = 0; i < n; ++i)
-            scratch[static_cast<std::size_t>(i)] += toneScratch[static_cast<std::size_t>(i)];
+        juce::FloatVectorOperations::add(left.data(), toneScratch.data(), n);
+        juce::FloatVectorOperations::add(right.data(), toneScratch.data(), n);
 
         for (int ch = 0; ch < numOutputs; ++ch)
-            if (outputs[ch] != nullptr)
-                std::copy(scratch.data(), scratch.data() + n, outputs[ch] + offset);
+        {
+            float* out = outputs[ch];
+            if (out == nullptr)
+                continue;
+            out += offset;
+            if (numOutputs == 1)
+            {
+                for (int i = 0; i < n; ++i)
+                    out[i] = 0.5f * (left[static_cast<std::size_t>(i)] + right[static_cast<std::size_t>(i)]);
+            }
+            else if (ch < 2)
+            {
+                std::copy_n(ch == 0 ? left.data() : right.data(), n, out);
+            }
+            else
+            {
+                std::fill(out, out + n, 0.0f);
+            }
+        }
+    }
+
+    if (liveReceived > 0)
+    {
+        const double end = MidiInputQueue::nowSeconds();
+        for (int i = 0; i < liveReceived; ++i)
+            latency.record((end - liveArrivals[static_cast<std::size_t>(i)]) * 1000.0);
     }
 }
 

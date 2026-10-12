@@ -148,12 +148,24 @@ set_target_properties(lattice_binary_data PROPERTIES FOLDER "Dependencies" POSIT
 add_library(lattice_core STATIC
     src/control/ComputerKeyboardInput.cpp
     src/core/AudioCallbackStats.cpp
+    src/core/LatencyStats.cpp
     src/core/RealtimeCheck.cpp
     src/core/StartupTimeline.cpp
+    src/core/model/LiveSet.cpp
+    src/core/model/MidiImport.cpp
+    src/devices/test/TestSynthProcessor.cpp
     src/devices/test/TuningTestSynth.cpp
     src/engine/AudioEngine.cpp
+    src/engine/Metronome.cpp
     src/engine/MidiInputQueue.cpp
+    src/engine/SessionController.cpp
+    src/engine/SnapshotBuilder.cpp
     src/engine/TestToneSource.cpp
+    src/engine/TrackProcessor.cpp
+    src/engine/Transport.cpp
+    src/engine/session/ClipData.cpp
+    src/engine/session/ClipPlayer.cpp
+    src/engine/session/SessionProcessor.cpp
     src/platform/PathsCommon.cpp
     src/tuning/TrackTuning.cpp
     src/tuning/Tet12.cpp
@@ -194,7 +206,12 @@ if(LATTICE_BUILD_APP)
         src/app/Main.cpp
         src/app/MainWindow.cpp
         src/app/PlayPanel.cpp
-        src/app/SoakTest.cpp)
+        src/app/SoakTest.cpp
+        src/app/debug/ClipPropertiesPanel.cpp
+        src/app/debug/MixerStrip.cpp
+        src/app/debug/SessionGrid.cpp
+        src/app/debug/SessionView.cpp
+        src/app/debug/TransportBar.cpp)
     target_compile_definitions(Lattice PRIVATE
         JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:Lattice,JUCE_PRODUCT_NAME>"
         JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:Lattice,JUCE_VERSION>")

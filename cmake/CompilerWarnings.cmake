@@ -5,7 +5,9 @@ option(LATTICE_WARNINGS_AS_ERRORS "Treat warnings as errors (CI turns this on)" 
 
 function(lattice_set_warnings target)
     if(MSVC)
-        target_compile_options(${target} PRIVATE /W4 /permissive- /Zc:__cplusplus /utf-8)
+        # C4324 ("structure was padded due to alignment specifier") is the intended effect of the
+        # alignas(64) the charter asks for on data shared between threads.
+        target_compile_options(${target} PRIVATE /W4 /permissive- /Zc:__cplusplus /utf-8 /wd4324)
         if(LATTICE_WARNINGS_AS_ERRORS)
             target_compile_options(${target} PRIVATE /WX)
         endif()

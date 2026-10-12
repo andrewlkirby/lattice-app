@@ -1,0 +1,253 @@
+#pragma once
+
+#include "core/model/SessionTypes.h"
+
+#include <juce_data_structures/juce_data_structures.h>
+
+#include <cstdint>
+#include <utility>
+#include <vector>
+
+namespace lattice
+{
+
+/** Identifiers of the project document (docs/03-m2-engine-session.md, part 2a). */
+namespace ids
+{
+// Node types
+inline const juce::Identifier liveSet{"LIVESET"};
+inline const juce::Identifier tracks{"TRACKS"};
+inline const juce::Identifier track{"TRACK"};
+inline const juce::Identifier slots{"SLOTS"};
+inline const juce::Identifier slot{"SLOT"};
+inline const juce::Identifier clip{"CLIP"};
+inline const juce::Identifier notes{"NOTES"};
+inline const juce::Identifier note{"NOTE"};
+inline const juce::Identifier scenes{"SCENES"};
+inline const juce::Identifier scene{"SCENE"};
+inline const juce::Identifier master{"MASTER"};
+
+// Set
+inline const juce::Identifier formatVersion{"formatVersion"};
+inline const juce::Identifier nextId{"nextId"};
+inline const juce::Identifier tempo{"tempo"};
+inline const juce::Identifier timeSigNum{"timeSigNum"};
+inline const juce::Identifier timeSigDen{"timeSigDen"};
+inline const juce::Identifier globalQuantization{"globalQuantization"};
+inline const juce::Identifier metronomeOn{"metronomeOn"};
+inline const juce::Identifier metronomeVolumeDb{"metronomeVolumeDb"};
+inline const juce::Identifier selectNextSceneOnLaunch{"selectNextSceneOnLaunch"};
+inline const juce::Identifier fixedRecordBars{"fixedRecordBars"};
+
+// Shared
+inline const juce::Identifier id{"id"};
+inline const juce::Identifier name{"name"};
+inline const juce::Identifier colour{"colour"};
+
+// Track and master
+inline const juce::Identifier volumeDb{"volumeDb"};
+inline const juce::Identifier pan{"pan"};
+inline const juce::Identifier mute{"mute"};
+inline const juce::Identifier solo{"solo"};
+inline const juce::Identifier arm{"arm"};
+inline const juce::Identifier tuningId{"tuningId"};
+inline const juce::Identifier noteOffset{"noteOffset"};
+inline const juce::Identifier highNotePolicy{"highNotePolicy"};
+
+// Slot
+inline const juce::Identifier hasStopButton{"hasStopButton"};
+
+// Clip
+inline const juce::Identifier startMarker{"startMarker"};
+inline const juce::Identifier loopStart{"loopStart"};
+inline const juce::Identifier loopEnd{"loopEnd"};
+inline const juce::Identifier looping{"looping"};
+inline const juce::Identifier launchMode{"launchMode"};
+inline const juce::Identifier quantization{"quantization"};
+inline const juce::Identifier legato{"legato"};
+inline const juce::Identifier followA{"followA"};
+inline const juce::Identifier followB{"followB"};
+inline const juce::Identifier followChanceA{"followChanceA"};
+inline const juce::Identifier followTime{"followTime"};
+
+// Note
+inline const juce::Identifier pitch{"pitch"};
+inline const juce::Identifier start{"start"};
+inline const juce::Identifier length{"length"};
+inline const juce::Identifier velocity{"velocity"};
+inline const juce::Identifier muted{"muted"};
+
+// Scene
+inline const juce::Identifier sceneTempo{"sceneTempo"};           // 0 = none
+inline const juce::Identifier sceneTimeSigNum{"sceneTimeSigNum"}; // 0 = none
+inline const juce::Identifier sceneTimeSigDen{"sceneTimeSigDen"};
+} // namespace ids
+
+/** One MIDI note of a clip. Times are in beats (quarter notes) from the clip's start. */
+struct NoteData
+{
+    int pitch = 60;
+    double start = 0.0;
+    double length = 1.0;
+    int velocity = 100;
+    bool muted = false;
+
+    bool operator==(const NoteData&) const = default;
+};
+
+/** The project document: a juce::ValueTree with typed accessors and operations
+    (docs/03-m2-engine-session.md, part 2a).
+
+        LIVESET  tempo, time signature, global quantization, metronome, ...
+         ├─ TRACKS / TRACK  id, name, colour, mixer values, tuning
+         │     └─ SLOTS / SLOT (one per scene)  hasStopButton, optional CLIP
+         │                       └─ CLIP  loop, launch settings, follow actions
+         │                             └─ NOTES / NOTE  pitch, start, length, velocity, muted
+         ├─ SCENES / SCENE  id, name, colour, optional tempo and time signature
+         └─ MASTER  volumeDb, pan
+
+    Message thread only. Every operation goes through the UndoManager given at construction
+    (when there is one), except where a method says otherwise; callers group edits into
+    transactions with UndoManager::beginNewTransaction(). Tracks, clips and scenes have IDs that
+    never change and are never reused within a set. */
+class LiveSet
+{
+public:
+    static constexpr int currentFormatVersion = 1;
+    static constexpr double minTempo = 20.0;
+    static constexpr double maxTempo = 999.0;
+    static constexpr double minVolumeDb = -70.0; // the fader's bottom: silence
+    static constexpr double maxVolumeDb = 6.0;
+    static constexpr double minLoopLength = 1.0 / 16.0; // beats
+    static constexpr int defaultTracks = 4;
+    static constexpr int defaultScenes = 8;
+
+    explicit LiveSet(juce::UndoManager* undoManager = nullptr);
+
+    juce::ValueTree& state() noexcept { return root; }
+    const juce::ValueTree& state() const noexcept { return root; }
+    juce::UndoManager* undoManager() const noexcept { return undo; }
+
+    // --- Whole document (none of these are undoable; each clears the undo history) -------------
+    /** A new set with numTracks MIDI tracks (the first armed) and numScenes scenes. */
+    void resetToDefault(int numTracks = defaultTracks, int numScenes = defaultScenes);
+    juce::Result loadFromXml(const juce::XmlElement& xml);
+    std::unique_ptr<juce::XmlElement> toXml() const;
+    juce::Result saveToFile(const juce::File& file) const;
+    juce::Result loadFromFile(const juce::File& file);
+
+    // --- Set ---------------------------------------------------------------------------------
+    double tempo() const;
+    void setTempo(double bpm, bool undoable = true);
+    int timeSigNumerator() const;
+    int timeSigDenominator() const;
+    void setTimeSignature(int numerator, int denominator, bool undoable = true);
+    /** Length of one bar in beats (quarter notes): numerator × 4 / denominator. */
+    double beatsPerBar() const;
+    Quantization globalQuantization() const;
+    void setGlobalQuantization(Quantization q);
+    bool metronomeOn() const;
+    void setMetronomeOn(bool on);
+    double metronomeVolumeDb() const;
+    void setMetronomeVolumeDb(double db);
+    bool selectNextSceneOnLaunch() const;
+    void setSelectNextSceneOnLaunch(bool on);
+    /** Fixed recording length in bars (1, 2, 4, 8 or 16), or 0 for open-ended recording. */
+    int fixedRecordBars() const;
+    void setFixedRecordBars(int bars);
+
+    // --- Tracks --------------------------------------------------------------------------------
+    int numTracks() const;
+    juce::ValueTree track(int index) const;
+    std::int64_t trackId(int index) const;
+    int trackIndexForId(std::int64_t id) const; // -1 if none
+
+    /** Inserts a MIDI track (at the end when insertIndex is out of range). Returns its index. */
+    int addTrack(int insertIndex = -1);
+    void deleteTrack(int index);
+    /** Copies a track (with its clips, under new IDs) to just after it. Returns the copy's index. */
+    int duplicateTrack(int index);
+    void moveTrack(int from, int to);
+
+    void setTrackName(int index, const juce::String& name);
+    void setTrackVolumeDb(int index, double db);
+    void setTrackPan(int index, double pan); // -1 (left) .. 1 (right)
+    void setTrackMute(int index, bool mute);
+    /** With additive false (a plain click), turning solo on clears every other track's solo.
+        additive (Ctrl+click) adds to the current set. The same rule applies to arm. */
+    void setTrackSolo(int index, bool solo, bool additive);
+    void setTrackArm(int index, bool arm, bool additive);
+    void setTrackTuning(int index, const juce::String& tuningId);
+    void setTrackNoteOffset(int index, int offset);
+    void setTrackHighNotePolicy(int index, int policy);
+
+    juce::ValueTree master() const;
+    void setMasterVolumeDb(double db);
+    void setMasterPan(double pan);
+
+    // --- Scenes --------------------------------------------------------------------------------
+    int numScenes() const;
+    juce::ValueTree scene(int index) const;
+    /** Inserts a scene (and a slot in every track). Returns its index. */
+    int addScene(int insertIndex = -1);
+    void deleteScene(int index);
+    int duplicateScene(int index);
+    void moveScene(int from, int to);
+    void setSceneName(int index, const juce::String& name);
+    /** 0 removes the scene's tempo. */
+    void setSceneTempo(int index, double bpm);
+    /** numerator 0 removes the scene's time signature. */
+    void setSceneTimeSignature(int index, int numerator, int denominator);
+
+    // --- Slots and clips -----------------------------------------------------------------------
+    juce::ValueTree slot(int trackIndex, int sceneIndex) const;
+    /** The slot's clip, or an invalid tree if the slot is empty. */
+    juce::ValueTree clip(int trackIndex, int sceneIndex) const;
+    bool hasStopButton(int trackIndex, int sceneIndex) const;
+    void setHasStopButton(int trackIndex, int sceneIndex, bool has);
+
+    /** Creates an empty, looping clip of lengthBeats (replacing any clip in the slot). */
+    juce::ValueTree createClip(int trackIndex, int sceneIndex, double lengthBeats,
+                               const juce::String& name = {}, bool undoable = true);
+    void deleteClip(int trackIndex, int sceneIndex, bool undoable = true);
+    /** Copies the clip into the next empty slot below it. Returns that scene index, or -1 if there
+        is no empty slot below. */
+    int duplicateClip(int trackIndex, int sceneIndex);
+    /** Moves a clip, replacing whatever is at the destination. */
+    void moveClip(int fromTrack, int fromScene, int toTrack, int toScene);
+
+    /** Location (track, scene) of a clip by ID, or (-1, -1). */
+    std::pair<int, int> findClip(std::int64_t clipId) const;
+    juce::ValueTree clipById(std::int64_t clipId) const;
+    static std::int64_t idOf(const juce::ValueTree& node);
+
+    void setClipProperty(juce::ValueTree clip, const juce::Identifier& property, const juce::var& value,
+                         bool undoable = true);
+    void setClipLoop(juce::ValueTree clip, double loopStart, double loopEnd, bool undoable = true);
+
+    // --- Notes -----------------------------------------------------------------------------------
+    juce::ValueTree addNote(const juce::ValueTree& clip, const NoteData& note, bool undoable = true);
+    void removeNote(const juce::ValueTree& clip, const juce::ValueTree& note, bool undoable = true);
+    void setNote(juce::ValueTree note, const NoteData& data);
+    static NoteData noteData(const juce::ValueTree& note);
+    static std::vector<NoteData> notesOf(const juce::ValueTree& clip);
+
+    /** A new ID, unique within this set. Not undoable (IDs are never reused). */
+    std::int64_t allocateId();
+
+private:
+    juce::UndoManager* um(bool undoable) const noexcept { return undoable ? undo : nullptr; }
+    juce::ValueTree tracksNode() const;
+    juce::ValueTree scenesNode() const;
+    juce::ValueTree makeTrack(int number);
+    juce::ValueTree makeScene();
+    juce::ValueTree makeSlot() const;
+    /** Gives every TRACK, CLIP and SCENE in tree a new ID. */
+    void reassignIds(juce::ValueTree tree);
+    void setExclusiveFlag(int index, const juce::Identifier& flag, bool on, bool additive);
+
+    juce::ValueTree root;
+    juce::UndoManager* undo = nullptr;
+};
+
+} // namespace lattice
