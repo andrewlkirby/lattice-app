@@ -120,6 +120,7 @@ juce::String AudioEngine::openDeviceNow(const juce::XmlElement* savedState)
     }
 
     deviceManager.addAudioCallback(this);
+    deviceManager.addMidiInputDeviceCallback({}, this); // every enabled MIDI input
     callbackRegistered = true;
 
     if (!opened && error.isEmpty())
@@ -132,6 +133,7 @@ void AudioEngine::closeDevice()
     RT_ASSERT_NOT_AUDIO_THREAD();
     if (callbackRegistered)
     {
+        deviceManager.removeMidiInputDeviceCallback({}, this);
         deviceManager.removeAudioCallback(this);
         callbackRegistered = false;
     }
@@ -143,7 +145,10 @@ void AudioEngine::prepare(double newSampleRate, int maxBlockSize)
     RT_ASSERT_NOT_AUDIO_THREAD();
     sampleRate = newSampleRate;
     scratch.assign(static_cast<std::size_t>(std::max(maxBlockSize, 1)), 0.0f);
+    toneScratch.assign(scratch.size(), 0.0f);
     tone.prepare(newSampleRate);
+    tuning.setSampleRate(newSampleRate);
+    testSynth.prepare(newSampleRate);
     stats.reset();
 }
 
@@ -158,12 +163,21 @@ void AudioEngine::process(float* const* outputs, int numOutputs, int numSamples)
         return;
     }
 
+    // Live MIDI that arrived since the last block plays at the start of this one.
+    int numEvents = midiQueue.popInto(events.data(), maxEventsPerBlock);
+
     // Some drivers deliver blocks larger than the size they announced; render in chunks rather
     // than ever resizing on this thread.
     for (int offset = 0; offset < numSamples; offset += chunkSize)
     {
         const int n = std::min(chunkSize, numSamples - offset);
-        tone.render(scratch.data(), n);
+        testSynth.render(scratch.data(), n, events.data(), numEvents);
+        numEvents = 0; // all events were at offset 0 of the first chunk
+
+        tone.render(toneScratch.data(), n);
+        for (int i = 0; i < n; ++i)
+            scratch[static_cast<std::size_t>(i)] += toneScratch[static_cast<std::size_t>(i)];
+
         for (int ch = 0; ch < numOutputs; ++ch)
             if (outputs[ch] != nullptr)
                 std::copy(scratch.data(), scratch.data() + n, outputs[ch] + offset);
@@ -192,6 +206,11 @@ void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
 
 void AudioEngine::audioDeviceStopped()
 {
+}
+
+void AudioEngine::handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMessage& message)
+{
+    midiQueue.push(message);
 }
 
 } // namespace lattice

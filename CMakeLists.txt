@@ -27,6 +27,7 @@ option(LATTICE_ENABLE_ASIO "Build with Steinberg ASIO support (Windows)" ${_latt
 set(LATTICE_ASIO_SDK_DIR "" CACHE PATH "Use this extracted ASIO SDK (the folder containing common/) instead of downloading it")
 option(LATTICE_PROFILE "Enable Tracy profiler markers" OFF)
 option(LATTICE_RTSAN "Build with Clang's real-time sanitizer (-fsanitize=realtime, Clang 20+)" OFF)
+option(LATTICE_TSAN "Build with ThreadSanitizer (-fsanitize=thread) to find data races" OFF)
 option(LATTICE_BUILD_APP "Build the Lattice GUI app" ON)
 option(LATTICE_BUILD_TESTS "Build the unit tests" ON)
 
@@ -45,6 +46,14 @@ if(LATTICE_RTSAN)
     endif()
     add_compile_options(-fsanitize=realtime)
     add_link_options(-fsanitize=realtime)
+endif()
+
+if(LATTICE_TSAN)
+    if(MSVC)
+        message(FATAL_ERROR "LATTICE_TSAN needs Clang or GCC")
+    endif()
+    add_compile_options(-fsanitize=thread)
+    add_link_options(-fsanitize=thread)
 endif()
 
 # --- Dependencies (pinned) -----------------------------------------------------------------------
@@ -127,14 +136,32 @@ target_compile_definitions(lattice_juce
     INTERFACE $<TARGET_PROPERTY:lattice_juce,COMPILE_DEFINITIONS>)
 set_target_properties(lattice_juce PROPERTIES FOLDER "Dependencies")
 
+# --- Embedded resources ----------------------------------------------------------------------------
+# The Colundi table is compiled in, so the app works without the file on disk.
+juce_add_binary_data(lattice_binary_data
+    HEADER_NAME LatticeBinaryData.h
+    NAMESPACE LatticeResources
+    SOURCES resources/tunings/colundi_scale.txt)
+set_target_properties(lattice_binary_data PROPERTIES FOLDER "Dependencies" POSITION_INDEPENDENT_CODE ON)
+
 # --- lattice_core: all non-UI Lattice code ------------------------------------------------------
 add_library(lattice_core STATIC
+    src/control/ComputerKeyboardInput.cpp
     src/core/AudioCallbackStats.cpp
     src/core/RealtimeCheck.cpp
     src/core/StartupTimeline.cpp
+    src/devices/test/TuningTestSynth.cpp
     src/engine/AudioEngine.cpp
+    src/engine/MidiInputQueue.cpp
     src/engine/TestToneSource.cpp
-    src/platform/PathsCommon.cpp)
+    src/platform/PathsCommon.cpp
+    src/tuning/TrackTuning.cpp
+    src/tuning/Tet12.cpp
+    src/tuning/TuningRegistry.cpp
+    src/tuning/TuningTable.cpp
+    src/tuning/parsers/ColundiTextParser.cpp
+    src/tuning/parsers/NumberParsing.cpp
+    src/tuning/parsers/ScalaParser.cpp)
 if(WIN32)
     target_sources(lattice_core PRIVATE src/platform/windows/PlatformWindows.cpp)
 elseif(APPLE)
@@ -143,7 +170,7 @@ else()
     target_sources(lattice_core PRIVATE src/platform/linux/PlatformLinux.cpp)
 endif()
 target_include_directories(lattice_core PUBLIC src)
-target_link_libraries(lattice_core PUBLIC lattice_juce)
+target_link_libraries(lattice_core PUBLIC lattice_juce PRIVATE lattice_binary_data)
 target_compile_definitions(lattice_core PUBLIC LATTICE_PROFILE=$<BOOL:${LATTICE_PROFILE}>)
 if(LATTICE_PROFILE)
     target_link_libraries(lattice_core PUBLIC Tracy::TracyClient)
@@ -166,6 +193,7 @@ if(LATTICE_BUILD_APP)
     target_sources(Lattice PRIVATE
         src/app/Main.cpp
         src/app/MainWindow.cpp
+        src/app/PlayPanel.cpp
         src/app/SoakTest.cpp)
     target_compile_definitions(Lattice PRIVATE
         JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:Lattice,JUCE_PRODUCT_NAME>"

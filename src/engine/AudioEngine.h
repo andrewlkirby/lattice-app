@@ -2,10 +2,14 @@
 
 #include "core/AudioCallbackStats.h"
 #include "core/RealtimeCheck.h"
+#include "devices/test/TuningTestSynth.h"
+#include "engine/MidiInputQueue.h"
 #include "engine/TestToneSource.h"
+#include "tuning/TrackTuning.h"
 
 #include <juce_audio_devices/juce_audio_devices.h>
 
+#include <array>
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -15,12 +19,13 @@
 namespace lattice
 {
 
-/** Owns the audio device and the single audio-callback entry point. In M0 it renders the test
-    tone; in M2 it grows into the real engine (docs/03-m2-engine-session.md).
+/** Owns the audio device and the single audio-callback entry point. Renders the test tone and,
+    since M1, one "track": live MIDI -> TuningTestSynth tuned by a TrackTuning. In M2 it grows into
+    the real engine (docs/03-m2-engine-session.md).
 
     Threading: device methods are message-thread only. process() is the audio thread's work and can
     also be driven directly (offline) by tests after prepare(). */
-class AudioEngine final : public juce::AudioIODeviceCallback
+class AudioEngine final : public juce::AudioIODeviceCallback, private juce::MidiInputCallback
 {
 public:
     static constexpr int numOutputChannels = 2;
@@ -30,6 +35,12 @@ public:
 
     juce::AudioDeviceManager& getDeviceManager() noexcept { return deviceManager; }
     TestToneSource& testTone() noexcept { return tone; }
+    TrackTuning& trackTuning() noexcept { return tuning; }
+    TuningTestSynth& synth() noexcept { return testSynth; }
+
+    /** Live MIDI into the track (any thread except the audio thread). Enabled MIDI input devices
+        are routed here automatically. */
+    MidiInputQueue& midiInput() noexcept { return midiQueue; }
     AudioCallbackStats& callbackStats() noexcept { return stats; }
 
     /** Message thread. Opens the saved device setup if there is one, otherwise the first device
@@ -64,15 +75,25 @@ public:
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override;
     void audioDeviceStopped() override;
 
+    static constexpr int maxEventsPerBlock = 512;
+
 private:
+    void handleIncomingMidiMessage(juce::MidiInput* source, const juce::MidiMessage& message) override;
+
     juce::String openDeviceNow(const juce::XmlElement* savedState);
     void waitForOpenThread();
 
     juce::AudioDeviceManager deviceManager;
     TestToneSource tone;
     AudioCallbackStats stats;
+    TrackTuning tuning;
+    TuningTestSynth testSynth{tuning};
+    MidiInputQueue midiQueue;
 
-    std::vector<float> scratch; // sized in prepare(); never resized on the audio thread
+    // Sized in prepare(); never resized on the audio thread.
+    std::vector<float> scratch;
+    std::vector<float> toneScratch;
+    std::array<TimedMidi, maxEventsPerBlock> events{};
     double sampleRate = 0.0;
     bool callbackRegistered = false;
 

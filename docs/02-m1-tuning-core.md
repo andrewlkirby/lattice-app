@@ -153,11 +153,60 @@ Lets you play notes with no MIDI hardware, using the same keys as Live:
     - Goertzel or FFT with parabolic interpolation confirms each fundamental within 0.5 Hz of the table value. (Note 100 is 9480 Hz, which is still well below Nyquist.)
 
 ## Definition of done
-- [ ] Choosing "Colundi" and playing the on-screen keyboard or a MIDI keyboard produces the table frequencies, with the readout showing the index and Hz.
-- [ ] With no MIDI hardware connected, the computer keyboard can play every Colundi entry that is in range, by shifting through the 17-note pages.
-- [ ] Switching tuning while notes are held causes no glitches or crashes, and the RealtimeCheck stays quiet.
-- [ ] A user `.scl` file loads and plays.
-- [ ] All tuning tests pass in CI.
+- [x] Choosing "Colundi" and playing the on-screen keyboard or a MIDI keyboard produces the table frequencies, with the readout showing the index and Hz. (Checked by the user on 2026-10-11: "it sounds good so far".)
+- [x] With no MIDI hardware connected, the computer keyboard can play every Colundi entry that is in range, by shifting through the 17-note pages. (Checked by the user on 2026-10-11: "it sounds good so far".)
+- [x] Switching tuning while notes are held causes no glitches or crashes, and the RealtimeCheck stays quiet. (Checked by the user on 2026-10-11: "it sounds good so far".)
+- [x] A user `.scl` file loads and plays. (Checked by the user on 2026-10-11: "it sounds good so far".)
+- [ ] All tuning tests pass in CI. (Pass locally on Windows and in Docker on 2026-10-11, including TSan; CI runs on push.)
+
+## As built (2026-10-11)
+Where the code differs from the plan above, and why:
+- **No `juce::Synthesiser` and no `juce::MidiMessageCollector`.** Both take a lock on the audio
+  thread, and the collector can allocate there. That breaks the charter's rules, and RTSan would flag
+  it. Replacements:
+  - `TuningTestSynth` has its own 16-voice allocator (oldest voice stolen), applies MIDI at sample
+    offsets, and renders a sine plus a PolyBLEP saw softened by a one-pole low-pass, with the saw
+    faded out near Nyquist.
+  - `MidiInputQueue` (`src/engine/`): producers (MIDI input thread, on-screen and computer
+    keyboards) serialise among themselves with a mutex that only non-real-time threads take. The
+    audio thread is the single, lock-free consumer of an `AbstractFifo`. Live input plays at the
+    start of the next block (lowest latency; jitter up to one buffer). Short messages only.
+- **`RtShared<T>` (`src/core/RtShared.h`) was built now instead of in M2**, and `TrackTuning` uses
+  it. It follows the M2 design without timers:
+  - Readers open a scope (two atomic increments), and retired objects are freed by `collect()` once
+    the open-scope count is zero after their retirement.
+  - It's safe with several reader threads (the M3 parallel engine).
+  - The play panel calls `collectGarbage()` at 15 Hz.
+- **Number parsing:** a strict format check, then `juce::CharacterFunctions::readDoubleValue`, which
+  converts with `strtod_l` in the "C" locale. A comma decimal in a Freq field is an error, never
+  misread. The locale test runs under `de_DE.UTF-8` on Windows and Linux, and proves the locale is
+  active (the C library reads "1.5" as 1.0).
+- **Colundi's period ratio is 28160/30 (938.667).** Entry 119 is exactly 30 Hz × 938.667, and the
+  Name column wraps there. Only `FoldDown` uses it. A generic Colundi-format `.txt` gets 2.0 unless
+  the caller passes one.
+- **Scala:**
+  - Blank lines after the description line are ignored (most files end with one).
+  - `.kbm` files are supported in full (map size, first/last note, middle note, reference, formal
+    octave, `x` entries). A `.kbm` with the same name next to a `.scl` is picked up automatically.
+  - Unmapped notes have frequency 0 and don't sound.
+- **Labels:** 12-TET uses note names with middle C (note 60) as C4. Other tables use
+  `#47 · 440.00 Hz`. The on-screen keyboard shows the table index on white keys for non-12-TET
+  tunings, and the last-note readout gives index and Hz.
+- **Computer keyboard pages** are multiples of the page size from 0, so for Colundi: 0, 17, …, 119.
+  - Keys past 127 on the last page play nothing.
+  - The default page is the one holding the note nearest middle C: 60 in 12-TET, 34 in Colundi (34–50, which includes #47 = 440 Hz).
+  - Computer-keyboard notes go through the on-screen keyboard's state, so its keys light up.
+- **User tunings:** files loaded with "Load tuning file…" are remembered (settings
+  `userTuningFiles`) and reloaded at startup. Everything in `<userdata>/Tunings` is loaded too. The
+  chosen tuning and the keyboard on/off state are saved.
+- **ThreadSanitizer** (`linux-tsan` preset, `scripts/linux-test.sh --tsan`, and a CI job) runs the
+  whole suite, including the `[stress]` swap test.
+  - TSan's runtime defines its own `operator new`/`delete`, so that build doesn't link Lattice's
+    allocation hooks. The four allocation-counting tests skip there, and every other build runs them.
+  - TSan's container needs `--security-opt seccomp=unconfined` so TSan can restart with address
+    randomisation off. Only the TSan run sets it.
+- **Tests:** 68 Catch2 cases in the default run (69 with the heavy tags). They pass on Windows
+  (Debug, Release, RelWithDebInfo + RT checks) and on Linux (GCC, RTSan, TSan, clang-tidy).
 
 ## Interfaces kept for later milestones
 - **M3 devices:** every instrument voice uses `TrackTuning::hzFor`.

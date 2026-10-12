@@ -5,6 +5,7 @@
 #     --debug       linux-debug preset (default: linux-release)
 #     --rtcheck     linux-relwithdebinfo-rtchecks preset
 #     --rtsan       linux-rtsan preset (Clang + RealtimeSanitizer)
+#     --tsan        linux-tsan preset (Clang + ThreadSanitizer)
 #     --clang       build with Clang instead of GCC
 #     --tidy        also run the clang-tidy performance-* checks (implies --clang)
 #     --all-tests   include the heavy tags ([slow] [bench] [stress] [hardware] [timing])
@@ -31,11 +32,12 @@ for arg in "$@"; do
         --debug) preset=linux-debug ;;
         --rtcheck) preset=linux-relwithdebinfo-rtchecks ;;
         --rtsan) preset=linux-rtsan ;;
+        --tsan) preset=linux-tsan ;;
         --clang) clang=1 ;;
         --tidy) tidy=1; clang=1 ;;
         --all-tests) all_tests=1 ;;
         --shell) shell=1 ;;
-        -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
         *) echo "Unknown option: $arg" >&2; exit 2 ;;
     esac
 done
@@ -50,7 +52,11 @@ if [[ $inside -eq 0 ]]; then
     docker build --quiet -t "$IMAGE" -f "$REPO_ROOT/docker/linux.Dockerfile" "$REPO_ROOT/docker" >/dev/null
     tty_flags=()
     [[ -t 0 && -t 1 ]] && tty_flags=(-it)
-    run=(docker run --rm "${tty_flags[@]}" --cpus 4 --memory 4g
+    # ThreadSanitizer re-executes itself with address randomisation off (personality syscall),
+    # which Docker's default seccomp profile blocks. Only the TSan run relaxes it.
+    security=()
+    [[ $preset == linux-tsan ]] && security=(--security-opt seccomp=unconfined)
+    run=(docker run --rm "${tty_flags[@]}" "${security[@]}" --cpus 4 --memory 4g
          -v "$REPO_ROOT:/src"
          -v lattice-cache:/cache
          -v lattice-build:/build
@@ -65,7 +71,7 @@ fi
 start=$(date +%s)
 build_dir="/build/${preset}"
 extra=()
-if [[ $clang -eq 1 && $preset != linux-rtsan ]]; then
+if [[ $clang -eq 1 && $preset != linux-rtsan && $preset != linux-tsan ]]; then
     build_dir+="-clang"
     extra+=(-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++)
 fi

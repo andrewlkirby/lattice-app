@@ -14,11 +14,18 @@ juce::String percent(double fraction)
 }
 } // namespace
 
-MainComponent::MainComponent(AudioEngine& e, juce::PropertiesFile& s, std::function<void()> firstPaint)
-    : engine(e), settings(s), onFirstPaint(std::move(firstPaint))
+MainComponent::MainComponent(AudioEngine& e, juce::PropertiesFile& s, TuningRegistry& tunings,
+                             std::function<void()> firstPaint)
+    : engine(e), settings(s), onFirstPaint(std::move(firstPaint)), playPanel(e, s, tunings)
 {
     setOpaque(true);
     setWantsKeyboardFocus(true);
+
+    // Controls don't take keyboard focus, so letter keys always reach the computer keyboard.
+    toneToggle.setWantsKeyboardFocus(false);
+    frequencySlider.setWantsKeyboardFocus(false);
+    levelSlider.setWantsKeyboardFocus(false);
+    resetStatsButton.setWantsKeyboardFocus(false);
 
     toneToggle.onClick = [this] { engine.testTone().setEnabled(toneToggle.getToggleState()); };
     addAndMakeVisible(toneToggle);
@@ -45,9 +52,10 @@ MainComponent::MainComponent(AudioEngine& e, juce::PropertiesFile& s, std::funct
     statusLabel.setFont(juce::FontOptions(juce::Font::getDefaultMonospacedFontName(), 14.0f, juce::Font::plain));
     statusLabel.setText("Opening audio device...", juce::dontSendNotification);
     addAndMakeVisible(statusLabel);
+    addAndMakeVisible(playPanel);
 
     updateToneFromControls();
-    setSize(900, 680);
+    setSize(960, 980);
 }
 
 MainComponent::~MainComponent()
@@ -63,7 +71,7 @@ void MainComponent::audioDeviceOpened(const juce::String& error)
     // Created only now: building the selector scans the device types, which would otherwise
     // delay the first frame.
     deviceSelector = std::make_unique<juce::AudioDeviceSelectorComponent>(
-        engine.getDeviceManager(), 0, 0, 1, AudioEngine::numOutputChannels, false, false, true, false);
+        engine.getDeviceManager(), 0, 0, 1, AudioEngine::numOutputChannels, true, false, true, false);
     addAndMakeVisible(*deviceSelector);
     engine.getDeviceManager().addChangeListener(this);
     resized();
@@ -105,6 +113,8 @@ void MainComponent::resized()
 
     statusLabel.setBounds(area.removeFromTop(150));
     area.removeFromTop(8);
+    playPanel.setBounds(area.removeFromTop(250));
+    area.removeFromTop(8);
 
     if (deviceSelector != nullptr)
         deviceSelector->setBounds(area);
@@ -117,6 +127,25 @@ bool MainComponent::keyPressed(const juce::KeyPress& key)
         toneToggle.setToggleState(!toneToggle.getToggleState(), juce::sendNotification);
         return true;
     }
+
+    const auto mods = key.getModifiers();
+    if (mods.isCommandDown() || mods.isCtrlDown() || mods.isAltDown())
+        return false;
+    if (dynamic_cast<juce::TextEditor*>(juce::Component::getCurrentlyFocusedComponent()) != nullptr)
+        return false; // typing in a text field
+
+    auto character = key.getTextCharacter();
+    if (character == 0)
+        character = static_cast<juce::juce_wchar>(key.getKeyCode());
+    return playPanel.computerKeyboard().keyDown(character, key.getKeyCode());
+}
+
+bool MainComponent::keyStateChanged(bool)
+{
+    auto& keyboard = playPanel.computerKeyboard();
+    for (const int code : keyboard.heldKeyCodes())
+        if (!juce::KeyPress::isKeyCurrentlyDown(code))
+            keyboard.keyUp(code);
     return false;
 }
 
@@ -178,13 +207,14 @@ void MainComponent::saveDeviceState()
 }
 
 MainWindow::MainWindow(const juce::String& name, AudioEngine& engine, juce::PropertiesFile& settings,
-                       std::function<void()> onFirstPaint, const std::function<void(const char*)>& markStage)
+                       TuningRegistry& tunings, std::function<void()> onFirstPaint,
+                       const std::function<void(const char*)>& markStage)
     : juce::DocumentWindow(name, juce::Colours::black, juce::DocumentWindow::allButtons)
 {
     markStage("native window created");
     setUsingNativeTitleBar(true);
     markStage("native title bar");
-    component = new MainComponent(engine, settings, std::move(onFirstPaint));
+    component = new MainComponent(engine, settings, tunings, std::move(onFirstPaint));
     markStage("content created");
     setContentOwned(component, true);
     setResizable(true, true);
@@ -198,6 +228,13 @@ MainWindow::MainWindow(const juce::String& name, AudioEngine& engine, juce::Prop
 void MainWindow::closeButtonPressed()
 {
     juce::JUCEApplication::getInstance()->systemRequestedQuit();
+}
+
+void MainWindow::activeWindowStatusChanged()
+{
+    // Key-up events go to whichever window has focus, so held notes would otherwise hang.
+    if (!isActiveWindow() && component != nullptr)
+        component->releaseHeldKeys();
 }
 
 } // namespace lattice

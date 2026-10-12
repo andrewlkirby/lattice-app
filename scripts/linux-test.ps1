@@ -19,7 +19,11 @@ $image = 'lattice-linux:latest'
 docker build --quiet -t $image -f (Join-Path $repoRoot 'docker/linux.Dockerfile') (Join-Path $repoRoot 'docker') | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'docker build failed' }
 
-$run = @('run', '--rm', '--cpus', '4', '--memory', '4g',
+$run = @('run', '--rm', '--cpus', '4', '--memory', '4g')
+# ThreadSanitizer re-executes itself with address randomisation off, which Docker's default
+# seccomp profile blocks; only the TSan run relaxes it.
+if ($args -contains '--tsan') { $run += @('--security-opt', 'seccomp=unconfined') }
+$run += @(
          '-v', "${repoRoot}:/src",
          '-v', 'lattice-cache:/cache',
          '-v', 'lattice-build:/build')

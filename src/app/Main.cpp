@@ -4,6 +4,7 @@
 #include "core/StartupTimeline.h"
 #include "engine/AudioEngine.h"
 #include "platform/Platform.h"
+#include "tuning/TuningRegistry.h"
 
 #include <juce_gui_extra/juce_gui_extra.h>
 
@@ -37,13 +38,17 @@ public:
         engine = std::make_unique<AudioEngine>();
         timeline.mark("engine created");
 
+        tunings = std::make_unique<TuningRegistry>();
+        tunings->loadFolder(paths.userData.getChildFile("Tunings"));
+        timeline.mark("tunings loaded");
+
         // Opening the device can take over a second in the driver (WASAPI exclusive mode on the
         // reference laptop), so it runs in the background while the window is built.
         engine->openDeviceAsync(settings->getXmlValue("audioDeviceState"),
                                 [this](const juce::String& error) { audioOpened(error); });
         timeline.mark("audio open started");
 
-        mainWindow = std::make_unique<MainWindow>(getApplicationName(), *engine, *settings,
+        mainWindow = std::make_unique<MainWindow>(getApplicationName(), *engine, *settings, *tunings,
                                                   [this] { windowShown(); },
                                                   [this](const char* stage) { timeline.mark(stage); });
         timeline.mark("window created");
@@ -57,6 +62,7 @@ public:
         soak = nullptr;
         mainWindow = nullptr; // saves the device state
         engine = nullptr;
+        tunings = nullptr;
         if (settings != nullptr)
             settings->saveIfNeeded();
         settings = nullptr;
@@ -125,6 +131,7 @@ private:
     bool audioIsOpen = false;
     std::unique_ptr<juce::PropertiesFile> settings;
     std::unique_ptr<AudioEngine> engine;
+    std::unique_ptr<TuningRegistry> tunings;
     std::unique_ptr<MainWindow> mainWindow;
 };
 

@@ -1,5 +1,6 @@
 #include "core/RealtimeCheck.h"
 #include "engine/AudioEngine.h"
+#include "support/AllocationHooks.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -11,7 +12,7 @@ using namespace lattice;
 
 TEST_CASE("Rendering 10,000 blocks allocates nothing", "[engine][rt]")
 {
-    REQUIRE(rt::hooksInstalled());
+    LATTICE_REQUIRE_ALLOCATION_HOOKS();
 
     AudioEngine engine;
     engine.prepare(48000.0, 256);

@@ -45,7 +45,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: ["", "--debug", "--rtsan", "--tidy"]
+        mode: ["", "--debug", "--rtsan", "--tsan", "--tidy"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
@@ -58,6 +58,7 @@ jobs:
       - name: Build and test
         run: |
           docker run --rm -e LATTICE_WARNINGS_AS_ERRORS=ON \
+            ${{ matrix.mode == '--tsan' && '--security-opt seccomp=unconfined' || '' }} \
             -v "$PWD:/src" -v "$HOME/lattice-cache:/cache" \
             lattice-linux:latest \
             bash /src/scripts/linux-test.sh --inside ${{ matrix.mode }} \

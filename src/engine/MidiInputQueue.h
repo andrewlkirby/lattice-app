@@ -1,0 +1,52 @@
+#pragma once
+
+#include "core/RealtimeCheck.h"
+
+#include <juce_audio_basics/juce_audio_basics.h>
+
+#include <array>
+#include <atomic>
+#include <cstdint>
+#include <mutex>
+
+namespace lattice
+{
+
+/** A short (1-3 byte) MIDI message placed at a sample offset within a block. */
+struct TimedMidi
+{
+    int sampleOffset = 0;
+    std::uint8_t bytes[3]{};
+    std::uint8_t size = 0;
+};
+
+/** Live MIDI from any number of producer threads (MIDI input callbacks, the on-screen and computer
+    keyboards) to the audio thread.
+
+    Producers serialise among themselves with a mutex, which only non-real-time threads ever take;
+    the audio thread is the single consumer of a lock-free FIFO, so it never locks or allocates.
+    Replaces juce::MidiMessageCollector, which locks and can allocate on the audio thread.
+    Only short messages are carried (SysEx is ignored). */
+class MidiInputQueue
+{
+public:
+    static constexpr int capacity = 2048;
+
+    /** Any thread except the audio thread. Returns false (and counts a drop) if the queue is full
+        or the message is not a short message. */
+    bool push(const juce::MidiMessage& message);
+
+    /** Audio thread. Moves up to maxEvents queued messages into out, all at sampleOffset 0 (live
+        input is played as soon as it arrives). Returns how many were written. */
+    int popInto(TimedMidi* out, int maxEvents) noexcept LATTICE_NONBLOCKING;
+
+    std::uint32_t droppedCount() const noexcept { return dropped.load(std::memory_order_relaxed); }
+
+private:
+    std::mutex producerMutex;
+    juce::AbstractFifo fifo{capacity};
+    std::array<TimedMidi, capacity> buffer{};
+    std::atomic<std::uint32_t> dropped{0};
+};
+
+} // namespace lattice

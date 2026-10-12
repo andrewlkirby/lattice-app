@@ -6,7 +6,7 @@ Planning documents for the Ableton-Live-like DAW with Push-style and generic MID
 |-----|--------|--------|
 | [00-preliminary-plan.md](00-preliminary-plan.md) | Overall scope, architecture, milestones, risks | Approved |
 | [01-m0-skeleton.md](01-m0-skeleton.md) | M0: CMake/JUCE skeleton, audio device, test tone, CI, real-time checks | Done (2026-10-11): all definition-of-done items met |
-| [02-m1-tuning-core.md](02-m1-tuning-core.md) | M1: Tuning tables, Colundi/Scala parsers, per-track tuning, test synth | Draft |
+| [02-m1-tuning-core.md](02-m1-tuning-core.md) | M1: Tuning tables, Colundi/Scala parsers, per-track tuning, test synth | Built; CI pending |
 | [03-m2-engine-session.md](03-m2-engine-session.md) | M2: Project model, real-time engine, transport, mixer, clip launching, recording | Draft |
 | [04-m3-devices.md](04-m3-devices.md) | M3: Device framework, Synth/Sampler/Drum Rack, MIDI and audio effects, racks and macros, returns/sends/sidechain/delay compensation, presets | Draft |
 | [05-m4-ui.md](05-m4-ui.md) | M4: Live-style UI (Session, mixer, groups, Clip view with Colundi piano roll, Device panels, browser and library, tuning tools, preferences, MIDI/Key Map) | Draft |

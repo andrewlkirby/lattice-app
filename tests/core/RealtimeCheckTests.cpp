@@ -1,4 +1,5 @@
 #include "core/RealtimeCheck.h"
+#include "support/AllocationHooks.h"
 #include "support/Escape.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -27,7 +28,7 @@ struct HandlerScope
 
 TEST_CASE("Allocation hooks are linked into the tests", "[core][rt]")
 {
-    CHECK(rt::hooksInstalled());
+    LATTICE_REQUIRE_ALLOCATION_HOOKS();
 
     // Explicit operator new/delete calls: unlike new-expressions, the compiler may not remove them.
     const auto before = rt::countersForThisThread();
@@ -62,6 +63,7 @@ TEST_CASE("ScopedAudioThread marks only the current thread, and nests", "[core][
 
 TEST_CASE("Allocating on the audio thread is reported", "[core][rt]")
 {
+    LATTICE_REQUIRE_ALLOCATION_HOOKS();
     const HandlerScope handler;
     const auto violationsBefore = rt::violationCount();
 
