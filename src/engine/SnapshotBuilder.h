@@ -93,6 +93,7 @@ private:
         std::unordered_map<std::int64_t, std::shared_ptr<RackChainState>> keptChains;
         std::vector<DevicePtr> fresh;
         std::vector<std::shared_ptr<RackChainState>> freshChains;
+        std::vector<SidechainRoute> sidechainSources;
         DeviceCreateContext context;
     };
     /** One DEVICES node to a layout (racks inside, up to RackDevice::maxDepth deep). */
@@ -116,6 +117,8 @@ private:
     bool allChainsDirty = true;
     std::unordered_set<std::int64_t> dirtyChains; // IDs of chain owners (tracks)
     std::unordered_map<std::int64_t, StudioDevice*> deviceIndex;
+    /** Each chain owner's sidechain sources (by owner ID), from its last chain build. */
+    std::unordered_map<std::int64_t, std::vector<SidechainRoute>> trackSidechains;
     std::unordered_map<std::int64_t, ClipDataPtr> clipCache;
     std::unordered_set<std::int64_t> dirtyClips;
     std::unordered_map<std::int64_t, TrackCache> tracks;

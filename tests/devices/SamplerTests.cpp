@@ -93,7 +93,7 @@ TEST_CASE("Sampler: a 440 Hz sample rooted at 440 Hz plays the Colundi table", "
     CHECK(colundi->hz[12] == Catch::Approx(59.9).margin(0.05));
 }
 
-TEST_CASE("Sampler: sinc interpolation pitched up two octaves is alias-free and flat", "[devices][sampler][dsp]")
+TEST_CASE("Sampler: sinc interpolation pitched up two octaves is alias-free and flat", "[devices][sampler][dsp][heavy]")
 {
     Track track(Tet12::make());
     const double binHz = sr / 65536.0;

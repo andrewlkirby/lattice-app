@@ -88,6 +88,23 @@ inline bool isNoteOff(const TimedMidi& e) noexcept
     return (e.bytes[0] & 0xf0) == 0x80 || ((e.bytes[0] & 0xf0) == 0x90 && e.bytes[2] == 0);
 }
 
+/** Where a device's sidechain audio comes from: another track's output, before or after its audio
+    effects (docs/04-m3-devices.md, "Sidechain"). trackId 0 = none. */
+struct SidechainRoute
+{
+    std::int64_t trackId = 0;
+    bool preFx = false;
+};
+
+/** Finds a source track's audio for this block (audio thread; the engine provides it). The source
+    has always been rendered already: the engine orders tracks so sources come first. */
+struct SidechainLookup
+{
+    virtual ~SidechainLookup() = default;
+    /** Two channels from the block's start, or nullptr if the track isn't there. */
+    virtual const float* const* channels(const SidechainRoute& route) const noexcept = 0;
+};
+
 /** Musical time for one block, as devices see it. While the transport is stopped, beatAtStart is
     a free-running beat at the current tempo, so tempo-synced devices (LFOs, delays, the
     arpeggiator) keep working. */
@@ -99,6 +116,8 @@ struct DeviceTimeInfo
     double beatAtStart = 0.0;
     std::int64_t blockStartSample = 0;
     bool playing = false;
+    const SidechainLookup* sidechains = nullptr; // the engine's; null outside it
+    int sidechainOffset = 0;                     // where this block starts in the sources' buffers
 
     double beatAt(int offset) const noexcept { return beatAtStart + offset / samplesPerBeat; }
 };

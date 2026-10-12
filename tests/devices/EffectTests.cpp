@@ -50,7 +50,7 @@ void feed(DeviceHarness& h, F&& f)
 }
 } // namespace
 
-TEST_CASE("EQ Eight: the measured response is the analytic one within 0.1 dB", "[devices][effects][eq]")
+TEST_CASE("EQ Eight: the measured response is the analytic one within 0.1 dB", "[devices][effects][eq][heavy]")
 {
     EqEightDevice eq;
     // A busy setting: a 48 dB low cut, three bells, a shelf, a 12 dB high cut.
@@ -143,7 +143,7 @@ TEST_CASE("Delay: the time is exact to the sample at every synced value", "[devi
     }
 }
 
-TEST_CASE("Saturator: oversampling measurably reduces aliasing", "[devices][effects][saturator]")
+TEST_CASE("Saturator: oversampling measurably reduces aliasing", "[devices][effects][saturator][heavy]")
 {
     // A loud sine through the soft curve: its harmonics run past Nyquist, and fall off fast enough
     // that each doubling of the rate leaves far less to fold back. (Hard clipping's harmonics only
@@ -322,7 +322,7 @@ std::vector<float> reverbImpulse(ReverbDevice& reverb, double seconds, std::vect
 }
 } // namespace
 
-TEST_CASE("Reverb: each band decays in its set time (RT60 within 10 %)", "[devices][effects][reverb]")
+TEST_CASE("Reverb: each band decays in its set time (RT60 within 10 %)", "[devices][effects][reverb][heavy]")
 {
     for (const int quality : {1, 0})
     {
@@ -345,7 +345,7 @@ TEST_CASE("Reverb: each band decays in its set time (RT60 within 10 %)", "[devic
     }
 }
 
-TEST_CASE("Reverb: no strong resonances, and decorrelated channels", "[devices][effects][reverb]")
+TEST_CASE("Reverb: no strong resonances, and decorrelated channels", "[devices][effects][reverb][heavy]")
 {
     ReverbDevice reverb;
     setParam(reverb, "reverb.decay", 3.0f);
@@ -400,7 +400,7 @@ TEST_CASE("Reverb: no strong resonances, and decorrelated channels", "[devices][
     CHECK(std::abs(correlation) < 0.3);
 }
 
-TEST_CASE("Reverb: freeze holds the level", "[devices][effects][reverb]")
+TEST_CASE("Reverb: freeze holds the level", "[devices][effects][reverb][heavy]")
 {
     ReverbDevice reverb;
     setParam(reverb, "reverb.mix", 1.0f);

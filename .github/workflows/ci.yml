@@ -37,7 +37,7 @@ jobs:
         run: ctest --preset windows-${{ matrix.config }}
       - name: Test (all tags, nightly)
         if: github.event_name == 'schedule'
-        run: ctest --test-dir build/windows-${{ matrix.config }} -C ${{ matrix.config == 'debug' && 'Debug' || 'Release' }} --output-on-failure -LE "bench|hardware|timing"
+        run: ctest --test-dir build/windows-${{ matrix.config }} -C ${{ matrix.config == 'debug' && 'Debug' || 'Release' }} --output-on-failure -LE "${{ matrix.config == 'debug' && 'bench|hardware|timing|heavy' || 'bench|hardware|timing' }}"
 
   linux:
     # Built inside the same Docker image as scripts/linux-test.sh, so CI and local runs match.

@@ -112,6 +112,8 @@ void SnapshotBuilder::valueTreePropertyChanged(juce::ValueTree& tree, const juce
         if (RackDevice::isRackType(stateNode.getParent()[ids::deviceType].toString()) && stateNode == tree &&
             (property == juce::Identifier("macroCount") || property == juce::Identifier("tunedPads")))
             markDirty(stateNode.getParent());
+        if (stateNode == tree && (property == ids::sidechainTrack || property == ids::sidechainPreFx))
+            markDirty(stateNode.getParent()); // a new route: the chain and the processing order change
         return;
     }
     markDirty(tree);
@@ -216,6 +218,13 @@ void SnapshotBuilder::buildChain(const juce::ValueTree& devicesNode, DeviceChain
         build.kept[deviceId] = device;
         out.devices.push_back(device);
         out.racks.push_back(isRack ? buildRack(node, build, depth + 1) : nullptr);
+        const auto state = node.getChildWithName(ids::deviceState);
+        SidechainRoute route;
+        route.trackId = static_cast<juce::int64>(state.getProperty(ids::sidechainTrack, static_cast<juce::int64>(0)));
+        route.preFx = state.getProperty(ids::sidechainPreFx, false);
+        out.sidechains.push_back(route);
+        if (route.trackId != 0)
+            build.sidechainSources.push_back(route);
     }
 }
 
@@ -301,6 +310,7 @@ void SnapshotBuilder::rebuildChain(const juce::ValueTree& owner, TrackCache& cac
     buildChain(LiveSet::chainOf(owner), *layout, build, 0);
     cache.devices = std::move(build.kept);
     cache.rackChains = std::move(build.keptChains);
+    trackSidechains[LiveSet::idOf(owner)] = build.sidechainSources;
 
     // Nothing changed for the engine (e.g. only a name): keep the published chain, so nothing fades.
     const auto current = cache.processor->chain();
@@ -434,6 +444,143 @@ void SnapshotBuilder::rebuildNow()
 
         newTracks[ts.id] = std::move(cache);
         snapshot->tracks.push_back(std::move(ts));
+    }
+
+    // Return tracks: a device chain each, fed by the sends.
+    const int numReturns = std::min(set.numReturns(), TrackProcessor::maxReturns);
+    std::vector<std::int64_t> returnIds;
+    for (int r = 0; r < numReturns; ++r)
+    {
+        const auto node = set.returnTrack(r);
+        ReturnSnapshot rs;
+        rs.id = LiveSet::idOf(node);
+        returnIds.push_back(rs.id);
+        auto& cache = newTracks[rs.id];
+        if (const auto it = tracks.find(rs.id); it != tracks.end())
+            cache = std::move(it->second);
+        bool chainDirty = allChainsDirty || dirtyChains.contains(rs.id);
+        if (cache.processor == nullptr)
+        {
+            cache.processor = engine.createTrackProcessor(rs.id);
+            chainDirty = true;
+        }
+        if (chainDirty)
+            rebuildChain(node, cache);
+        rs.processor = cache.processor;
+        const float gain = gainFromDb(node[ids::volumeDb]);
+        const auto [panL, panR] = constantPowerPan(node[ids::pan]);
+        rs.gainLeft = gain * panL;
+        rs.gainRight = gain * panR;
+        rs.mute = node[ids::mute];
+        rs.solo = node[ids::solo];
+        rs.preFader = node[ids::preFader];
+        snapshot->anyReturnSolo = snapshot->anyReturnSolo || rs.solo;
+        snapshot->returns.push_back(std::move(rs));
+    }
+
+    // The master's chain (its cache key is 0: the master has no ID).
+    {
+        auto& cache = newTracks[0];
+        if (const auto it = tracks.find(0); it != tracks.end())
+            cache = std::move(it->second);
+        bool chainDirty = allChainsDirty || dirtyChains.contains(0);
+        if (cache.processor == nullptr)
+        {
+            cache.processor = engine.createTrackProcessor(0);
+            chainDirty = true;
+        }
+        if (chainDirty)
+            rebuildChain(set.master(), cache);
+        snapshot->master = cache.processor;
+    }
+
+    // Sends: each track's level to each return.
+    for (int t = 0; t < numTracks; ++t)
+    {
+        auto& ts = snapshot->tracks[static_cast<std::size_t>(t)];
+        for (int r = 0; r < numReturns; ++r)
+            ts.sendGains[static_cast<std::size_t>(r)] = gainFromDb(set.sendLevel(t, r));
+    }
+
+    // Delay compensation (docs/04-m3-devices.md, "Delay compensation"): tracks line up with the
+    // slowest track, returns with the slowest return, and the tracks' direct path to the master
+    // waits for the returns. With "reduced latency when monitoring", armed tracks skip their delay.
+    snapshot->reducedLatencyWhenMonitoring = set.state().getProperty(ids::reducedLatencyWhenMonitoring, false);
+    int slowestTrack = 0;
+    for (const auto& ts : snapshot->tracks)
+        slowestTrack = std::max(slowestTrack, ts.processor->latencySamples());
+    for (auto& ts : snapshot->tracks)
+        ts.compensation = snapshot->reducedLatencyWhenMonitoring && ts.arm ? 0 : slowestTrack - ts.processor->latencySamples();
+    int slowestReturn = 0;
+    for (const auto& rs : snapshot->returns)
+        slowestReturn = std::max(slowestReturn, rs.processor->latencySamples());
+    for (auto& rs : snapshot->returns)
+        rs.compensation = slowestReturn - rs.processor->latencySamples();
+    snapshot->masterInputDelay = slowestReturn;
+
+    // Processing levels from the sidechains: a track comes after every track it listens to. Tracks
+    // caught in a loop (the editor refuses those) go last, so nothing waits forever.
+    {
+        std::unordered_map<std::int64_t, int> indexOf;
+        for (int t = 0; t < numTracks; ++t)
+            indexOf[snapshot->tracks[static_cast<std::size_t>(t)].id] = t;
+        std::vector<std::vector<int>> sources(static_cast<std::size_t>(numTracks));
+        std::unordered_set<std::int64_t> tapped;
+        for (int t = 0; t < numTracks; ++t)
+            for (const auto& route : trackSidechains[snapshot->tracks[static_cast<std::size_t>(t)].id])
+            {
+                if (const auto it = indexOf.find(route.trackId); it != indexOf.end() && it->second != t)
+                    sources[static_cast<std::size_t>(t)].push_back(it->second);
+                if (route.preFx)
+                    tapped.insert(route.trackId);
+            }
+        for (const auto& [id, cache] : newTracks)
+            for (const auto& route : trackSidechains[id])
+                if (route.preFx)
+                    tapped.insert(route.trackId);
+        std::vector<int> level(static_cast<std::size_t>(numTracks), -1);
+        for (int pass = 0; pass <= numTracks; ++pass)
+        {
+            bool changed = false;
+            for (int t = 0; t < numTracks; ++t)
+            {
+                if (level[static_cast<std::size_t>(t)] >= 0)
+                    continue;
+                int l = 0;
+                bool ready = true;
+                for (const int src : sources[static_cast<std::size_t>(t)])
+                {
+                    if (level[static_cast<std::size_t>(src)] < 0)
+                    {
+                        ready = false;
+                        break;
+                    }
+                    l = std::max(l, level[static_cast<std::size_t>(src)] + 1);
+                }
+                if (ready)
+                {
+                    level[static_cast<std::size_t>(t)] = l;
+                    changed = true;
+                }
+            }
+            if (!changed)
+                break;
+        }
+        int deepest = 0;
+        for (const int l : level)
+            deepest = std::max(deepest, l);
+        for (auto& l : level)
+            if (l < 0)
+                l = deepest + 1; // in a loop
+        for (int t = 0; t < numTracks; ++t)
+        {
+            const auto l = static_cast<std::size_t>(level[static_cast<std::size_t>(t)]);
+            if (snapshot->levels.size() <= l)
+                snapshot->levels.resize(l + 1);
+            snapshot->levels[l].push_back(t);
+        }
+        for (const auto& [id, cache] : newTracks)
+            cache.processor->setPreFxTapWanted(tapped.contains(id));
     }
 
     clipCache = std::move(newClipCache);

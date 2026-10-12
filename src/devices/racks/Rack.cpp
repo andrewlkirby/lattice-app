@@ -217,6 +217,7 @@ void RackDevice::renderPiece(const RackLayout& l, DeviceBuffers& io, const Devic
     DeviceTimeInfo pieceTime = time;
     pieceTime.beatAtStart = time.beatAt(start);
     pieceTime.blockStartSample = time.blockStartSample + start;
+    pieceTime.sidechainOffset = time.sidechainOffset + start;
     const float rampSamples = static_cast<float>(0.02 * sampleRate());
 
     for (const auto& c : l.chains)

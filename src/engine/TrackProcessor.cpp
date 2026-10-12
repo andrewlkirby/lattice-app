@@ -43,6 +43,18 @@ void TrackProcessor::prepare(double sampleRate, int maxBlockSize)
     sink = MidiEventSink{eventStorage.data(), maxEventsPerChunk, 0, 0, 0};
     buffer.setSize(2, maxBlockSize, false, true, false);
     buffer.clear();
+    delayed.setSize(2, maxBlockSize, false, true, false);
+    delayed.clear();
+    tapBuffer.setSize(2, maxBlockSize, false, true, false);
+    tapBuffer.clear();
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        chainChannels[ch] = buffer.getWritePointer(ch);
+        outputChannels[ch] = delayed.getWritePointer(ch);
+        tapChannels[ch] = tapBuffer.getWritePointer(ch);
+        compensationLines[ch].prepare(static_cast<int>(maxCompensationSeconds * sampleRate) + 4);
+    }
+    sendGains.fill(0.0f);
 
     gainLeft.reset(sampleRate, gainRampSeconds);
     gainRight.reset(sampleRate, gainRampSeconds);
@@ -57,6 +69,7 @@ void TrackProcessor::prepare(double sampleRate, int maxBlockSize)
 void TrackProcessor::setChain(std::shared_ptr<const DeviceChainLayout> chain)
 {
     RT_ASSERT_NOT_AUDIO_THREAD();
+    publishedLatency.store(chain != nullptr ? chain->latencySamples : 0, std::memory_order_relaxed);
     chains.publish(std::move(chain));
 }
 
@@ -120,8 +133,8 @@ void TrackProcessor::applyChainFade(int numSamples) noexcept
         chainFade = ChainFade::Steady;
 }
 
-void TrackProcessor::render(int numSamples, const DeviceTimeInfo& time, float targetLeft, float targetRight,
-                            float* masterLeft, float* masterRight) noexcept
+void TrackProcessor::renderChain(int numSamples, const DeviceTimeInfo& time, const float* const* input,
+                                 int compensation) noexcept
 {
     numSamples = std::min(numSamples, preparedBlockSize);
     if (numSamples <= 0)
@@ -134,17 +147,18 @@ void TrackProcessor::render(int numSamples, const DeviceTimeInfo& time, float ta
     }
 
     // The chain's MIDI input: the scheduler's events, in non-decreasing time order, kept in the block.
-    auto* tap = eventTap.load(std::memory_order_relaxed);
+    auto* eventTapped = eventTap.load(std::memory_order_relaxed);
     for (int i = 0; i < sink.count; ++i)
     {
         auto& e = sink.events[i];
         e.sampleOffset = std::clamp(e.sampleOffset, 0, numSamples - 1);
-        if (tap != nullptr)
-            tap->onTrackEvent(id, sink.chunkStart + e.sampleOffset, e);
+        if (eventTapped != nullptr)
+            eventTapped->onTrackEvent(id, sink.chunkStart + e.sampleOffset, e);
         if (isNoteOn(e))
             lastNote.store(e.bytes[1], std::memory_order_relaxed);
     }
-    MidiBlock input{sink.events, sink.capacity, sink.count, 0};
+    MidiBlock midiInput{sink.events, sink.capacity, sink.count, 0};
+    sink.count = 0; // consumed: a processor without a scheduler (a return, the master) starts empty
 
     // A newer chain: fade the current one out first (or switch at once if nothing is audible).
     const auto* latest = chains.latest();
@@ -156,37 +170,115 @@ void TrackProcessor::render(int numSamples, const DeviceTimeInfo& time, float ta
             chainFade = ChainFade::Out;
     }
 
-    float* const channels[2] = {buffer.getWritePointer(0), buffer.getWritePointer(1)};
-    std::fill_n(channels[0], numSamples, 0.0f);
-    std::fill_n(channels[1], numSamples, 0.0f);
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        if (input != nullptr)
+            std::copy_n(input[ch], numSamples, chainChannels[ch]);
+        else
+            std::fill_n(chainChannels[ch], numSamples, 0.0f);
+    }
+    const bool wantTap = tapWanted.load(std::memory_order_relaxed);
     if (activeChain != nullptr && activeChain->object != nullptr)
-        if (const auto lost = runner.process(*activeChain->object, channels, numSamples, input, time); lost > 0)
+    {
+        if (const auto lost = runner.process(*activeChain->object, chainChannels, numSamples, midiInput, time,
+                                             wantTap ? tapChannels : nullptr);
+            lost > 0)
             dropped.fetch_add(lost, std::memory_order_relaxed);
+    }
+    else if (wantTap)
+    {
+        for (int ch = 0; ch < 2; ++ch)
+            std::copy_n(chainChannels[ch], numSamples, tapChannels[ch]);
+    }
 
     applyChainFade(numSamples);
     if (chainFade == ChainFade::Out && chainGain <= 0.0f)
         switchChain(latest); // faded out: the new chain fades in from the next block
 
+    // Delay compensation: line this track up with the slowest one.
+    compensation = std::clamp(compensation, 0, compensationLines[0].capacity());
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        auto& line = compensationLines[ch];
+        const float* in = chainChannels[ch];
+        float* out = outputChannels[ch];
+        for (int i = 0; i < numSamples; ++i)
+        {
+            line.push(in[i]);
+            out[i] = line.tap(compensation);
+        }
+    }
+}
+
+void TrackProcessor::mix(int numSamples, float targetLeft, float targetRight, const Sends& sends, float* busLeft,
+                         float* busRight) noexcept
+{
+    numSamples = std::min(numSamples, preparedBlockSize);
+    if (numSamples <= 0)
+        return;
+    const float* inL = outputChannels[0];
+    const float* inR = outputChannels[1];
+
+    // Pre-fader sends take the (compensated) chain output as it is.
+    const int numSends = std::min(sends.count, maxReturns);
+    const float sendStep = 1.0f / static_cast<float>(numSamples);
+    for (int r = 0; r < numSends; ++r)
+    {
+        if (!sends.preFader[r])
+            continue;
+        const float from = sendGains[static_cast<std::size_t>(r)];
+        const float to = sends.audible ? sends.gains[r] : 0.0f;
+        if (from == 0.0f && to == 0.0f)
+            continue;
+        float* outL = sends.buses[2 * r];
+        float* outR = sends.buses[2 * r + 1];
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const float g = from + (to - from) * static_cast<float>(i + 1) * sendStep;
+            outL[i] += inL[i] * g;
+            outR[i] += inR[i] * g;
+        }
+        sendGains[static_cast<std::size_t>(r)] = to;
+    }
+
+    // Fader and pan, into the bus; post-fader sends from the same signal.
     gainLeft.setTargetValue(targetLeft);
     gainRight.setTargetValue(targetRight);
-    float* left = channels[0];
-    float* right = channels[1];
+    float* faded[2] = {delayed.getWritePointer(0), delayed.getWritePointer(1)}; // in place: output() is used up
     if (gainLeft.isSmoothing() || gainRight.isSmoothing())
     {
         for (int i = 0; i < numSamples; ++i)
         {
-            left[i] *= gainLeft.getNextValue();
-            right[i] *= gainRight.getNextValue();
+            faded[0][i] *= gainLeft.getNextValue();
+            faded[1][i] *= gainRight.getNextValue();
         }
     }
     else
     {
-        juce::FloatVectorOperations::multiply(left, gainLeft.getCurrentValue(), numSamples);
-        juce::FloatVectorOperations::multiply(right, gainRight.getCurrentValue(), numSamples);
+        juce::FloatVectorOperations::multiply(faded[0], gainLeft.getCurrentValue(), numSamples);
+        juce::FloatVectorOperations::multiply(faded[1], gainRight.getCurrentValue(), numSamples);
+    }
+    for (int r = 0; r < numSends; ++r)
+    {
+        if (sends.preFader[r])
+            continue;
+        const float from = sendGains[static_cast<std::size_t>(r)];
+        const float to = sends.audible ? sends.gains[r] : 0.0f;
+        if (from == 0.0f && to == 0.0f)
+            continue;
+        float* outL = sends.buses[2 * r];
+        float* outR = sends.buses[2 * r + 1];
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const float g = from + (to - from) * static_cast<float>(i + 1) * sendStep;
+            outL[i] += faded[0][i] * g;
+            outR[i] += faded[1][i] * g;
+        }
+        sendGains[static_cast<std::size_t>(r)] = to;
     }
 
-    const auto rangeLeft = juce::FloatVectorOperations::findMinAndMax(left, numSamples);
-    const auto rangeRight = juce::FloatVectorOperations::findMinAndMax(right, numSamples);
+    const auto rangeLeft = juce::FloatVectorOperations::findMinAndMax(faded[0], numSamples);
+    const auto rangeRight = juce::FloatVectorOperations::findMinAndMax(faded[1], numSamples);
     const float peakLeft = std::max(-rangeLeft.getStart(), rangeLeft.getEnd());
     const float peakRight = std::max(-rangeRight.getStart(), rangeRight.getEnd());
     if (peakLeft > peaks[0].load(std::memory_order_relaxed))
@@ -194,8 +286,10 @@ void TrackProcessor::render(int numSamples, const DeviceTimeInfo& time, float ta
     if (peakRight > peaks[1].load(std::memory_order_relaxed))
         peaks[1].store(peakRight, std::memory_order_relaxed);
 
-    juce::FloatVectorOperations::add(masterLeft, left, numSamples);
-    juce::FloatVectorOperations::add(masterRight, right, numSamples);
+    if (busLeft != nullptr)
+        juce::FloatVectorOperations::add(busLeft, faded[0], numSamples);
+    if (busRight != nullptr)
+        juce::FloatVectorOperations::add(busRight, faded[1], numSamples);
 }
 
 } // namespace lattice

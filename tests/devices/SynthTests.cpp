@@ -108,7 +108,7 @@ TEST_CASE("Synth: glide moves along the tuning table", "[devices][synth][tuning]
 }
 
 TEST_CASE("Synth: filter key tracking at 100% doubles the cutoff when the note's frequency doubles",
-          "[devices][synth][filter]")
+          "[devices][synth][filter][heavy]")
 {
     TrackTuning twelveTet(Tet12::make());
     const auto cutoffFor = [&](int note) {

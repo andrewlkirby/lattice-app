@@ -70,7 +70,7 @@ void checkAliasing(const dsp::MipmappedWave& wave, const char* name, int perOcta
 } // namespace
 
 TEST_CASE("Oscillators: saw, triangle and pulse alias at or below -80 dB from 20 Hz to 15 kHz",
-          "[devices][dsp][oscillator]")
+          "[devices][dsp][oscillator][heavy]")
 {
     const auto& lib = dsp::WaveformLibrary::get();
     checkAliasing(lib.shape(dsp::WaveformLibrary::Shape::Saw), "saw", 3);
@@ -173,7 +173,7 @@ double crossing(MakeProcess&& make, double targetDb, double lo, double hi)
 }
 } // namespace
 
-TEST_CASE("SVF: the measured cutoff is within 3% of the setting", "[devices][dsp][filter]")
+TEST_CASE("SVF: the measured cutoff is within 3% of the setting", "[devices][dsp][filter][heavy]")
 {
     for (const double fc : {100.0, 1000.0, 8000.0, 16000.0})
     {
@@ -203,7 +203,7 @@ TEST_CASE("SVF: the measured cutoff is within 3% of the setting", "[devices][dsp
     }
 }
 
-TEST_CASE("Ladder: cutoff within 3%, and stable at full resonance", "[devices][dsp][filter]")
+TEST_CASE("Ladder: cutoff within 3%, and stable at full resonance", "[devices][dsp][filter][heavy]")
 {
     for (const double fc : {200.0, 2000.0, 10000.0})
     {
@@ -284,7 +284,7 @@ TEST_CASE("Half-band: flat pass band, deep stop band", "[devices][dsp][filter]")
     CHECK(toDb(out) < -80.0);
 }
 
-TEST_CASE("Biquads: matched designs follow the analog prototype up to Nyquist", "[devices][dsp][filter]")
+TEST_CASE("Biquads: matched designs follow the analog prototype up to Nyquist", "[devices][dsp][filter][heavy]")
 {
     using dsp::BiquadType;
     const auto worstError = [](const dsp::BiquadCoefficients& c, BiquadType type, double fc, double q, double gain) {

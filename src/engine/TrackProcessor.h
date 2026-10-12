@@ -3,6 +3,7 @@
 #include "core/RealtimeCheck.h"
 #include "core/Seqlock.h"
 #include "core/SettledShared.h"
+#include "devices/dsp/DelayLine.h"
 #include "devices/framework/DeviceChain.h"
 #include "engine/session/ClipPlayer.h"
 #include "tuning/TrackTuning.h"
@@ -143,10 +144,42 @@ public:
     MidiEventSink& beginChunk(std::int64_t chunkStart) noexcept LATTICE_NONBLOCKING;
     MidiEventSink& events() noexcept { return sink; }
 
-    /** Runs the device chain over the chunk's events, applies gain and pan (smoothed towards
-        targetLeft/targetRight), meters the result, and adds it to the master buffers. */
-    void render(int numSamples, const DeviceTimeInfo& time, float targetLeft, float targetRight,
-                float* masterLeft, float* masterRight) noexcept LATTICE_NONBLOCKING;
+    static constexpr int maxReturns = 12;
+    static constexpr double maxCompensationSeconds = 0.5;
+
+    /** Stage 1 (may run on a worker thread): the device chain over the chunk's events. input is the
+        chain's audio input (a return's sends, the master's mix) or null for silence (MIDI tracks).
+        Leaves the chain's output in chainOutput(), and that output delayed by `compensation`
+        samples (delay compensation) in output(). Touches only this processor's own state. */
+    void renderChain(int numSamples, const DeviceTimeInfo& time, const float* const* input,
+                     int compensation) noexcept LATTICE_NONBLOCKING;
+
+    /** What one mix() call sends where. */
+    struct Sends
+    {
+        const float* gains = nullptr;   // per return, linear (0 = off)
+        const bool* preFader = nullptr; // per return
+        float* const* buses = nullptr;  // per return: two channels, added to
+        int count = 0;
+        bool audible = true;            // false: the sends are muted too
+    };
+
+    /** Stage 2 (audio thread, in a fixed order): fader and pan (ramped towards the targets), sends,
+        meters; adds the result into busLeft / busRight. */
+    void mix(int numSamples, float targetLeft, float targetRight, const Sends& sends, float* busLeft,
+             float* busRight) noexcept LATTICE_NONBLOCKING;
+
+    /** After renderChain(): the chain's output (before compensation) and after compensation. */
+    const float* const* chainOutput() const noexcept { return chainChannels; }
+    const float* const* output() const noexcept { return outputChannels; }
+    /** After renderChain(): the audio after the instruments (the "pre-effects" sidechain point),
+        if setPreFxTapWanted(true). */
+    const float* const* preFxTap() const noexcept { return tapChannels; }
+    /** Message thread: whether some device sidechains from this track before its effects. */
+    void setPreFxTapWanted(bool wanted) noexcept { tapWanted.store(wanted, std::memory_order_relaxed); }
+
+    /** The latency of the chain in use (audio thread) or published (message thread). */
+    int latencySamples() const noexcept { return publishedLatency.load(std::memory_order_relaxed); }
 
     void publishPlayState(const TrackPlayState& s) noexcept LATTICE_NONBLOCKING { published.store(s); }
     std::uint32_t droppedEvents() const noexcept { return dropped.load(std::memory_order_relaxed); }
@@ -178,9 +211,18 @@ private:
 
     std::vector<TimedMidi> eventStorage;
     MidiEventSink sink;
-    juce::AudioBuffer<float> buffer;
+    juce::AudioBuffer<float> buffer;     // the chain's output
+    juce::AudioBuffer<float> delayed;    // after compensation
+    juce::AudioBuffer<float> tapBuffer;  // the pre-effects tap
+    float* chainChannels[2] = {nullptr, nullptr};
+    float* outputChannels[2] = {nullptr, nullptr};
+    float* tapChannels[2] = {nullptr, nullptr};
+    std::atomic<bool> tapWanted{false};
+    std::atomic<int> publishedLatency{0};
+    dsp::DelayLine compensationLines[2];
     juce::SmoothedValue<float> gainLeft;
     juce::SmoothedValue<float> gainRight;
+    std::array<float, maxReturns> sendGains{};
     int preparedBlockSize = 0;
 
     std::atomic<TrackEventTap*> eventTap{nullptr};

@@ -43,11 +43,127 @@ void SessionProcessor::prepare(double newSampleRate, int maxBlockSize)
     sessionRecord = false;
     stopAllBeat = never;
     metronomeBuffer.assign(static_cast<std::size_t>(maxBlock), 0.0f);
+    returnInputs.setSize(2 * TrackProcessor::maxReturns, maxBlock, false, true, false);
+    for (int i = 0; i < 2 * TrackProcessor::maxReturns; ++i)
+        returnInputPointers[static_cast<std::size_t>(i)] = returnInputs.getWritePointer(i);
+    trackBus.setSize(2, maxBlock, false, true, false);
+    returnBus.setSize(2, maxBlock, false, true, false);
+    masterInput.setSize(2, maxBlock, false, true, false);
+    for (auto& line : masterInputDelay)
+        line.prepare(static_cast<int>(TrackProcessor::maxCompensationSeconds * sampleRate) + 4);
+    for (auto& g : returnGains)
+    {
+        g.reset(sampleRate, TrackProcessor::gainRampSeconds);
+        g.setCurrentAndTargetValue(0.0f);
+    }
     masterLeft.reset(newSampleRate, TrackProcessor::gainRampSeconds);
     masterRight.reset(newSampleRate, TrackProcessor::gainRampSeconds);
     masterLeft.setCurrentAndTargetValue(0.0f);
     masterRight.setCurrentAndTargetValue(0.0f);
     published.store({});
+}
+
+std::array<float, 2> SessionProcessor::takeReturnPeaks(int r) noexcept
+{
+    if (r < 0 || r >= TrackProcessor::maxReturns)
+        return {0.0f, 0.0f};
+    auto& p = returnPeaks[static_cast<std::size_t>(r)];
+    return {p[0].exchange(0.0f, std::memory_order_relaxed), p[1].exchange(0.0f, std::memory_order_relaxed)};
+}
+
+const float* const* SessionProcessor::channels(const SidechainRoute& route) const noexcept
+{
+    if (rendering == nullptr)
+        return nullptr;
+    for (const auto& t : rendering->tracks)
+        if (t.id == route.trackId)
+            return route.preFx ? t.processor->preFxTap() : t.processor->chainOutput();
+    return nullptr;
+}
+
+void SessionProcessor::renderMix(const EngineSnapshot& snapshot, const DeviceTimeInfo& time, int n, float* left,
+                                 float* right) noexcept
+{
+    rendering = &snapshot;
+    DeviceTimeInfo t = time;
+    t.sidechains = this;
+
+    // 1. Every track's chain, level by level: sidechain sources before their listeners.
+    for (const auto& level : snapshot.levels)
+        for (const int index : level)
+        {
+            const auto& track = snapshot.tracks[static_cast<std::size_t>(index)];
+            track.processor->renderChain(n, t, nullptr, track.compensation);
+        }
+
+    // 2. Faders, pans and sends, in track order: the same sums whatever ran in parallel.
+    const int numReturns = static_cast<int>(snapshot.returns.size());
+    for (int r = 0; r < 2 * numReturns; ++r)
+        std::fill_n(returnInputPointers[static_cast<std::size_t>(r)], n, 0.0f);
+    float* busL = trackBus.getWritePointer(0);
+    float* busR = trackBus.getWritePointer(1);
+    std::fill_n(busL, n, 0.0f);
+    std::fill_n(busR, n, 0.0f);
+    std::array<bool, TrackProcessor::maxReturns> preFader{};
+    for (int r = 0; r < numReturns; ++r)
+        preFader[static_cast<std::size_t>(r)] = snapshot.returns[static_cast<std::size_t>(r)].preFader;
+    for (const auto& track : snapshot.tracks)
+    {
+        // Soloing tracks keeps the returns audible ("solo in place"): a soloed track still reaches
+        // them, the others don't. Soloing a return silences the tracks' direct outputs.
+        const bool trackAudible = !track.mute && (!snapshot.anySolo || track.solo);
+        const bool direct = trackAudible && !snapshot.anyReturnSolo;
+        TrackProcessor::Sends sends;
+        sends.gains = track.sendGains.data();
+        sends.preFader = preFader.data();
+        sends.buses = returnInputPointers.data();
+        sends.count = numReturns;
+        sends.audible = trackAudible;
+        track.processor->mix(n, direct ? track.gainLeft : 0.0f, direct ? track.gainRight : 0.0f, sends, busL, busR);
+    }
+
+    // 3. The returns, then their faders.
+    float* retL = returnBus.getWritePointer(0);
+    float* retR = returnBus.getWritePointer(1);
+    std::fill_n(retL, n, 0.0f);
+    std::fill_n(retR, n, 0.0f);
+    for (int r = 0; r < numReturns; ++r)
+    {
+        const auto& ret = snapshot.returns[static_cast<std::size_t>(r)];
+        const float* input[2] = {returnInputPointers[static_cast<std::size_t>(2 * r)],
+                                 returnInputPointers[static_cast<std::size_t>(2 * r + 1)]};
+        ret.processor->renderChain(n, t, input, ret.compensation);
+        const bool audible = !ret.mute && (!snapshot.anyReturnSolo || ret.solo);
+        TrackProcessor::Sends none;
+        ret.processor->mix(n, audible ? ret.gainLeft : 0.0f, audible ? ret.gainRight : 0.0f, none, retL, retR);
+    }
+
+    // 4. The master: the tracks (delayed to line up with the returns) and the returns, through the
+    //    master's chain.
+    float* inL = masterInput.getWritePointer(0);
+    float* inR = masterInput.getWritePointer(1);
+    const int wait = std::clamp(snapshot.masterInputDelay, 0, masterInputDelay[0].capacity());
+    for (int i = 0; i < n; ++i)
+    {
+        masterInputDelay[0].push(busL[i]);
+        masterInputDelay[1].push(busR[i]);
+        inL[i] = masterInputDelay[0].tap(wait) + retL[i];
+        inR[i] = masterInputDelay[1].tap(wait) + retR[i];
+    }
+    if (snapshot.master != nullptr)
+    {
+        const float* input[2] = {inL, inR};
+        snapshot.master->renderChain(n, t, input, 0);
+        const auto* out = snapshot.master->chainOutput();
+        juce::FloatVectorOperations::add(left, out[0], n);
+        juce::FloatVectorOperations::add(right, out[1], n);
+    }
+    else
+    {
+        juce::FloatVectorOperations::add(left, inL, n);
+        juce::FloatVectorOperations::add(right, inR, n);
+    }
+    rendering = nullptr;
 }
 
 std::array<float, 2> SessionProcessor::takeMasterPeaks() noexcept
@@ -136,13 +252,8 @@ void SessionProcessor::process(const EngineSnapshot* snapshot, const EngineComma
         cur = boundary;
     }
 
-    // Instruments and mixer.
-    for (const auto& t : snapshot->tracks)
-    {
-        const bool audible = !t.mute && (!snapshot->anySolo || t.solo);
-        t.processor->render(numSamples, time, audible ? t.gainLeft : 0.0f, audible ? t.gainRight : 0.0f, left,
-                            right);
-    }
+    // Instruments, effects, mixer, returns, master chain.
+    renderMix(*snapshot, time, numSamples, left, right);
 
     masterLeft.setTargetValue(snapshot->masterGainLeft);
     masterRight.setTargetValue(snapshot->masterGainRight);

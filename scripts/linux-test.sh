@@ -96,7 +96,11 @@ cmake --build "$build_dir" --parallel 4
 echo "== Test"
 ctest_args=(--test-dir "$build_dir" --output-on-failure --no-tests=error)
 if [[ $all_tests -eq 0 ]]; then
-    ctest_args+=(-LE "slow|bench|stress|hardware|timing")
+    if [[ $preset == linux-debug ]]; then
+        ctest_args+=(-LE "slow|bench|stress|hardware|timing|heavy") # unoptimised DSP measurements: Release runs them
+    else
+        ctest_args+=(-LE "slow|bench|stress|hardware|timing")
+    fi
 fi
 xvfb-run -a ctest "${ctest_args[@]}"
 

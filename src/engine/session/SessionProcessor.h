@@ -6,6 +6,7 @@
 #include "engine/EngineCommands.h"
 #include "engine/EngineSnapshot.h"
 #include "engine/Metronome.h"
+#include "devices/dsp/DelayLine.h"
 #include "engine/Transport.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -42,7 +43,7 @@ struct TransportState
     the action's sample come from the old state, events from that sample on from the new one. Every
     action's sample is computed from beats and the transport, so results do not depend on block
     sizes. Nothing here allocates, locks or blocks. */
-class SessionProcessor
+class SessionProcessor final : private SidechainLookup
 {
 public:
     explicit SessionProcessor(SpscFifo<EngineEvent>& eventsToMessageThread);
@@ -62,6 +63,9 @@ public:
 
     /** Audio thread / tests (when nothing is processing). */
     const Transport& transport() const noexcept { return clock; }
+
+    /** Message thread. Peak levels of a return since the previous call. */
+    std::array<float, 2> takeReturnPeaks(int returnIndex) noexcept;
     std::int64_t currentSample() const noexcept { return now; }
 
 private:
@@ -111,6 +115,10 @@ private:
     void endCapture(const TrackSnapshot& track, std::int64_t sample, double finalLength) noexcept;
 
     void publish(const EngineSnapshot& snapshot) noexcept;
+    /** The mixer: every track's chain (by level), the sends, the returns, the master's chain. */
+    void renderMix(const EngineSnapshot& snapshot, const DeviceTimeInfo& time, int numSamples, float* left,
+                   float* right) noexcept LATTICE_NONBLOCKING;
+    const float* const* channels(const SidechainRoute& route) const noexcept override;
     void post(const EngineEvent& event) noexcept { eventsOut.push(event); }
     double nextRandom() noexcept;
 
@@ -134,6 +142,16 @@ private:
     double freeRunningBeat = 0.0; // devices' beat while the transport is stopped
 
     std::vector<float> metronomeBuffer;
+    // The mixer's buses (sized in prepare)
+    juce::AudioBuffer<float> returnInputs; // two channels per return
+    juce::AudioBuffer<float> trackBus;
+    juce::AudioBuffer<float> returnBus;
+    juce::AudioBuffer<float> masterInput;
+    std::array<float*, 2 * TrackProcessor::maxReturns> returnInputPointers{};
+    std::array<dsp::DelayLine, 2> masterInputDelay;
+    std::array<juce::SmoothedValue<float>, TrackProcessor::maxReturns * 2> returnGains;
+    std::array<std::array<std::atomic<float>, 2>, TrackProcessor::maxReturns> returnPeaks{};
+    const EngineSnapshot* rendering = nullptr; // the snapshot being mixed (for sidechain lookups)
     juce::SmoothedValue<float> masterLeft;
     juce::SmoothedValue<float> masterRight;
     alignas(64) std::array<std::atomic<float>, 2> masterPeaks{};
