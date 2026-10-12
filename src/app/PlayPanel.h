@@ -16,7 +16,7 @@ namespace lattice
 class TuningKeyboardComponent final : public juce::MidiKeyboardComponent
 {
 public:
-    explicit TuningKeyboardComponent(juce::MidiKeyboardState& state);
+    explicit TuningKeyboardComponent(juce::MidiKeyboardState& keyboardState);
 
     void setTuning(TuningPtr t);
 

@@ -56,7 +56,9 @@ if [[ $inside -eq 0 ]]; then
     # which Docker's default seccomp profile blocks. Only the TSan run relaxes it.
     security=()
     [[ $preset == linux-tsan ]] && security=(--security-opt seccomp=unconfined)
+    # Forward the warnings-as-errors switch, so local runs can match CI exactly.
     run=(docker run --rm "${tty_flags[@]}" "${security[@]}" --cpus 4 --memory 4g
+         -e "LATTICE_WARNINGS_AS_ERRORS=${LATTICE_WARNINGS_AS_ERRORS:-OFF}"
          -v "$REPO_ROOT:/src"
          -v lattice-cache:/cache
          -v lattice-build:/build

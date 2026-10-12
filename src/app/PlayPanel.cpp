@@ -3,8 +3,8 @@
 namespace lattice
 {
 
-TuningKeyboardComponent::TuningKeyboardComponent(juce::MidiKeyboardState& state)
-    : juce::MidiKeyboardComponent(state, juce::MidiKeyboardComponent::horizontalKeyboard)
+TuningKeyboardComponent::TuningKeyboardComponent(juce::MidiKeyboardState& keyboardState)
+    : juce::MidiKeyboardComponent(keyboardState, juce::MidiKeyboardComponent::horizontalKeyboard)
 {
     // Key presses are handled by ComputerKeyboardInput (Live's layout), not by this component.
     clearKeyMappings();
