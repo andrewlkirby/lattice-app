@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/model/LiveSet.h"
+#include "devices/framework/DeviceRegistry.h"
 #include "engine/EngineSnapshot.h"
 #include "tuning/TuningTable.h"
 
@@ -24,13 +25,19 @@ class AudioEngine;
     - Rebuilds are coalesced (one per message-loop turn). rebuildIfNeeded() forces a pending rebuild
       now; the session controller calls it before every engine command, so commands always see the
       document as it is.
-    - Keeps one TrackProcessor per track ID across rebuilds. */
+    - Keeps one TrackProcessor per track ID across rebuilds.
+    - Builds each track's device chain (docs/04-m3-devices.md, "Chain changes"): device instances
+      are kept per device ID, so devices that stay in a chain keep their sound; new ones are created
+      from the registry, given their saved values and prepared before the chain is published.
+    - Parameter values, the on/off switch and a device's STATE go straight to the device instance,
+      without rebuilding anything, so turning a knob costs no more than storing a value. */
 class SnapshotBuilder final : private juce::ValueTree::Listener, private juce::AsyncUpdater
 {
 public:
     using TuningResolver = std::function<TuningPtr(const juce::String& tuningId)>;
 
-    SnapshotBuilder(LiveSet& set, AudioEngine& engine, TuningResolver resolveTuning);
+    SnapshotBuilder(LiveSet& set, AudioEngine& engine, TuningResolver resolveTuning,
+                    const DeviceRegistry& registry = DeviceRegistry::builtin());
     ~SnapshotBuilder() override;
 
     void rebuildIfNeeded();
@@ -46,7 +53,11 @@ public:
     /** The processor of a track, or nullptr if the track is not in the last snapshot. */
     std::shared_ptr<TrackProcessor> processorFor(std::int64_t trackId) const;
 
-    /** Frees snapshots and tunings the audio thread has finished with. Call regularly. */
+    /** The instance of a device (by its document ID) in the last rebuild, or nullptr. */
+    StudioDevice* deviceFor(std::int64_t deviceId) const;
+    const DeviceRegistry& devices() const noexcept { return registry; }
+
+    /** Frees snapshots, chains and tunings the audio thread has finished with. Call regularly. */
     void collectGarbage();
 
     std::uint64_t generation() const noexcept { return lastGeneration; }
@@ -58,12 +69,9 @@ private:
     void markClipsIn(const juce::ValueTree& tree);
     void handleAsyncUpdate() override;
 
-    void valueTreePropertyChanged(juce::ValueTree& tree, const juce::Identifier&) override
-    {
-        markDirty(tree);
-    }
+    void valueTreePropertyChanged(juce::ValueTree& tree, const juce::Identifier& property) override;
     void valueTreeChildAdded(juce::ValueTree& parent, juce::ValueTree& child) override;
-    void valueTreeChildRemoved(juce::ValueTree& parent, juce::ValueTree&, int) override { markDirty(parent); }
+    void valueTreeChildRemoved(juce::ValueTree& parent, juce::ValueTree&, int) override;
     void valueTreeChildOrderChanged(juce::ValueTree& parent, int, int) override { markDirty(parent); }
     void valueTreeRedirected(juce::ValueTree&) override;
 
@@ -72,12 +80,25 @@ private:
         std::shared_ptr<TrackProcessor> processor;
         juce::String tuningId;
         TuningPtr tuning;
+        std::unordered_map<std::int64_t, DevicePtr> devices; // by device ID
     };
+
+    /** The STATE node that `node` is in (or is), if it belongs to a device. */
+    static juce::ValueTree enclosingDeviceState(const juce::ValueTree& node);
+    void forwardParameter(const juce::ValueTree& values, const juce::Identifier& parameterId);
+    void forwardState(const juce::ValueTree& stateNode);
+    /** Copies the document's values for a device into its instance. */
+    static void applyDocument(const juce::ValueTree& deviceNode, StudioDevice& device);
+    void rebuildChain(const juce::ValueTree& owner, TrackCache& cache);
 
     LiveSet& set;
     AudioEngine& engine;
     TuningResolver resolveTuning;
+    const DeviceRegistry& registry;
     bool dirty = true;
+    bool allChainsDirty = true;
+    std::unordered_set<std::int64_t> dirtyChains; // IDs of chain owners (tracks)
+    std::unordered_map<std::int64_t, StudioDevice*> deviceIndex;
     std::unordered_map<std::int64_t, ClipDataPtr> clipCache;
     std::unordered_set<std::int64_t> dirtyClips;
     std::unordered_map<std::int64_t, TrackCache> tracks;

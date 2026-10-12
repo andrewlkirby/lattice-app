@@ -23,6 +23,12 @@ bool isValidDenominator(int den)
 }
 } // namespace
 
+juce::String& LiveSet::defaultInstrumentType()
+{
+    static juce::String type{"lattice.testSynth"};
+    return type;
+}
+
 LiveSet::LiveSet(juce::UndoManager* undoManager) : root(ids::liveSet), undo(undoManager)
 {
     resetToDefault();
@@ -78,7 +84,7 @@ juce::Result LiveSet::loadFromXml(const juce::XmlElement& xml)
     if (version > currentFormatVersion)
         return juce::Result::fail("The set was saved by a newer version of Lattice (format " +
                                   juce::String(version) + ").");
-    // Migration hook: convert older formats here, one version step at a time.
+    // Older formats are converted after loading, one version step at a time (below).
     loaded.setProperty(ids::formatVersion, currentFormatVersion, nullptr);
 
     if (!loaded.getChildWithName(ids::tracks).isValid() || !loaded.getChildWithName(ids::scenes).isValid() ||
@@ -93,6 +99,19 @@ juce::Result LiveSet::loadFromXml(const juce::XmlElement& xml)
                                       "\" does not have one slot per scene.");
 
     root.copyPropertiesAndChildrenFrom(loaded, nullptr);
+
+    // 1 -> 2: device chains. M2 tracks all played the same built-in instrument.
+    for (auto t : tracksNode())
+    {
+        if (!t.getChildWithName(ids::devices).isValid())
+        {
+            juce::ValueTree chain(ids::devices);
+            if (version < 2)
+                chain.appendChild(makeDevice(defaultInstrumentType()), nullptr);
+            t.appendChild(chain, nullptr);
+        }
+    }
+
     if (undo != nullptr)
         undo->clearUndoHistory();
     return juce::Result::ok();
@@ -256,6 +275,129 @@ std::int64_t LiveSet::idOf(const juce::ValueTree& node)
     return static_cast<juce::int64>(node[ids::id]);
 }
 
+// --- Devices -------------------------------------------------------------------------------------------
+
+juce::ValueTree LiveSet::makeDevice(const juce::String& typeId)
+{
+    juce::ValueTree d(ids::device);
+    d.setProperty(ids::id, static_cast<juce::int64>(allocateId()), nullptr);
+    d.setProperty(ids::deviceType, typeId, nullptr);
+    d.setProperty(ids::enabled, true, nullptr);
+    d.appendChild(juce::ValueTree(ids::params), nullptr);
+    d.appendChild(juce::ValueTree(ids::deviceState), nullptr);
+    return d;
+}
+
+juce::ValueTree LiveSet::chainOf(const juce::ValueTree& owner)
+{
+    return owner.getChildWithName(ids::devices);
+}
+
+juce::ValueTree LiveSet::insertDevice(juce::ValueTree chain, int index, const juce::String& typeId)
+{
+    jassert(chain.hasType(ids::devices));
+    auto d = makeDevice(typeId);
+    if (index < 0 || index > chain.getNumChildren())
+        index = chain.getNumChildren();
+    chain.addChild(d, index, undo);
+    return d;
+}
+
+juce::ValueTree LiveSet::insertDeviceCopy(juce::ValueTree chain, int index, const juce::ValueTree& device)
+{
+    jassert(chain.hasType(ids::devices) && device.hasType(ids::device));
+    auto copy = device.createCopy();
+    reassignIds(copy);
+    if (!copy.getChildWithName(ids::params).isValid())
+        copy.appendChild(juce::ValueTree(ids::params), nullptr);
+    if (!copy.getChildWithName(ids::deviceState).isValid())
+        copy.appendChild(juce::ValueTree(ids::deviceState), nullptr);
+    if (!copy.hasProperty(ids::enabled))
+        copy.setProperty(ids::enabled, true, nullptr);
+    if (index < 0 || index > chain.getNumChildren())
+        index = chain.getNumChildren();
+    chain.addChild(copy, index, undo);
+    return copy;
+}
+
+void LiveSet::removeDevice(const juce::ValueTree& device)
+{
+    auto parent = device.getParent();
+    if (parent.isValid())
+        parent.removeChild(device, undo);
+}
+
+void LiveSet::moveDevice(const juce::ValueTree& device, juce::ValueTree toChain, int toIndex)
+{
+    auto from = device.getParent();
+    if (!from.isValid() || !toChain.hasType(ids::devices))
+        return;
+    if (from == toChain)
+    {
+        const int current = from.indexOf(device);
+        toIndex = juce::jlimit(0, from.getNumChildren() - 1, toIndex);
+        if (current != toIndex)
+            from.moveChild(current, toIndex, undo);
+        return;
+    }
+    auto moved = device; // keep a reference while it is out of the tree
+    from.removeChild(moved, undo);
+    if (toIndex < 0 || toIndex > toChain.getNumChildren())
+        toIndex = toChain.getNumChildren();
+    toChain.addChild(moved, toIndex, undo);
+}
+
+void LiveSet::setDeviceEnabled(juce::ValueTree device, bool on)
+{
+    device.setProperty(ids::enabled, on, undo);
+}
+
+void LiveSet::setDeviceParameter(juce::ValueTree device, const juce::String& parameterId, double value)
+{
+    auto values = device.getChildWithName(ids::params);
+    if (!values.isValid())
+    {
+        values = juce::ValueTree(ids::params);
+        device.appendChild(values, undo);
+    }
+    values.setProperty(parameterId, value, undo);
+}
+
+double LiveSet::deviceParameter(const juce::ValueTree& device, const juce::String& parameterId, double fallback)
+{
+    const auto values = device.getChildWithName(ids::params);
+    const auto* v = values.getPropertyPointer(parameterId);
+    return v != nullptr ? static_cast<double>(*v) : fallback;
+}
+
+namespace
+{
+juce::ValueTree findDevice(const juce::ValueTree& tree, juce::int64 id)
+{
+    if (tree.hasType(ids::device) && static_cast<juce::int64>(tree[ids::id]) == id)
+        return tree;
+    if (tree.hasType(ids::slots) || tree.hasType(ids::scenes) || tree.hasType(ids::params))
+        return {};
+    for (const auto& child : tree)
+        if (auto found = findDevice(child, id); found.isValid())
+            return found;
+    return {};
+}
+} // namespace
+
+juce::ValueTree LiveSet::deviceById(std::int64_t id) const
+{
+    return findDevice(root, static_cast<juce::int64>(id));
+}
+
+juce::ValueTree LiveSet::chainOwnerOf(const juce::ValueTree& node)
+{
+    for (auto n = node; n.isValid(); n = n.getParent())
+        if (n.hasType(ids::track) || n.hasType(ids::master))
+            return n;
+    return {};
+}
+
 std::int64_t LiveSet::allocateId()
 {
     const juce::int64 next = root[ids::nextId];
@@ -288,6 +430,10 @@ juce::ValueTree LiveSet::makeTrack(int number)
     for (int s = 0; s < numScenes(); ++s)
         slotsNode.appendChild(makeSlot(), nullptr);
     t.appendChild(slotsNode, nullptr);
+    juce::ValueTree chain(ids::devices);
+    if (defaultInstrumentType().isNotEmpty())
+        chain.appendChild(makeDevice(defaultInstrumentType()), nullptr);
+    t.appendChild(chain, nullptr);
     return t;
 }
 
@@ -305,7 +451,7 @@ juce::ValueTree LiveSet::makeScene()
 
 void LiveSet::reassignIds(juce::ValueTree tree)
 {
-    if (tree.hasType(ids::track) || tree.hasType(ids::clip) || tree.hasType(ids::scene))
+    if (tree.hasType(ids::track) || tree.hasType(ids::clip) || tree.hasType(ids::scene) || tree.hasType(ids::device))
         tree.setProperty(ids::id, static_cast<juce::int64>(allocateId()), nullptr);
     for (auto child : tree)
         reassignIds(child);

@@ -2,7 +2,8 @@
 
 #include "core/RealtimeCheck.h"
 #include "core/Seqlock.h"
-#include "devices/test/TestSynthProcessor.h"
+#include "core/SettledShared.h"
+#include "devices/framework/DeviceChain.h"
 #include "engine/session/ClipPlayer.h"
 #include "tuning/TrackTuning.h"
 
@@ -82,15 +83,22 @@ struct TrackSessionState
     std::array<bool, 128> captureHeld{};
 };
 
-/** One track in the engine: instrument, tuning, playback state, mixer gain and meters
-    (docs/03-m2-engine-session.md, part 2b). Created by the SnapshotBuilder on the message thread and
-    kept per track ID across snapshots, so rebuilding a snapshot never recreates the instrument or
-    cuts off its sound. Shared by the snapshots that list it; freed on the message thread. */
+/** One track in the engine: device chain, tuning, playback state, mixer gain and meters
+    (docs/03-m2-engine-session.md, part 2b; docs/04-m3-devices.md, "Chain changes"). Created by the
+    SnapshotBuilder on the message thread and kept per track ID across snapshots, so rebuilding a
+    snapshot never recreates the devices or cuts off their sound. Shared by the snapshots that list
+    it; freed on the message thread.
+
+    The device chain is published separately from the engine snapshot (setChain()). When it
+    changes, the audio thread fades the old chain out over chainFadeSeconds, switches, and fades the
+    new one in, so inserting, removing or reordering devices never clicks. The old chain stays alive
+    until the audio thread has switched (SettledShared). */
 class TrackProcessor
 {
 public:
     static constexpr int maxEventsPerChunk = 4096;
     static constexpr double gainRampSeconds = 0.02;
+    static constexpr double chainFadeSeconds = 0.003;
 
     explicit TrackProcessor(std::int64_t trackId);
     ~TrackProcessor();
@@ -100,14 +108,24 @@ public:
 
     std::int64_t trackId() const noexcept { return id; }
     TrackTuning& tuning() noexcept { return trackTuning; }
-    juce::AudioProcessor& instrument() noexcept { return *synth; }
 
-    /** Not on the audio thread (and not while the audio thread uses this track). */
+    /** Not on the audio thread (and not while the audio thread uses this track). Also prepares
+        every device in the chain. */
     void prepare(double sampleRate, int maxBlockSize);
     bool isPrepared() const noexcept { return preparedBlockSize > 0; }
 
-    /** Message thread. Last note-on that started a voice, or -1 (for the play panel's readout). */
-    int lastNoteOn() const noexcept { return synth->synth().lastNoteOn(); }
+    /** Message thread, with the devices already prepared (AudioEngine::installChain does both under
+        the engine's prepare lock). */
+    void setChain(std::shared_ptr<const DeviceChainLayout> chain);
+    /** Message thread. The chain published last (may be null). */
+    std::shared_ptr<const DeviceChainLayout> chain() const { return chains.published(); }
+    /** Message thread. Frees chains and tunings the audio thread no longer uses. */
+    void collectGarbage();
+    /** Message thread. Chain versions not yet freed (for tests). */
+    std::size_t chainVersions() const noexcept { return chains.versionCount(); }
+
+    /** Any thread. The last note-on the chain received, or -1 (for the play panel's readout). */
+    int lastNoteOn() const noexcept { return lastNote.load(std::memory_order_relaxed); }
 
     /** Message thread. Peak levels since the previous call (and resets them). */
     std::array<float, 2> takePeaks() noexcept;
@@ -125,29 +143,48 @@ public:
     MidiEventSink& beginChunk(std::int64_t chunkStart) noexcept LATTICE_NONBLOCKING;
     MidiEventSink& events() noexcept { return sink; }
 
-    /** Runs the instrument over the chunk's events, applies gain and pan (smoothed towards
+    /** Runs the device chain over the chunk's events, applies gain and pan (smoothed towards
         targetLeft/targetRight), meters the result, and adds it to the master buffers. */
-    void render(int numSamples, float targetLeft, float targetRight, float* masterLeft,
-                float* masterRight) noexcept LATTICE_NONBLOCKING;
+    void render(int numSamples, const DeviceTimeInfo& time, float targetLeft, float targetRight,
+                float* masterLeft, float* masterRight) noexcept LATTICE_NONBLOCKING;
 
     void publishPlayState(const TrackPlayState& s) noexcept LATTICE_NONBLOCKING { published.store(s); }
     std::uint32_t droppedEvents() const noexcept { return dropped.load(std::memory_order_relaxed); }
 
 private:
+    using ChainVersion = SettledShared<DeviceChainLayout>::Version;
+    enum class ChainFade : std::uint8_t
+    {
+        Steady,
+        Out,
+        In
+    };
+
+    /** Audio thread: makes `next` the chain in use, releasing held notes if the MIDI path changed. */
+    void switchChain(const ChainVersion* next) noexcept LATTICE_NONBLOCKING;
+    void applyChainFade(int numSamples) noexcept LATTICE_NONBLOCKING;
+
     const std::int64_t id;
     TrackTuning trackTuning;
-    std::unique_ptr<TestSynthProcessor> synth;
+    SettledShared<DeviceChainLayout> chains;
     TrackSessionState state;
+
+    // Audio thread: the chain in use and the switch between chains.
+    const ChainVersion* activeChain = nullptr;
+    ChainFade chainFade = ChainFade::In;
+    float chainGain = 0.0f;
+    float chainFadeStep = 1.0f;
+    ChainRunner runner;
 
     std::vector<TimedMidi> eventStorage;
     MidiEventSink sink;
-    juce::MidiBuffer midi;
     juce::AudioBuffer<float> buffer;
     juce::SmoothedValue<float> gainLeft;
     juce::SmoothedValue<float> gainRight;
     int preparedBlockSize = 0;
 
     std::atomic<TrackEventTap*> eventTap{nullptr};
+    std::atomic<int> lastNote{-1};
     alignas(64) std::array<std::atomic<float>, 2> peaks{};
     std::atomic<std::uint32_t> dropped{0};
     Seqlock<TrackPlayState> published;

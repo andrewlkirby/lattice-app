@@ -78,11 +78,14 @@ private:
 };
 } // namespace
 
-SessionController::SessionController(AudioEngine& e, TuningRegistry& tunings)
-    : engine(e), registry(tunings), builder(liveSet, engine, [this](const juce::String& id) {
-          auto t = registry.findById(id);
-          return t != nullptr ? t : registry.defaultTuning();
-      })
+SessionController::SessionController(AudioEngine& e, TuningRegistry& tunings, const DeviceRegistry& devices)
+    : engine(e), registry(tunings), builder(
+                                        liveSet, engine,
+                                        [this](const juce::String& id) {
+                                            auto t = registry.findById(id);
+                                            return t != nullptr ? t : registry.defaultTuning();
+                                        },
+                                        devices)
 {
     savedState = liveSet.state().createCopy();
     builder.rebuildNow();

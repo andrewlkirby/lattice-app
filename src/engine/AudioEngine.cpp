@@ -175,6 +175,17 @@ std::shared_ptr<TrackProcessor> AudioEngine::createTrackProcessor(std::int64_t t
     return processor;
 }
 
+void AudioEngine::installChain(TrackProcessor& track, const std::vector<DevicePtr>& newDevices,
+                               std::shared_ptr<DeviceChainLayout> chain)
+{
+    RT_ASSERT_NOT_AUDIO_THREAD();
+    const std::scoped_lock lock(processorsMutex);
+    for (const auto& device : newDevices)
+        device->prepareDevice(preparedSampleRate, preparedBlockSize);
+    chain->finalise();
+    track.setChain(std::move(chain));
+}
+
 void AudioEngine::publishSnapshot(std::shared_ptr<const EngineSnapshot> snapshot)
 {
     snapshots.publish(std::move(snapshot));
@@ -182,6 +193,8 @@ void AudioEngine::publishSnapshot(std::shared_ptr<const EngineSnapshot> snapshot
 
 void AudioEngine::process(float* const* outputs, int numOutputs, int numSamples) noexcept
 {
+    // Denormals flush to zero on this thread (FTZ/DAZ), so decaying tails never slow processing.
+    const juce::ScopedNoDenormals noDenormals;
     const int chunkSize = static_cast<int>(left.size());
     if (sampleRate <= 0.0 || chunkSize == 0)
     {

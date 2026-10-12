@@ -14,6 +14,7 @@ add_executable(lattice_tests
     core/RealtimeCheckTests.cpp
     core/RtSharedTests.cpp
     core/StartupTimelineTests.cpp
+    devices/FrameworkTests.cpp
     devices/TuningTestSynthTests.cpp
     engine/AudioEngineTests.cpp
     engine/SessionEngineTests.cpp

@@ -13,8 +13,8 @@ float gainFromDb(double db)
 }
 } // namespace
 
-SnapshotBuilder::SnapshotBuilder(LiveSet& s, AudioEngine& e, TuningResolver resolver)
-    : set(s), engine(e), resolveTuning(std::move(resolver))
+SnapshotBuilder::SnapshotBuilder(LiveSet& s, AudioEngine& e, TuningResolver resolver, const DeviceRegistry& r)
+    : set(s), engine(e), resolveTuning(std::move(resolver)), registry(r)
 {
     set.state().addListener(this);
 }
@@ -32,6 +32,12 @@ void SnapshotBuilder::markDirty(const juce::ValueTree& changed)
         if (node.hasType(ids::clip))
         {
             dirtyClips.insert(LiveSet::idOf(node));
+            break;
+        }
+        if (node.hasType(ids::devices))
+        {
+            if (const auto owner = LiveSet::chainOwnerOf(node); owner.isValid())
+                dirtyChains.insert(LiveSet::idOf(owner));
             break;
         }
     }
@@ -53,16 +59,66 @@ void SnapshotBuilder::markClipsIn(const juce::ValueTree& tree)
         markClipsIn(child);
 }
 
+juce::ValueTree SnapshotBuilder::enclosingDeviceState(const juce::ValueTree& node)
+{
+    for (auto n = node; n.isValid(); n = n.getParent())
+    {
+        if (n.hasType(ids::deviceState) && n.getParent().hasType(ids::device))
+            return n;
+        if (n.hasType(ids::device) || n.hasType(ids::devices) || n.hasType(ids::track))
+            break;
+    }
+    return {};
+}
+
+void SnapshotBuilder::valueTreePropertyChanged(juce::ValueTree& tree, const juce::Identifier& property)
+{
+    // Device values go straight to the instance: nothing is rebuilt.
+    if (tree.hasType(ids::params) && tree.getParent().hasType(ids::device))
+    {
+        forwardParameter(tree, property);
+        return;
+    }
+    if (tree.hasType(ids::device) && property == ids::enabled)
+    {
+        if (auto* device = deviceFor(LiveSet::idOf(tree)))
+            device->setEnabled(tree.getProperty(ids::enabled, true));
+        return;
+    }
+    if (const auto stateNode = enclosingDeviceState(tree); stateNode.isValid())
+    {
+        forwardState(stateNode);
+        return;
+    }
+    markDirty(tree);
+}
+
 void SnapshotBuilder::valueTreeChildAdded(juce::ValueTree& parent, juce::ValueTree& child)
 {
+    if (const auto stateNode = enclosingDeviceState(parent); stateNode.isValid())
+    {
+        forwardState(stateNode);
+        return;
+    }
     // A subtree that arrives whole (undo, paste, a loaded set) may reuse IDs of cached clips.
     markClipsIn(child);
+    markDirty(parent);
+}
+
+void SnapshotBuilder::valueTreeChildRemoved(juce::ValueTree& parent, juce::ValueTree&, int)
+{
+    if (const auto stateNode = enclosingDeviceState(parent); stateNode.isValid())
+    {
+        forwardState(stateNode);
+        return;
+    }
     markDirty(parent);
 }
 
 void SnapshotBuilder::valueTreeRedirected(juce::ValueTree&)
 {
     clipCache.clear();
+    allChainsDirty = true;
     markDirty(set.state());
 }
 
@@ -71,7 +127,82 @@ void SnapshotBuilder::forgetAll()
     tracks.clear();
     clipCache.clear();
     dirtyClips.clear();
+    deviceIndex.clear();
+    allChainsDirty = true;
     markDirty(set.state());
+}
+
+void SnapshotBuilder::forwardParameter(const juce::ValueTree& values, const juce::Identifier& parameterId)
+{
+    auto* device = deviceFor(LiveSet::idOf(values.getParent()));
+    if (device == nullptr)
+        return; // not built yet: it reads the document when it is
+    if (auto* p = device->findParameter(parameterId.toString()))
+    {
+        const auto* v = values.getPropertyPointer(parameterId);
+        p->setBase(v != nullptr ? static_cast<float>(static_cast<double>(*v)) : p->spec().defaultValue);
+    }
+}
+
+void SnapshotBuilder::forwardState(const juce::ValueTree& stateNode)
+{
+    if (auto* device = deviceFor(LiveSet::idOf(stateNode.getParent())))
+        device->setState(stateNode);
+}
+
+void SnapshotBuilder::applyDocument(const juce::ValueTree& deviceNode, StudioDevice& device)
+{
+    for (int i = 0; i < device.numParameters(); ++i)
+    {
+        auto& p = device.parameter(i);
+        p.setBase(static_cast<float>(LiveSet::deviceParameter(deviceNode, p.id(), p.spec().defaultValue)));
+    }
+    device.setEnabled(deviceNode.getProperty(ids::enabled, true));
+    device.setState(deviceNode.getChildWithName(ids::deviceState));
+}
+
+StudioDevice* SnapshotBuilder::deviceFor(std::int64_t deviceId) const
+{
+    const auto it = deviceIndex.find(deviceId);
+    return it != deviceIndex.end() ? it->second : nullptr;
+}
+
+void SnapshotBuilder::rebuildChain(const juce::ValueTree& owner, TrackCache& cache)
+{
+    const auto chainNode = LiveSet::chainOf(owner);
+    auto layout = std::make_shared<DeviceChainLayout>();
+    std::unordered_map<std::int64_t, DevicePtr> kept;
+    std::vector<DevicePtr> fresh;
+
+    DeviceCreateContext context;
+    context.tuning = &cache.processor->tuning();
+
+    for (const auto& node : chainNode)
+    {
+        if (!node.hasType(ids::device))
+            continue;
+        const auto deviceId = LiveSet::idOf(node);
+        const auto type = node[ids::deviceType].toString();
+        DevicePtr device;
+        if (const auto it = cache.devices.find(deviceId); it != cache.devices.end() && it->second->typeId() == type)
+            device = it->second;
+        if (device == nullptr || kept.contains(deviceId)) // a duplicated ID gets its own instance
+        {
+            device = DevicePtr(registry.create(type, context));
+            applyDocument(node, *device);
+            fresh.push_back(device);
+        }
+        kept[deviceId] = device;
+        layout->devices.push_back(device);
+    }
+    cache.devices = std::move(kept);
+
+    // Nothing changed for the engine (e.g. only a name): keep the published chain, so nothing fades.
+    if (const auto current = cache.processor->chain();
+        current != nullptr && fresh.empty() && current->devices == layout->devices)
+        return;
+
+    engine.installChain(*cache.processor, fresh, std::move(layout));
 }
 
 void SnapshotBuilder::handleAsyncUpdate()
@@ -135,9 +266,15 @@ void SnapshotBuilder::rebuildNow()
         TrackSnapshot ts;
         ts.id = LiveSet::idOf(trackNode);
 
-        auto cache = tracks.contains(ts.id) ? tracks[ts.id] : TrackCache{};
+        TrackCache cache;
+        if (const auto it = tracks.find(ts.id); it != tracks.end())
+            cache = std::move(it->second);
+        bool chainDirty = allChainsDirty || dirtyChains.contains(ts.id);
         if (cache.processor == nullptr)
+        {
             cache.processor = engine.createTrackProcessor(ts.id);
+            chainDirty = true;
+        }
 
         // Tuning: re-resolve every time (a tuning file may have been loaded since), publish on change.
         const juce::String tuningId = trackNode[ids::tuningId].toString();
@@ -152,6 +289,8 @@ void SnapshotBuilder::rebuildNow()
         cache.processor->tuning().setHighNotePolicy(static_cast<int>(trackNode[ids::highNotePolicy]) == 1
                                                         ? HighNotePolicy::FoldDown
                                                         : HighNotePolicy::Mute);
+        if (chainDirty)
+            rebuildChain(trackNode, cache);
 
         ts.processor = cache.processor;
         const float gain = gainFromDb(trackNode[ids::volumeDb]);
@@ -186,13 +325,20 @@ void SnapshotBuilder::rebuildNow()
             slot.clip = std::move(data);
         }
 
-        newTracks[ts.id] = cache;
+        newTracks[ts.id] = std::move(cache);
         snapshot->tracks.push_back(std::move(ts));
     }
 
     clipCache = std::move(newClipCache);
     dirtyClips.clear();
+    dirtyChains.clear();
+    allChainsDirty = false;
     tracks = std::move(newTracks);
+    deviceIndex.clear();
+    for (const auto& [trackId, cache] : tracks)
+        for (const auto& [deviceId, device] : cache.devices)
+            deviceIndex[deviceId] = device.get();
+
     engine.publishSnapshot(std::move(snapshot));
 }
 
@@ -200,7 +346,7 @@ void SnapshotBuilder::collectGarbage()
 {
     engine.collectGarbage();
     for (auto& [id, cache] : tracks)
-        cache.processor->tuning().collectGarbage();
+        cache.processor->collectGarbage();
 }
 
 } // namespace lattice

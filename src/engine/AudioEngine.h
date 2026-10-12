@@ -68,6 +68,12 @@ public:
         and re-prepared whenever they change. */
     std::shared_ptr<TrackProcessor> createTrackProcessor(std::int64_t trackId);
 
+    /** Message thread. Prepares the new devices for the current device settings and publishes the
+        chain to the track, both under the prepare lock, so a device restart on another thread can
+        never see a half-prepared device. Fills in the chain's latency once its devices are prepared. */
+    void installChain(TrackProcessor& track, const std::vector<DevicePtr>& newDevices,
+                      std::shared_ptr<DeviceChainLayout> chain);
+
     /** Message thread. Opens the saved device setup if there is one, otherwise the first device
         type in platform::preferredAudioDeviceTypes() that opens. Returns an error message, or an
         empty string on success. */

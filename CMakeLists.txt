@@ -153,7 +153,14 @@ add_library(lattice_core STATIC
     src/core/StartupTimeline.cpp
     src/core/model/LiveSet.cpp
     src/core/model/MidiImport.cpp
-    src/devices/test/TestSynthProcessor.cpp
+    src/devices/BuiltinDevices.cpp
+    src/devices/framework/DeviceChain.cpp
+    src/devices/framework/DeviceParameter.cpp
+    src/devices/framework/DeviceRegistry.cpp
+    src/devices/framework/ParameterPager.cpp
+    src/devices/framework/ParameterSpec.cpp
+    src/devices/framework/StudioDevice.cpp
+    src/devices/test/TestSynthDevice.cpp
     src/devices/test/TuningTestSynth.cpp
     src/engine/AudioEngine.cpp
     src/engine/Metronome.cpp

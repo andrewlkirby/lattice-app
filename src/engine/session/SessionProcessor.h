@@ -131,6 +131,7 @@ private:
     bool sessionRecord = false;
     double stopAllBeat = never;
     std::uint64_t randomState = 0x9e3779b97f4a7c15ull;
+    double freeRunningBeat = 0.0; // devices' beat while the transport is stopped
 
     std::vector<float> metronomeBuffer;
     juce::SmoothedValue<float> masterLeft;

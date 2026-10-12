@@ -100,6 +100,16 @@ void SessionProcessor::process(const EngineSnapshot* snapshot, const EngineComma
         updateCapture(t, s0);
     routeLiveInput(*snapshot, liveInput, numLiveInput, s0);
 
+    // Devices see the transport as it is at the chunk's start (after commands applied there).
+    DeviceTimeInfo time;
+    time.sampleRate = sampleRate;
+    time.tempo = clock.tempo();
+    time.samplesPerBeat = clock.samplesPerBeat();
+    time.playing = clock.isPlaying();
+    time.beatAtStart = time.playing ? clock.beatAt(s0) : freeRunningBeat;
+    time.blockStartSample = s0;
+    freeRunningBeat = time.beatAtStart + numSamples / time.samplesPerBeat;
+
     // Walk the chunk from one scheduled action to the next.
     std::int64_t cur = s0;
     for (int guard = 0; guard < 4096; ++guard)
@@ -130,7 +140,7 @@ void SessionProcessor::process(const EngineSnapshot* snapshot, const EngineComma
     for (const auto& t : snapshot->tracks)
     {
         const bool audible = !t.mute && (!snapshot->anySolo || t.solo);
-        t.processor->render(numSamples, audible ? t.gainLeft : 0.0f, audible ? t.gainRight : 0.0f, left,
+        t.processor->render(numSamples, time, audible ? t.gainLeft : 0.0f, audible ? t.gainRight : 0.0f, left,
                             right);
     }
 

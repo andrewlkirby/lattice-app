@@ -29,7 +29,8 @@ class SessionController final : private juce::Timer
 public:
     static constexpr int timerHz = 30;
 
-    SessionController(AudioEngine& engine, TuningRegistry& tunings);
+    SessionController(AudioEngine& engine, TuningRegistry& tunings,
+                      const DeviceRegistry& devices = DeviceRegistry::builtin());
     ~SessionController() override;
 
     LiveSet& set() noexcept { return liveSet; }

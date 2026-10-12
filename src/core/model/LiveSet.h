@@ -26,6 +26,10 @@ inline const juce::Identifier note{"NOTE"};
 inline const juce::Identifier scenes{"SCENES"};
 inline const juce::Identifier scene{"SCENE"};
 inline const juce::Identifier master{"MASTER"};
+inline const juce::Identifier devices{"DEVICES"};
+inline const juce::Identifier device{"DEVICE"};
+inline const juce::Identifier params{"PARAMS"};
+inline const juce::Identifier deviceState{"STATE"};
 
 // Set
 inline const juce::Identifier formatVersion{"formatVersion"};
@@ -77,6 +81,10 @@ inline const juce::Identifier length{"length"};
 inline const juce::Identifier velocity{"velocity"};
 inline const juce::Identifier muted{"muted"};
 
+// Device
+inline const juce::Identifier deviceType{"type"};
+inline const juce::Identifier enabled{"enabled"};
+
 // Scene
 inline const juce::Identifier sceneTempo{"sceneTempo"};           // 0 = none
 inline const juce::Identifier sceneTimeSigNum{"sceneTimeSigNum"}; // 0 = none
@@ -100,9 +108,12 @@ struct NoteData
 
         LIVESET  tempo, time signature, global quantization, metronome, ...
          ├─ TRACKS / TRACK  id, name, colour, mixer values, tuning
-         │     └─ SLOTS / SLOT (one per scene)  hasStopButton, optional CLIP
-         │                       └─ CLIP  loop, launch settings, follow actions
-         │                             └─ NOTES / NOTE  pitch, start, length, velocity, muted
+         │     ├─ SLOTS / SLOT (one per scene)  hasStopButton, optional CLIP
+         │     │                 └─ CLIP  loop, launch settings, follow actions
+         │     │                       └─ NOTES / NOTE  pitch, start, length, velocity, muted
+         │     └─ DEVICES / DEVICE  id, type, enabled   (the device chain, in order)
+         │                    ├─ PARAMS  one property per parameter ID: its plain value
+         │                    └─ STATE   the device's own state (sample files, pads, ...)
          ├─ SCENES / SCENE  id, name, colour, optional tempo and time signature
          └─ MASTER  volumeDb, pan
 
@@ -113,7 +124,8 @@ struct NoteData
 class LiveSet
 {
 public:
-    static constexpr int currentFormatVersion = 1;
+    /** 1: M2. 2: device chains (M3); tracks of older sets get the default instrument. */
+    static constexpr int currentFormatVersion = 2;
     static constexpr double minTempo = 20.0;
     static constexpr double maxTempo = 999.0;
     static constexpr double minVolumeDb = -70.0; // the fader's bottom: silence
@@ -121,6 +133,10 @@ public:
     static constexpr double minLoopLength = 1.0 / 16.0; // beats
     static constexpr int defaultTracks = 4;
     static constexpr int defaultScenes = 8;
+
+    /** The instrument new tracks get. Set once at startup (before any LiveSet is created) by
+        whoever knows the devices; the model itself does not. */
+    static juce::String& defaultInstrumentType();
 
     explicit LiveSet(juce::UndoManager* undoManager = nullptr);
 
@@ -231,6 +247,28 @@ public:
     void setNote(juce::ValueTree note, const NoteData& data);
     static NoteData noteData(const juce::ValueTree& note);
     static std::vector<NoteData> notesOf(const juce::ValueTree& clip);
+
+    // --- Devices ----------------------------------------------------------------------------------
+    /** The device chain (DEVICES node) of a track (later also returns and the master). */
+    static juce::ValueTree chainOf(const juce::ValueTree& owner);
+    /** Inserts a new device of the given type at index (the end when out of range). The caller
+        decides where it may go (see devices/framework/ChainEditing.h). */
+    juce::ValueTree insertDevice(juce::ValueTree chain, int index, const juce::String& typeId);
+    /** Inserts a copy of a device tree (a preset, a pasted device) with new IDs. */
+    juce::ValueTree insertDeviceCopy(juce::ValueTree chain, int index, const juce::ValueTree& device);
+    void removeDevice(const juce::ValueTree& device);
+    void moveDevice(const juce::ValueTree& device, juce::ValueTree toChain, int toIndex);
+    void setDeviceEnabled(juce::ValueTree device, bool on);
+    /** Sets a parameter's plain value. Consecutive changes of one parameter within one transaction
+        become one undo step (dragging a knob). */
+    void setDeviceParameter(juce::ValueTree device, const juce::String& parameterId, double value);
+    /** The saved value, or `fallback` (the parameter's default) when none is saved. */
+    static double deviceParameter(const juce::ValueTree& device, const juce::String& parameterId, double fallback);
+    juce::ValueTree deviceById(std::int64_t id) const;
+    /** The TRACK (or other chain owner) a device belongs to, or an invalid tree. */
+    static juce::ValueTree chainOwnerOf(const juce::ValueTree& node);
+    /** A new DEVICE node (not yet in the document). */
+    juce::ValueTree makeDevice(const juce::String& typeId);
 
     /** A new ID, unique within this set. Not undoable (IDs are never reused). */
     std::int64_t allocateId();
