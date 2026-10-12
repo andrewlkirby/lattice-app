@@ -37,12 +37,12 @@ juce::ValueTree insertRack(LiveSet& set, juce::ValueTree chain, int index, const
     rack.appendChild(juce::ValueTree(ids::rackChains), nullptr);
     rack.appendChild(juce::ValueTree(ids::mappings), nullptr);
     rack.getChildWithName(ids::deviceState).setProperty("macroCount", RackDevice::defaultMacros, nullptr);
-    return set.insertDeviceCopy(chain, index, rack);
+    return set.insertDeviceCopy(std::move(chain), index, rack);
 }
 
 juce::ValueTree addChain(LiveSet& set, juce::ValueTree rack, const juce::String& name)
 {
-    auto chains = childOrNew(rack, ids::rackChains, set.undoManager());
+    auto chains = childOrNew(std::move(rack), ids::rackChains, set.undoManager());
     juce::ValueTree chain(ids::rackChain);
     chain.setProperty(ids::id, static_cast<juce::int64>(set.allocateId()), nullptr);
     chain.setProperty(ids::name, name.isNotEmpty() ? name : "Chain " + juce::String(chains.getNumChildren() + 1), nullptr);
@@ -94,7 +94,7 @@ void setVelocityZone(LiveSet& set, juce::ValueTree chain, int low, int high, int
     chain.setProperty(ids::velocityFadeHigh, fadeHigh, um);
 }
 
-juce::ValueTree addDrumPad(LiveSet& set, juce::ValueTree drumRack, int note, const juce::String& samplePath)
+juce::ValueTree addDrumPad(LiveSet& set, const juce::ValueTree& drumRack, int note, const juce::String& samplePath)
 {
     auto pad = padFor(drumRack, note);
     if (!pad.isValid())
@@ -135,7 +135,7 @@ void setChokeGroup(LiveSet& set, juce::ValueTree pad, int group)
 
 void setTunedPads(LiveSet& set, juce::ValueTree drumRack, bool tuned)
 {
-    stateOf(drumRack).setProperty("tunedPads", tuned, set.undoManager());
+    stateOf(std::move(drumRack)).setProperty("tunedPads", tuned, set.undoManager());
 }
 
 int macroCount(const juce::ValueTree& rack)
@@ -143,7 +143,7 @@ int macroCount(const juce::ValueTree& rack)
     return rack.getChildWithName(ids::deviceState).getProperty("macroCount", RackDevice::defaultMacros);
 }
 
-void setMacroCount(LiveSet& set, juce::ValueTree rack, int count)
+void setMacroCount(LiveSet& set, const juce::ValueTree& rack, int count)
 {
     count = juce::jlimit(0, RackDevice::maxMacros, count);
     auto* um = set.undoManager();
@@ -156,7 +156,7 @@ void setMacroCount(LiveSet& set, juce::ValueTree rack, int count)
 
 void setMacroName(LiveSet& set, juce::ValueTree rack, int macro, const juce::String& name)
 {
-    auto state = stateOf(rack);
+    auto state = stateOf(std::move(rack));
     juce::ValueTree node;
     for (const auto& m : state)
         if (m.hasType("MACRO") && static_cast<int>(m["index"]) == macro)
@@ -173,7 +173,7 @@ void setMacroName(LiveSet& set, juce::ValueTree rack, int macro, const juce::Str
 juce::ValueTree addMapping(LiveSet& set, juce::ValueTree rack, int macro, const juce::ValueTree& device,
                            const juce::String& parameterId, double minimum, double maximum, double curve)
 {
-    auto mappings = childOrNew(rack, ids::mappings, set.undoManager());
+    auto mappings = childOrNew(std::move(rack), ids::mappings, set.undoManager());
     juce::ValueTree m(ids::mapping);
     m.setProperty(ids::macro, macro, nullptr);
     m.setProperty(ids::targetDevice, static_cast<juce::int64>(LiveSet::idOf(device)), nullptr);
@@ -197,7 +197,7 @@ int numMappings(const juce::ValueTree& rack)
     return rack.getChildWithName(ids::mappings).getNumChildren();
 }
 
-int storeVariation(LiveSet& set, juce::ValueTree rack, const juce::String& name)
+int storeVariation(LiveSet& set, const juce::ValueTree& rack, const juce::String& name)
 {
     auto state = stateOf(rack);
     juce::StringArray values;
@@ -210,7 +210,7 @@ int storeVariation(LiveSet& set, juce::ValueTree rack, const juce::String& name)
     return numVariations(rack) - 1;
 }
 
-void recallVariation(LiveSet& set, juce::ValueTree rack, int index)
+void recallVariation(LiveSet& set, const juce::ValueTree& rack, int index)
 {
     int n = 0;
     for (const auto& v : rack.getChildWithName(ids::deviceState))

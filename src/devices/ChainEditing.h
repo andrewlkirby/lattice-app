@@ -49,13 +49,13 @@ Placement place(const juce::ValueTree& chain, const juce::String& typeId, int de
                 const DeviceRegistry& registry, const juce::ValueTree& device = {});
 
 /** Inserts a new device by the rules. Returns it, or an invalid tree if it can't go there. */
-juce::ValueTree insert(LiveSet& set, juce::ValueTree chain, const juce::String& typeId, int desiredIndex,
+juce::ValueTree insert(LiveSet& set, const juce::ValueTree& chain, const juce::String& typeId, int desiredIndex,
                        const DeviceRegistry& registry);
 /** Inserts a copy of a device tree (a preset) by the rules. */
-juce::ValueTree insertCopy(LiveSet& set, juce::ValueTree chain, const juce::ValueTree& device, int desiredIndex,
+juce::ValueTree insertCopy(LiveSet& set, const juce::ValueTree& chain, const juce::ValueTree& device, int desiredIndex,
                            const DeviceRegistry& registry);
 /** Moves a device (within its chain or to another) by the rules. Returns false if it can't go there. */
-bool move(LiveSet& set, const juce::ValueTree& device, juce::ValueTree toChain, int desiredIndex,
+bool move(LiveSet& set, const juce::ValueTree& device, const juce::ValueTree& toChain, int desiredIndex,
           const DeviceRegistry& registry);
 
 // --- Sidechain --------------------------------------------------------------------------------------

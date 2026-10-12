@@ -4,6 +4,8 @@
 #include "devices/dsp/DelayLine.h"
 #include "devices/dsp/Envelope.h"
 #include "devices/dsp/HalfBand.h"
+#include "devices/dsp/SincBlock.h"
+#include "devices/dsp/SincResampler.h"
 #include "devices/dsp/Ladder.h"
 #include "devices/dsp/Svf.h"
 #include "devices/dsp/VoiceFilterSimd.h"
@@ -15,6 +17,7 @@
 
 #include <array>
 #include <cmath>
+#include <random>
 #include <vector>
 
 using namespace lattice;
@@ -474,5 +477,59 @@ TEST_CASE("Voice filters: four at once give the same output as one at a time", "
                                                                           bufB[static_cast<std::size_t>(l)][static_cast<std::size_t>(i)])));
         }
         CHECK(worst < 1.0e-4);
+    }
+}
+
+TEST_CASE("Block interpolators: the SIMD versions match the reference ones", "[devices][dsp][sampler]")
+{
+    // A noise sample with the padding the Sampler gives samples.
+    const int pad = dsp::SincKernelBank::get().maxTaps() / 2 + 8;
+    std::vector<float> left(2048 + 2 * static_cast<std::size_t>(pad)), right(left.size());
+    std::mt19937 rng(3);
+    std::uniform_real_distribution<float> noise(-1.0f, 1.0f);
+    for (std::size_t i = static_cast<std::size_t>(pad); i < left.size() - static_cast<std::size_t>(pad); ++i)
+    {
+        left[i] = noise(rng);
+        right[i] = noise(rng);
+    }
+    const float* s0 = left.data() + pad;
+    const float* s1 = right.data() + pad;
+    std::vector<std::int64_t> index(61);
+    std::vector<float> fraction(index.size());
+    for (std::size_t i = 0; i < index.size(); ++i)
+    {
+        const double x = 100.0 + static_cast<double>(i) * 29.37;
+        index[i] = static_cast<std::int64_t>(x);
+        fraction[i] = static_cast<float>(x - std::floor(x));
+    }
+    const int n = static_cast<int>(index.size());
+    std::vector<float> a0(index.size()), a1(index.size()), b0(index.size()), b1(index.size());
+
+    // Every kernel level, stereo and mono: the chosen implementation (AVX2 where the CPU has it)
+    // against the SSE one, within float rounding.
+    const auto& bank = dsp::SincKernelBank::get();
+    for (int level = 0; level < dsp::SincKernelBank::numLevels; level += 3)
+        for (const bool stereo : {true, false})
+        {
+            CAPTURE(level, stereo);
+            const auto view = bank.level(level).view();
+            dsp::sincBlockGeneric(view, s0, stereo ? s1 : s0, index.data(), fraction.data(), n, a0.data(), a1.data());
+            dsp::sincBlock()(view, s0, stereo ? s1 : s0, index.data(), fraction.data(), n, b0.data(), b1.data());
+            for (std::size_t i = 0; i < index.size(); ++i)
+            {
+                CHECK(std::abs(a0[i] - b0[i]) < 1e-5f);
+                CHECK(std::abs(a1[i] - b1[i]) < 1e-5f);
+            }
+        }
+
+    // Hermite, four at a time, against the one-at-a-time version.
+    dsp::hermiteBlock(s0, s1, index.data(), fraction.data(), n, b0.data(), b1.data());
+    const float* data[2] = {s0, s1};
+    for (std::size_t i = 0; i < index.size(); ++i)
+    {
+        float out[2];
+        dsp::hermiteInterpolate(data, 2, index[i], fraction[i], out);
+        CHECK(std::abs(out[0] - b0[i]) < 1e-6f);
+        CHECK(std::abs(out[1] - b1[i]) < 1e-6f);
     }
 }

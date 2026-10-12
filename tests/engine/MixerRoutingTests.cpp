@@ -38,7 +38,7 @@ struct Fixture
     LiveSet& set() { return session.set(); }
     juce::ValueTree chainOfTrack(int t) { return LiveSet::chainOf(set().track(t)); }
     juce::ValueTree chainOfReturn(int r) { return LiveSet::chainOf(set().returnTrack(r)); }
-    juce::ValueTree add(juce::ValueTree chain, const juce::String& type) { return set().insertDevice(chain, -1, type); }
+    juce::ValueTree add(juce::ValueTree chain, const juce::String& type) { return set().insertDevice(std::move(chain), -1, type); }
     void note(int n) { engine.midiInput().push(juce::MidiMessage::noteOn(1, n, static_cast<juce::uint8>(100))); }
     void render(std::int64_t samples)
     {

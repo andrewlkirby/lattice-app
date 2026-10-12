@@ -40,7 +40,7 @@ SincKernelBank::SincKernelBank()
         const double fc = cutoff * level.bandwidth;     // cycles per input sample
         const double halfWidth = zeroCrossings / level.bandwidth; // input samples each side
         level.taps = 2 * static_cast<int>(std::ceil(halfWidth));
-        level.stride = (level.taps + 3) / 4 * 4;
+        level.stride = (level.taps + 7) / 8 * 8; // whole AVX vectors
         // Stretched kernels change more slowly per input sample, so need fewer phase rows.
         level.phases = std::max(64, static_cast<int>(std::lround(512.0 * level.bandwidth)));
         level.rows.assign(static_cast<std::size_t>(level.phases + 1) * static_cast<std::size_t>(level.stride), 0.0f);
@@ -68,6 +68,7 @@ SincKernelBank::SincKernelBank()
 const SincKernelBank& SincKernelBank::get()
 {
     static const SincKernelBank bank;
+    (void)sincBlock(); // the CPU check, made here on the message thread rather than in playback
     return bank;
 }
 

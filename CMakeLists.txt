@@ -145,7 +145,9 @@ juce_add_binary_data(lattice_binary_data
     HEADER_NAME LatticeBinaryData.h
     NAMESPACE LatticeResources
     SOURCES resources/tunings/colundi_scale.txt ${LATTICE_FACTORY_PRESETS})
-set_target_properties(lattice_binary_data PROPERTIES FOLDER "Dependencies" POSITION_INDEPENDENT_CODE ON)
+# Plain data needs no link-time optimisation (and MSVC's LTCG has crashed generating it).
+set_target_properties(lattice_binary_data PROPERTIES FOLDER "Dependencies" POSITION_INDEPENDENT_CODE ON
+                                                     INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
 
 # --- lattice_core: all non-UI Lattice code ------------------------------------------------------
 add_library(lattice_core STATIC
@@ -161,6 +163,8 @@ add_library(lattice_core STATIC
     src/devices/dsp/Biquad.cpp
     src/devices/dsp/FirHalfBand.cpp
     src/devices/dsp/HalfBand.cpp
+    src/devices/dsp/SincBlock.cpp
+    src/devices/dsp/SincBlockAvx2.cpp
     src/devices/dsp/SincResampler.cpp
     src/devices/dsp/VoiceFilterSimd.cpp
     src/devices/dsp/Wavetable.cpp
@@ -232,6 +236,32 @@ add_library(lattice_alloc_hooks OBJECT src/core/AllocationHooks.cpp)
 target_link_libraries(lattice_alloc_hooks PRIVATE lattice_core)
 lattice_set_warnings(lattice_alloc_hooks)
 
+# AVX2 + FMA kernels (*Avx2.cpp), chosen at run time on CPUs that have them. Only these files get
+# the flags; they include nothing but intrinsics and plain interfaces (see SincBlock.h), and they
+# stay out of link-time optimisation, so their code is never inlined into code for any CPU.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|x86_64|amd64)$")
+    set(LATTICE_AVX2_SOURCES src/devices/dsp/SincBlockAvx2.cpp)
+    if(MSVC)
+        set_source_files_properties(${LATTICE_AVX2_SOURCES} PROPERTIES COMPILE_OPTIONS "/arch:AVX2;/GL-")
+    else()
+        set_source_files_properties(${LATTICE_AVX2_SOURCES} PROPERTIES COMPILE_OPTIONS "-mavx2;-mfma;-fno-lto")
+    endif()
+endif()
+
+# --- Debug UI (M2/M3, replaced in M4): a library, so the tests can drive the editors headless ------
+add_library(lattice_debug_ui STATIC
+    src/app/debug/ClipPropertiesPanel.cpp
+    src/app/debug/DetailView.cpp
+    src/app/debug/DevicePanel.cpp
+    src/app/debug/DeviceUi.cpp
+    src/app/debug/MixerStrip.cpp
+    src/app/debug/SessionGrid.cpp
+    src/app/debug/SessionView.cpp
+    src/app/debug/TransportBar.cpp)
+target_include_directories(lattice_debug_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(lattice_debug_ui PUBLIC lattice_core)
+lattice_set_warnings(lattice_debug_ui)
+
 # --- App -----------------------------------------------------------------------------------------
 if(LATTICE_BUILD_APP)
     juce_add_gui_app(Lattice
@@ -243,16 +273,11 @@ if(LATTICE_BUILD_APP)
         src/app/Main.cpp
         src/app/MainWindow.cpp
         src/app/PlayPanel.cpp
-        src/app/SoakTest.cpp
-        src/app/debug/ClipPropertiesPanel.cpp
-        src/app/debug/MixerStrip.cpp
-        src/app/debug/SessionGrid.cpp
-        src/app/debug/SessionView.cpp
-        src/app/debug/TransportBar.cpp)
+        src/app/SoakTest.cpp)
     target_compile_definitions(Lattice PRIVATE
         JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:Lattice,JUCE_PRODUCT_NAME>"
         JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:Lattice,JUCE_VERSION>")
-    target_link_libraries(Lattice PRIVATE lattice_core)
+    target_link_libraries(Lattice PRIVATE lattice_core lattice_debug_ui)
     if(LATTICE_RT_CHECKS STREQUAL "ON")
         target_link_libraries(Lattice PRIVATE lattice_alloc_hooks)
         target_compile_definitions(Lattice PRIVATE LATTICE_RT_CHECKS_ENABLED=1)

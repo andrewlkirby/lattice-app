@@ -8,6 +8,7 @@ include(Catch)
 
 add_executable(lattice_tests
     test_main.cpp
+    app/DeviceEditorTests.cpp
     control/ComputerKeyboardTests.cpp
     core/AudioCallbackStatsTests.cpp
     core/LiveSetTests.cpp
@@ -36,7 +37,7 @@ add_executable(lattice_tests
     tuning/ScalaAndRegistryTests.cpp
     tuning/TrackTuningTests.cpp)
 target_include_directories(lattice_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(lattice_tests PRIVATE lattice_core Catch2::Catch2)
+target_link_libraries(lattice_tests PRIVATE lattice_core lattice_debug_ui Catch2::Catch2)
 if(NOT LATTICE_TSAN) # ThreadSanitizer's runtime defines operator new/delete itself
     target_link_libraries(lattice_tests PRIVATE lattice_alloc_hooks)
 endif()

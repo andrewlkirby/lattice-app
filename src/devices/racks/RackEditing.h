@@ -34,7 +34,7 @@ void setVelocityZone(LiveSet& set, juce::ValueTree chain, int low, int high, int
 
 /** Drum Rack: a pad on `note` holding a Sampler in One-Shot mode with fixed (untuned) pitch,
     playing `samplePath` (may be empty). Returns the pad's chain. */
-juce::ValueTree addDrumPad(LiveSet& set, juce::ValueTree drumRack, int note, const juce::String& samplePath = {});
+juce::ValueTree addDrumPad(LiveSet& set, const juce::ValueTree& drumRack, int note, const juce::String& samplePath = {});
 /** The pad chain for a note, or an invalid tree. */
 juce::ValueTree padFor(const juce::ValueTree& drumRack, int note);
 void setChokeGroup(LiveSet& set, juce::ValueTree pad, int group);
@@ -43,7 +43,7 @@ void setTunedPads(LiveSet& set, juce::ValueTree drumRack, bool tuned);
 // --- Macros ---------------------------------------------------------------------------------------
 int macroCount(const juce::ValueTree& rack);
 /** 0..64. Lowering it removes the mappings of the macros that go (undo brings them back). */
-void setMacroCount(LiveSet& set, juce::ValueTree rack, int count);
+void setMacroCount(LiveSet& set, const juce::ValueTree& rack, int count);
 void setMacroName(LiveSet& set, juce::ValueTree rack, int macro, const juce::String& name);
 /** The macro's name, or "Macro N" if it has none. */
 juce::String macroName(const juce::ValueTree& rack, int macro);
@@ -58,9 +58,9 @@ void removeMapping(LiveSet& set, const juce::ValueTree& mapping);
 int numMappings(const juce::ValueTree& rack);
 
 /** Stores the current macro values as a variation; returns its index. */
-int storeVariation(LiveSet& set, juce::ValueTree rack, const juce::String& name);
+int storeVariation(LiveSet& set, const juce::ValueTree& rack, const juce::String& name);
 /** Sets every macro to the values stored in a variation. */
-void recallVariation(LiveSet& set, juce::ValueTree rack, int index);
+void recallVariation(LiveSet& set, const juce::ValueTree& rack, int index);
 int numVariations(const juce::ValueTree& rack);
 juce::String variationName(const juce::ValueTree& rack, int index);
 

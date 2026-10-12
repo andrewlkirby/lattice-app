@@ -20,6 +20,8 @@ docker build --quiet -t $image -f (Join-Path $repoRoot 'docker/linux.Dockerfile'
 if ($LASTEXITCODE -ne 0) { throw 'docker build failed' }
 
 $run = @('run', '--rm', '--cpus', '4', '--memory', '4g')
+# As in CI: set LATTICE_WARNINGS_AS_ERRORS=ON to fail on warnings.
+if ($env:LATTICE_WARNINGS_AS_ERRORS) { $run += @('-e', "LATTICE_WARNINGS_AS_ERRORS=$($env:LATTICE_WARNINGS_AS_ERRORS)") }
 # ThreadSanitizer re-executes itself with address randomisation off, which Docker's default
 # seccomp profile blocks; only the TSan run relaxes it.
 if ($args -contains '--tsan') { $run += @('--security-opt', 'seccomp=unconfined') }

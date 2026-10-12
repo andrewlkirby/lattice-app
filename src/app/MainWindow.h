@@ -41,6 +41,7 @@ private:
     bool persistDeviceState = true;
 
     juce::ToggleButton toneToggle{"Test tone"};
+    juce::ToggleButton multiThreaded{"Multi-threaded audio"};
     juce::Slider frequencySlider;
     juce::Slider levelSlider;
     juce::Label frequencyLabel{{}, "Frequency"};
@@ -56,7 +57,7 @@ private:
 /** Main view until M4: the debug session view and the audio tab, with the play panel (tuning,
     computer keyboard, on-screen keyboard) underneath. Routes key presses: session shortcuts first,
     then the computer MIDI keyboard. */
-class MainComponent final : public juce::Component
+class MainComponent final : public juce::Component, public juce::DragAndDropContainer
 {
 public:
     MainComponent(AudioEngine& engine, juce::PropertiesFile& settings, TuningRegistry& tunings,

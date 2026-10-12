@@ -33,7 +33,7 @@ struct Fixture
         }
     }
     juce::ValueTree chain(int t = 0) { return LiveSet::chainOf(set.track(t)); }
-    juce::ValueTree insert(juce::ValueTree c, const juce::String& type, int index = -1)
+    juce::ValueTree insert(const juce::ValueTree& c, const juce::String& type, int index = -1)
     {
         return chains::insert(set, c, type, index, testRegistry());
     }
@@ -93,7 +93,7 @@ TEST_CASE("Chain rules: returns, the master and Audio Effect Racks take audio ef
 {
     Fixture f;
     REQUIRE(f.set.numReturns() > 0);
-    for (auto c : {LiveSet::chainOf(f.set.returnTrack(0)), LiveSet::chainOf(f.set.master())})
+    for (const auto& c : {LiveSet::chainOf(f.set.returnTrack(0)), LiveSet::chainOf(f.set.master())})
     {
         CHECK_FALSE(f.insert(c, SynthDevice::typeId).isValid());
         CHECK_FALSE(f.insert(c, ArpeggiatorDevice::typeId).isValid());

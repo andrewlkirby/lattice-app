@@ -171,7 +171,7 @@ int makeRoom(LiveSet& set, const Placement& p)
 }
 } // namespace
 
-juce::ValueTree insert(LiveSet& set, juce::ValueTree chain, const juce::String& typeId, int desiredIndex,
+juce::ValueTree insert(LiveSet& set, const juce::ValueTree& chain, const juce::String& typeId, int desiredIndex,
                        const DeviceRegistry& registry)
 {
     const auto p = place(chain, typeId, desiredIndex, registry);
@@ -180,7 +180,7 @@ juce::ValueTree insert(LiveSet& set, juce::ValueTree chain, const juce::String& 
     return set.insertDevice(chain, makeRoom(set, p), typeId);
 }
 
-juce::ValueTree insertCopy(LiveSet& set, juce::ValueTree chain, const juce::ValueTree& device, int desiredIndex,
+juce::ValueTree insertCopy(LiveSet& set, const juce::ValueTree& chain, const juce::ValueTree& device, int desiredIndex,
                            const DeviceRegistry& registry)
 {
     const auto type = device[ids::deviceType].toString();
@@ -193,7 +193,7 @@ juce::ValueTree insertCopy(LiveSet& set, juce::ValueTree chain, const juce::Valu
     return set.insertDeviceCopy(chain, makeRoom(set, p), device);
 }
 
-bool move(LiveSet& set, const juce::ValueTree& device, juce::ValueTree toChain, int desiredIndex,
+bool move(LiveSet& set, const juce::ValueTree& device, const juce::ValueTree& toChain, int desiredIndex,
           const DeviceRegistry& registry)
 {
     const auto p = place(toChain, device[ids::deviceType].toString(), desiredIndex, registry, device);

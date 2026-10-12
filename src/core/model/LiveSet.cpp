@@ -597,7 +597,7 @@ juce::ValueTree LiveSet::makeScene()
     return s;
 }
 
-void LiveSet::reassignIds(juce::ValueTree tree)
+void LiveSet::reassignIds(const juce::ValueTree& tree)
 {
     // New IDs for everything that has one; macro mappings then follow their devices' new IDs.
     std::map<juce::int64, juce::int64> renamed;

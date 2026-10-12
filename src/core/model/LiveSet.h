@@ -347,7 +347,7 @@ private:
     juce::ValueTree makeScene();
     juce::ValueTree makeSlot() const;
     /** Gives every TRACK, CLIP and SCENE in tree a new ID. */
-    void reassignIds(juce::ValueTree tree);
+    void reassignIds(const juce::ValueTree& tree);
     void setExclusiveFlag(int index, const juce::Identifier& flag, bool on, bool additive);
 
     juce::ValueTree root;

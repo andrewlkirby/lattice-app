@@ -29,7 +29,7 @@ struct FactoryPreset
     std::function<juce::ValueTree(LiveSet&, juce::ValueTree)> build; // (set, chain) -> device
 };
 
-inline void setParams(LiveSet& set, juce::ValueTree device,
+inline void setParams(LiveSet& set, const juce::ValueTree& device,
                       std::initializer_list<std::pair<const char*, double>> values)
 {
     for (const auto& [id, v] : values)
@@ -41,7 +41,7 @@ inline void setParams(LiveSet& set, juce::ValueTree device,
     with the register, as the scale does. */
 inline juce::ValueTree buildColundiPad(LiveSet& set, juce::ValueTree chain)
 {
-    auto synth = set.insertDevice(chain, -1, SynthDevice::typeId);
+    auto synth = set.insertDevice(std::move(chain), -1, SynthDevice::typeId);
     setParams(set, synth,
               {{"osc1.shape", 2.0}, // saw
                {"osc1.level", -6.0},
@@ -84,7 +84,7 @@ inline juce::ValueTree buildColundiPad(LiveSet& set, juce::ValueTree chain)
     envelope. */
 inline juce::ValueTree buildColundiBass(LiveSet& set, juce::ValueTree chain)
 {
-    auto synth = set.insertDevice(chain, -1, SynthDevice::typeId);
+    auto synth = set.insertDevice(std::move(chain), -1, SynthDevice::typeId);
     setParams(set, synth,
               {{"osc1.shape", 2.0}, // saw
                {"osc1.level", -4.0},
@@ -118,7 +118,7 @@ inline juce::ValueTree buildColundiBass(LiveSet& set, juce::ValueTree chain)
     a plucked Synth and a ping-pong Delay, with 8 macros. */
 inline juce::ValueTree buildColundiArpChordRack(LiveSet& set, juce::ValueTree chain)
 {
-    auto rack = racks::insertRack(set, chain, -1, RackDevice::instrumentRackId);
+    auto rack = racks::insertRack(set, std::move(chain), -1, RackDevice::instrumentRackId);
     auto inner = racks::devicesOf(racks::addChain(set, rack, "Arp"));
     auto chord = set.insertDevice(inner, -1, ChordDevice::typeId);
     setParams(set, chord, {{"chord.shift1", 3.0}, {"chord.shift2", 7.0}, {"chord.velocity2", 0.8}});

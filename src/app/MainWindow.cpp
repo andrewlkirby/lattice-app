@@ -7,6 +7,7 @@ namespace
 constexpr auto deviceStateKey = "audioDeviceState";
 constexpr auto toneFrequencyKey = "testToneFrequency";
 constexpr auto toneLevelKey = "testToneLevelDb";
+constexpr auto multiThreadedKey = "multiThreadedAudio"; // read at startup too (Main.cpp)
 constexpr int playPanelHeight = 250;
 
 juce::String percent(double fraction)
@@ -42,6 +43,18 @@ AudioPanel::AudioPanel(AudioEngine& e, juce::PropertiesFile& s) : engine(e), set
     levelSlider.onValueChange = [this] { updateToneFromControls(); };
     addAndMakeVisible(levelSlider);
     addAndMakeVisible(levelLabel);
+
+    // Parallel track processing; off processes everything on the audio thread (for debugging).
+    multiThreaded.setWantsKeyboardFocus(false);
+    multiThreaded.setToggleState(engine.workerThreads() > 0, juce::dontSendNotification);
+    multiThreaded.setTooltip("Process tracks on " + juce::String(WorkerPool::defaultWorkers()) +
+                             " worker threads as well as the audio thread");
+    multiThreaded.onClick = [this] {
+        const bool on = multiThreaded.getToggleState();
+        engine.setWorkerThreads(on ? WorkerPool::defaultWorkers() : 0);
+        settings.setValue(multiThreadedKey, on);
+    };
+    addAndMakeVisible(multiThreaded);
 
     resetStatsButton.onClick = [this] {
         engine.callbackStats().reset();
@@ -91,6 +104,8 @@ void AudioPanel::resized()
     auto toneRow = area.removeFromTop(28);
     toneToggle.setBounds(toneRow.removeFromLeft(180));
     resetStatsButton.setBounds(toneRow.removeFromRight(110));
+    toneRow.removeFromRight(12);
+    multiThreaded.setBounds(toneRow.removeFromRight(200));
     area.removeFromTop(8);
 
     auto freqRow = area.removeFromTop(28);
@@ -141,7 +156,8 @@ void AudioPanel::timerCallback()
              << percent(s.p999) << "  max " << percent(s.max) << "  of the buffer period  (budget: p99.9 <= 70%)\n"
              << "Overruns: " << juce::String(static_cast<juce::int64>(s.overruns))
              << " callbacks longer than one buffer;  device xruns: " << dm.getXRunCount() << "\n"
-             << "Calls:    " << juce::String(static_cast<juce::int64>(s.callbacks)) << "\n"
+             << "Calls:    " << juce::String(static_cast<juce::int64>(s.callbacks)) << ";  worker threads: "
+             << engine.workerThreads() << "\n"
              << "Input:    MIDI in -> block handed to the driver: ";
         if (latency.count == 0)
             text << "no notes yet";
@@ -179,7 +195,7 @@ void AudioPanel::saveDeviceState()
 
 MainComponent::MainComponent(AudioEngine& engine, juce::PropertiesFile& settings, TuningRegistry& tunings,
                              SessionController& session, std::function<void()> firstPaint)
-    : onFirstPaint(std::move(firstPaint)), audioPanel(engine, settings), sessionPanel(session, tunings, settings),
+    : onFirstPaint(std::move(firstPaint)), audioPanel(engine, settings), sessionPanel(session, engine, tunings, settings),
       playPanel(session, engine, settings, tunings)
 {
     setOpaque(true);

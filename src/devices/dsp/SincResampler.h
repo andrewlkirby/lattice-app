@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/RealtimeCheck.h"
+#include "devices/dsp/SincBlock.h"
 
 #include <algorithm>
 #include <array>
@@ -43,9 +44,11 @@ public:
     {
         double bandwidth = 1.0; // 1 at unity, 1/r when pitching up by r
         int taps = 0;           // even; samples from i - taps/2 + 1 to i + taps/2 around position i + f
-        int stride = 0;         // taps rounded up to a multiple of 4 (zero weights at the end)
+        int stride = 0;         // taps rounded up to a multiple of 8 (zero weights at the end)
         int phases = 0;
         std::vector<float> rows; // (phases + 1) rows of `stride` weights
+
+        SincKernelView view() const noexcept { return {rows.data(), taps, stride, phases}; }
     };
 
     static const SincKernelBank& get();
@@ -63,14 +66,15 @@ private:
 };
 
 /** Interpolates up to two channels at a fractional position with one kernel level. data[c] must
-    be readable from index - taps/2 + 1 to index + taps/2. */
-inline void sincInterpolate(const SincKernelBank::Level& k, const float* const* data, int numChannels,
+    be readable from index - taps/2 + 1 to index + stride - taps/2. (For a block of positions,
+    sincBlock() picks the fastest version for the CPU.) */
+inline void sincInterpolate(const SincKernelView& k, const float* const* data, int numChannels,
                             long long index, float fraction, float* out) noexcept LATTICE_NONBLOCKING
 {
     const float scaled = fraction * static_cast<float>(k.phases);
     const int phase = std::min(static_cast<int>(scaled), k.phases - 1);
     const float w = scaled - static_cast<float>(phase);
-    const float* row0 = k.rows.data() + static_cast<std::size_t>(phase) * static_cast<std::size_t>(k.stride);
+    const float* row0 = k.rows + static_cast<std::size_t>(phase) * static_cast<std::size_t>(k.stride);
     const float* row1 = row0 + k.stride;
     const long long first = index - k.taps / 2 + 1;
     const float* s0 = data[0] + first;
@@ -117,6 +121,12 @@ inline void sincInterpolate(const SincKernelBank::Level& k, const float* const* 
     out[0] = acc[0];
     out[1] = acc[1];
 #endif
+}
+
+inline void sincInterpolate(const SincKernelBank::Level& k, const float* const* data, int numChannels,
+                            long long index, float fraction, float* out) noexcept LATTICE_NONBLOCKING
+{
+    sincInterpolate(k.view(), data, numChannels, index, fraction, out);
 }
 
 /** Cubic Hermite (Catmull-Rom) interpolation: the "Draft" quality. data readable from index - 1

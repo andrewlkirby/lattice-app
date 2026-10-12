@@ -573,6 +573,7 @@ void SamplerDevice::renderVoice(Voice& v, float* left, float* right, int numSamp
     const int channels = sample.numChannels;
     const bool draft = juce::roundToInt(value(P::quality)) == static_cast<int>(Quality::Draft);
     const auto& bank = dsp::SincKernelBank::get();
+    const auto interpolateBlock = dsp::sincBlock();
     const double sr = sampleRate();
     const float velocityGain = (1.0f - value(P::ampVelocity)) + value(P::ampVelocity) * v.velocity * v.velocity;
     const bool filterOn = value(P::filterOn) >= 0.5f;
@@ -689,7 +690,35 @@ void SamplerDevice::renderVoice(Voice& v, float* left, float* right, int numSamp
             index = static_cast<long long>(at);
             frac = static_cast<float>(at - static_cast<double>(index));
         };
-        if (draft)
+        if (plain)
+        {
+            // The block's positions first, then the interpolator over all of them at once (SIMD
+            // across positions for Draft; AVX2 for sinc where the CPU has it).
+            std::int64_t indices[controlBlock];
+            float fractions[controlBlock];
+            double x = v.position;
+            double rate = v.rate;
+            const double loopLength = v.loopEnd - v.loopStart;
+            for (int i = 0; i < m; ++i)
+            {
+                rate += rateStep;
+                const auto index = static_cast<std::int64_t>(x);
+                indices[i] = index;
+                fractions[i] = static_cast<float>(x - static_cast<double>(index));
+                x += rate;
+                if (v.loop && x >= v.loopEnd)
+                    x -= loopLength;
+            }
+            v.position = x;
+            v.rate = rate;
+            v.played += m;
+            const float* second = channels > 1 ? data[1] : data[0];
+            if (draft)
+                dsp::hermiteBlock(data[0], second, indices, fractions, m, block[0], block[1]);
+            else
+                interpolateBlock(kernel.view(), data[0], second, indices, fractions, m, block[0], block[1]);
+        }
+        else if (draft)
             run([&](double at, float* out) {
                 long long index = 0;
                 float frac = 0.0f;
@@ -717,16 +746,21 @@ void SamplerDevice::renderVoice(Voice& v, float* left, float* right, int numSamp
 
         float env[controlBlock];
         v.amp.renderBlock(env, rendered);
-        for (int i = 0; i < rendered; ++i)
-        {
-            float g = env[i] * velocityGain;
-            if (v.stealing)
+        if (v.stealing)
+            for (int i = 0; i < rendered; ++i)
             {
                 v.killGain = std::max(0.0f, v.killGain - v.killStep);
-                g *= v.killGain;
+                env[i] *= v.killGain;
             }
-            left[start + i] += block[0][i] * g * v.panL * 1.41421356f;
-            right[start + i] += block[1][i] * g * v.panR * 1.41421356f;
+        // Constant-power pan with unity at the centre.
+        const float gainL = velocityGain * v.panL * 1.41421356f;
+        const float gainR = velocityGain * v.panR * 1.41421356f;
+        float* outL = left + start;
+        float* outR = right + start;
+        for (int i = 0; i < rendered; ++i)
+        {
+            outL[i] += block[0][i] * env[i] * gainL;
+            outR[i] += block[1][i] * env[i] * gainR;
         }
         if (!v.amp.isActive() || (v.stealing && v.killGain <= 0.0f))
             v.active = false;
