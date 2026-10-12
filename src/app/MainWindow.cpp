@@ -7,6 +7,7 @@ namespace
 constexpr auto deviceStateKey = "audioDeviceState";
 constexpr auto toneFrequencyKey = "testToneFrequency";
 constexpr auto toneLevelKey = "testToneLevelDb";
+constexpr int playPanelHeight = 250;
 
 juce::String percent(double fraction)
 {
@@ -14,13 +15,10 @@ juce::String percent(double fraction)
 }
 } // namespace
 
-MainComponent::MainComponent(AudioEngine& e, juce::PropertiesFile& s, TuningRegistry& tunings,
-                             std::function<void()> firstPaint)
-    : engine(e), settings(s), onFirstPaint(std::move(firstPaint)), playPanel(e, s, tunings)
-{
-    setOpaque(true);
-    setWantsKeyboardFocus(true);
+// --- AudioPanel ----------------------------------------------------------------------------------------
 
+AudioPanel::AudioPanel(AudioEngine& e, juce::PropertiesFile& s) : engine(e), settings(s)
+{
     // Controls don't take keyboard focus, so letter keys always reach the computer keyboard.
     toneToggle.setWantsKeyboardFocus(false);
     frequencySlider.setWantsKeyboardFocus(false);
@@ -45,26 +43,27 @@ MainComponent::MainComponent(AudioEngine& e, juce::PropertiesFile& s, TuningRegi
     addAndMakeVisible(levelSlider);
     addAndMakeVisible(levelLabel);
 
-    resetStatsButton.onClick = [this] { engine.callbackStats().reset(); };
+    resetStatsButton.onClick = [this] {
+        engine.callbackStats().reset();
+        engine.inputLatency().reset();
+    };
     addAndMakeVisible(resetStatsButton);
 
     statusLabel.setJustificationType(juce::Justification::topLeft);
     statusLabel.setFont(juce::FontOptions(juce::Font::getDefaultMonospacedFontName(), 14.0f, juce::Font::plain));
     statusLabel.setText("Opening audio device...", juce::dontSendNotification);
     addAndMakeVisible(statusLabel);
-    addAndMakeVisible(playPanel);
 
     updateToneFromControls();
-    setSize(960, 980);
 }
 
-MainComponent::~MainComponent()
+AudioPanel::~AudioPanel()
 {
     engine.getDeviceManager().removeChangeListener(this);
     saveDeviceState();
 }
 
-void MainComponent::audioDeviceOpened(const juce::String& error)
+void AudioPanel::audioDeviceOpened(const juce::String& error)
 {
     deviceError = error;
 
@@ -80,19 +79,12 @@ void MainComponent::audioDeviceOpened(const juce::String& error)
     startTimerHz(4);
 }
 
-void MainComponent::paint(juce::Graphics& g)
+void AudioPanel::paint(juce::Graphics& g)
 {
     g.fillAll(getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
-
-    if (!firstPaintDone)
-    {
-        firstPaintDone = true;
-        if (onFirstPaint)
-            juce::MessageManager::callAsync(onFirstPaint);
-    }
 }
 
-void MainComponent::resized()
+void AudioPanel::resized()
 {
     auto area = getLocalBounds().reduced(16);
 
@@ -111,45 +103,14 @@ void MainComponent::resized()
     levelSlider.setBounds(levelRow);
     area.removeFromTop(12);
 
-    statusLabel.setBounds(area.removeFromTop(150));
-    area.removeFromTop(8);
-    playPanel.setBounds(area.removeFromTop(250));
+    statusLabel.setBounds(area.removeFromTop(170));
     area.removeFromTop(8);
 
     if (deviceSelector != nullptr)
         deviceSelector->setBounds(area);
 }
 
-bool MainComponent::keyPressed(const juce::KeyPress& key)
-{
-    if (key == juce::KeyPress::spaceKey)
-    {
-        toneToggle.setToggleState(!toneToggle.getToggleState(), juce::sendNotification);
-        return true;
-    }
-
-    const auto mods = key.getModifiers();
-    if (mods.isCommandDown() || mods.isCtrlDown() || mods.isAltDown())
-        return false;
-    if (dynamic_cast<juce::TextEditor*>(juce::Component::getCurrentlyFocusedComponent()) != nullptr)
-        return false; // typing in a text field
-
-    auto character = key.getTextCharacter();
-    if (character == 0)
-        character = static_cast<juce::juce_wchar>(key.getKeyCode());
-    return playPanel.computerKeyboard().keyDown(character, key.getKeyCode());
-}
-
-bool MainComponent::keyStateChanged(bool)
-{
-    auto& keyboard = playPanel.computerKeyboard();
-    for (const int code : keyboard.heldKeyCodes())
-        if (!juce::KeyPress::isKeyCurrentlyDown(code))
-            keyboard.keyUp(code);
-    return false;
-}
-
-void MainComponent::updateToneFromControls()
+void AudioPanel::updateToneFromControls()
 {
     auto& tone = engine.testTone();
     tone.setFrequency(static_cast<float>(frequencySlider.getValue()));
@@ -158,7 +119,7 @@ void MainComponent::updateToneFromControls()
     settings.setValue(toneLevelKey, levelSlider.getValue());
 }
 
-void MainComponent::timerCallback()
+void AudioPanel::timerCallback()
 {
     auto& dm = engine.getDeviceManager();
     juce::String text;
@@ -169,6 +130,7 @@ void MainComponent::timerCallback()
         const int block = device->getCurrentBufferSizeSamples();
         const int outLatency = device->getOutputLatencyInSamples();
         const auto s = engine.callbackStats().summary();
+        const auto latency = engine.inputLatency().summary();
 
         text << "Device:   " << dm.getCurrentAudioDeviceType() << " / " << device->getName() << "\n"
              << "Buffer:   " << block << " samples @ " << juce::String(sr, 0) << " Hz = "
@@ -179,7 +141,14 @@ void MainComponent::timerCallback()
              << percent(s.p999) << "  max " << percent(s.max) << "  of the buffer period  (budget: p99.9 <= 70%)\n"
              << "Overruns: " << juce::String(static_cast<juce::int64>(s.overruns))
              << " callbacks longer than one buffer;  device xruns: " << dm.getXRunCount() << "\n"
-             << "Calls:    " << juce::String(static_cast<juce::int64>(s.callbacks));
+             << "Calls:    " << juce::String(static_cast<juce::int64>(s.callbacks)) << "\n"
+             << "Input:    MIDI in -> block handed to the driver: ";
+        if (latency.count == 0)
+            text << "no notes yet";
+        else
+            text << "p50 " << juce::String(latency.p50Ms, 1) << " ms  p99 " << juce::String(latency.p99Ms, 1)
+                 << " ms  max " << juce::String(latency.maxMs, 2) << " ms  (" << juce::String(static_cast<juce::int64>(latency.count))
+                 << " events; Lattice's share, before the driver's output latency)";
 #if LATTICE_RT_CHECKS_ENABLED
         text << "\nRT checks: on, violations so far: "
              << juce::String(static_cast<juce::int64>(rt::violationCount()));
@@ -193,12 +162,12 @@ void MainComponent::timerCallback()
     statusLabel.setText(text, juce::dontSendNotification);
 }
 
-void MainComponent::changeListenerCallback(juce::ChangeBroadcaster*)
+void AudioPanel::changeListenerCallback(juce::ChangeBroadcaster*)
 {
     saveDeviceState();
 }
 
-void MainComponent::saveDeviceState()
+void AudioPanel::saveDeviceState()
 {
     if (!persistDeviceState || engine.isOpening() || deviceSelector == nullptr)
         return; // the device manager belongs to the opening thread until audioDeviceOpened()
@@ -206,15 +175,90 @@ void MainComponent::saveDeviceState()
         settings.setValue(deviceStateKey, xml.get());
 }
 
+// --- MainComponent -------------------------------------------------------------------------------------
+
+MainComponent::MainComponent(AudioEngine& engine, juce::PropertiesFile& settings, TuningRegistry& tunings,
+                             SessionController& session, std::function<void()> firstPaint)
+    : onFirstPaint(std::move(firstPaint)), audioPanel(engine, settings), sessionPanel(session, tunings, settings),
+      playPanel(session, engine, settings, tunings)
+{
+    setOpaque(true);
+    setWantsKeyboardFocus(true);
+
+    tabs.setWantsKeyboardFocus(false);
+    tabs.getTabbedButtonBar().setWantsKeyboardFocus(false);
+    const auto background = getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId);
+    tabs.addTab("Session", background, &sessionPanel, false);
+    tabs.addTab("Audio", background, &audioPanel, false);
+    tabs.setTabBarDepth(28);
+    addAndMakeVisible(tabs);
+    addAndMakeVisible(playPanel);
+
+    sessionPanel.onSelectedTrackChanged = [this] { playPanel.setTrack(sessionPanel.selection().track); };
+    playPanel.setTrack(sessionPanel.selection().track);
+
+    setSize(1180, 940);
+}
+
+void MainComponent::paint(juce::Graphics& g)
+{
+    g.fillAll(getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
+
+    if (!firstPaintDone)
+    {
+        firstPaintDone = true;
+        if (onFirstPaint)
+            juce::MessageManager::callAsync(onFirstPaint);
+    }
+}
+
+void MainComponent::resized()
+{
+    auto area = getLocalBounds().reduced(8);
+    playPanel.setBounds(area.removeFromBottom(playPanelHeight));
+    area.removeFromBottom(8);
+    tabs.setBounds(area);
+}
+
+bool MainComponent::keyPressed(const juce::KeyPress& key)
+{
+    if (dynamic_cast<juce::TextEditor*>(juce::Component::getCurrentlyFocusedComponent()) != nullptr)
+        return false; // typing in a text field
+
+    if (sessionPanel.handleKey(key))
+        return true;
+
+    const auto mods = key.getModifiers();
+    if (mods.isCommandDown() || mods.isCtrlDown() || mods.isAltDown())
+        return false;
+
+    auto character = key.getTextCharacter();
+    if (character == 0)
+        character = static_cast<juce::juce_wchar>(key.getKeyCode());
+    return playPanel.computerKeyboard().keyDown(character, key.getKeyCode());
+}
+
+bool MainComponent::keyStateChanged(bool)
+{
+    sessionPanel.handleKeyStateChange();
+    auto& keyboard = playPanel.computerKeyboard();
+    for (const int code : keyboard.heldKeyCodes())
+        if (!juce::KeyPress::isKeyCurrentlyDown(code))
+            keyboard.keyUp(code);
+    return false;
+}
+
+// --- MainWindow ----------------------------------------------------------------------------------------
+
 MainWindow::MainWindow(const juce::String& name, AudioEngine& engine, juce::PropertiesFile& settings,
-                       TuningRegistry& tunings, std::function<void()> onFirstPaint,
+                       TuningRegistry& tunings, SessionController& session, std::function<void()> onFirstPaint,
                        const std::function<void(const char*)>& markStage)
     : juce::DocumentWindow(name, juce::Colours::black, juce::DocumentWindow::allButtons)
 {
     markStage("native window created");
     setUsingNativeTitleBar(true);
     markStage("native title bar");
-    component = new MainComponent(engine, settings, tunings, std::move(onFirstPaint));
+    component = new MainComponent(engine, settings, tunings, session, std::move(onFirstPaint));
     markStage("content created");
     setContentOwned(component, true);
     setResizable(true, true);
@@ -227,7 +271,7 @@ MainWindow::MainWindow(const juce::String& name, AudioEngine& engine, juce::Prop
 
 void MainWindow::closeButtonPressed()
 {
-    juce::JUCEApplication::getInstance()->systemRequestedQuit();
+    juce::JUCEApplication::getInstance()->systemRequestedQuit(); // asks about unsaved changes
 }
 
 void MainWindow::activeWindowStatusChanged()

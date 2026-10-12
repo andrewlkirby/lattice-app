@@ -272,6 +272,127 @@ All engine tests use an **`OfflineRenderer`**:
 - [ ] Save, quit, reopen: the set comes back exactly as it was.
 - [ ] All tests pass at every block size. The RealtimeCheck stays silent during long playback sessions.
 
+## As built (2026-10-11)
+Where the code differs from the plan above, and why.
+
+### Threads and hand-offs
+- **`RtShared<T>`** was built in M1 (`src/core/RtShared.h`). Retired objects are freed once the
+  count of open reader scopes is zero after their retirement, so no epoch counter was needed.
+  `AudioEngine` publishes `EngineSnapshot`s through it, and each `TrackTuning` its table.
+- **Commands** go through an `MpscQueue` (`src/core/RtFifo.h`): producers (the UI now, controller
+  threads in M5) take a mutex among themselves; the audio thread is the lock-free consumer. The audio
+  thread pops the commands *before* it reads the snapshot, so a command never refers to a document
+  newer than the snapshot it sees.
+- **Live MIDI** uses M1's `MidiInputQueue` (not `juce::MidiMessageCollector`, which locks), now
+  with an arrival time per message for the input latency probe.
+- **Engine → UI:** one 16,384-event `SpscFifo<EngineEvent>` for all tracks (recorded notes, the
+  end of a capture, a cancelled recording, a scene's tempo or time signature), instead of a
+  4,096-event buffer per track. If it ever fills, events are dropped and counted, never allocated.
+  Clip-launcher and transport state are published with a `Seqlock` (`src/core/Seqlock.h`), so the
+  UI always reads a consistent copy without the audio thread waiting.
+
+### Document and snapshots
+- **Model:** `src/core/model/LiveSet.{h,cpp}` (the ValueTree, typed accessors, every operation
+  undoable), `MidiImport.{h,cpp}`, and `SessionTypes.h` (launch modes, quantization, follow actions,
+  slot states). IDs come from a `nextId` counter that undo never rewinds, so IDs are never reused
+  within a set. Saving writes a temporary file and then replaces the target. Loading checks the root
+  type, the format version (newer formats are refused) and one slot per scene in every track.
+- **`SnapshotBuilder`** (`src/engine/`) listens to the document. A change inside a clip marks only
+  that clip for rebuilding (cached by clip ID); a subtree added whole (undo, a loaded set) marks
+  every clip in it. Rebuilds are coalesced to one per message-loop turn, and `SessionController`
+  forces any pending rebuild before each engine command.
+- **`ClipData`** holds the clip's note-ons and note-offs sorted by position (note-offs first at
+  equal positions), not events pre-flattened per loop pass. Overlapping notes of the same pitch are
+  cut where the next one starts, as in Live, and muted notes are left out.
+- **`TrackProcessor`** (one per track ID, kept across snapshots) owns the instrument, the
+  `TrackTuning`, the clip player and scheduler state, gain smoothing and meters. The engine
+  re-prepares every live processor when the device settings change. Loading or creating a set drops
+  all processors, because IDs restart in every set.
+- **Instrument:** `TestSynthProcessor` wraps M1's test synth as a `juce::AudioProcessor`, the
+  interface M3's devices and M6's plugins share. Its `MidiBuffer` is sized in advance.
+
+### Timing and scheduling (`src/engine/session/`, `src/engine/Transport`)
+- **Block splitting:** each chunk is walked from one scheduled action to the next (launch, stop,
+  scene tempo, follow action, end of a recording). Every action's and every note's sample is
+  computed from beats and the transport's current tempo segment, never accumulated, so all four
+  test block patterns produce exactly the same events. A beat within 10⁻⁵ samples of a sample
+  boundary lands on that sample.
+- **A clip launch "anchors" the clip:** clip position *p* plays at beat *b*. From there the clip
+  plays to its loop end, then repeats the loop (several wraps per block when the loop is shorter than
+  the block); without looping it stops at the loop end.
+- **Tempo and time signature from the document** take effect only when the document's value
+  changes, so a scene's tempo isn't undone by a snapshot built before the model caught up. A scene's
+  tempo or time signature is written back into the document (not as an undo step). A
+  time-signature change restarts the bar grid at the bar that contains it.
+- **Launching anything while the transport is stopped** (a clip, a scene, a recording) starts the
+  transport at bar 1 and the launch at once. Play starts at bar 1, Continue at the stopped
+  position; Stop while stopped returns to bar 1.
+- **Launch modes:** a Gate clip released before its launch happened plays until the grid line after
+  it starts. Pressing a Toggle clip whose launch is still queued cancels the launch. Track stop
+  buttons and empty-slot stop buttons use the global quantization; a second Stop All press stops at
+  once.
+- **Follow actions** fire exactly at the launch beat plus the follow time (not quantized again).
+  "Other" with no other clip does nothing. The random generator is xorshift64*, which tests seed by
+  command.
+- **Editing a playing clip:** a loop change re-anchors at the current position; sounding notes the
+  edit removed get a note-off at once; notes that still exist keep sounding.
+
+### Recording
+- The controller creates the clip to record into (not as an undo step) and sends `StartRecording`;
+  the recording starts at the next global-quantization line. The whole recording becomes **one undo
+  step** ("Record clip") when it ends, and an overdub pass one "Overdub" step. A queued recording
+  that is cancelled before it starts removes its empty clip.
+- **Open length:** pressing the recording clip again ends it at the next quantization line (at
+  once with None); the length rounds up to whole bars (at least one). **Fixed length** (1, 2, 4, 8
+  or 16 bars, in the transport bar) turns into playback by itself.
+- **Session record (F9):** overdubs into clips playing on armed tracks; an armed track with nothing
+  playing records into the selected scene's slot, or the next empty slot below it. Turning it off
+  ends open-length recordings at once.
+- Live input reaches armed tracks only (no auto-arm yet; a new set arms track 1). It is recorded at
+  the position of the block it arrives in, so recorded notes can land up to one buffer late against
+  what was heard. Recording latency compensation comes with the latency work in M3 phase 3e.
+
+### Mixer and metronome
+- Volume runs from -70 dB (silence, shown as -inf) to +6 dB; pan is constant-power (-3 dB at the
+  centre); both are smoothed over 20 ms. A muted track's clips and instrument keep running. Meters
+  report the peak since the UI's last read, and the UI applies the falloff.
+- The master strip has volume, pan and a meter. The metronome is added after the master fader and
+  clicks on every beat of the time signature's denominator, accented on the downbeat.
+
+### Debug UI (`src/app/debug/`, replaced in M4)
+- Tabs: **Session** (transport bar; clip grid with a scene column and a stop row; mixer strips,
+  each with a tuning menu; master strip) and **Audio** (the M0 device and load readouts, plus the
+  input latency probe). The play panel below follows the selected track's tuning.
+- Right-click menus on slots (import MIDI, create, properties, duplicate, delete, stop button),
+  scenes (launch, rename, tempo, time signature, insert, duplicate, delete) and track headers
+  (rename, insert, duplicate, delete, move). Double-click an empty slot to create a clip, or a track
+  header to rename it.
+- **Shortcuts:** Space play/stop, Shift+Space continue, F9 session record, Enter launch the
+  selection (releasing Enter releases a Gate clip), arrows move the selection, Delete deletes the
+  clip, Ctrl+D duplicates it, Ctrl+T adds a track, Ctrl+I inserts a scene, Ctrl+Z / Ctrl+Y undo and
+  redo, Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S new, open, save, save as. The computer MIDI keyboard
+  keeps its letter keys (M1).
+- New, Open and quitting ask before discarding unsaved changes. A new set's tracks start in the
+  tuning chosen last.
+
+### Performance work (charter §7, M2)
+- **Input latency probe:** MIDI arrival to the end of the callback that plays it, shown in the Audio
+  tab (p50, p99, max).
+- **Reference set:** `tests/perf/ReferenceSet.h` (32 test-synth tracks, 8 scenes; see
+  `tests/perf/reference-set/README.md`).
+- **Engine benchmark:** `lattice_engine_bench` renders the reference set offline. On the reference
+  laptop (Release): 8.5× real time on one thread; per-block load p99.9 34% of a 64-sample period.
+- **Instruction counts:** `scripts/linux-test.sh --callgrind` counts the benchmark's render loop
+  against `docs/perf/baselines/engine-callgrind.txt` and fails above +5%. CI runs it nightly.
+
+### Tests
+- `tests/engine/SessionEngineTests.cpp` and `SnapshotStressTests.cpp` drive the engine through an
+  `OfflineRenderer` (`tests/support/`) at 64-, 37- and 512-sample and random block sizes; every
+  multi-pattern scenario must give identical events. `tests/core/LiveSetTests.cpp` covers save and
+  load, undo and redo of every operation, and MIDI import (`tests/data/midi/arp-and-bass.mid`).
+- One stress test runs a real audio thread while the document is edited 3,000 times; CI runs it
+  under ThreadSanitizer. The full 10-second, 10,000-edit version is tagged `[stress]`.
+
 ## Interfaces kept for later milestones
 - **M3 devices:** each track's device chain fills the "instrument processor" spot in `TrackSnapshot`. Return tracks and sends are added to the snapshot and the mixer.
 - **M4 UI:** it reads the same model and the same clip-state feed, and adds the piano roll and the File menu on top of the existing serialization.

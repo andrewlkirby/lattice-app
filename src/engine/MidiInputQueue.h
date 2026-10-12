@@ -37,8 +37,13 @@ public:
     bool push(const juce::MidiMessage& message);
 
     /** Audio thread. Moves up to maxEvents queued messages into out, all at sampleOffset 0 (live
-        input is played as soon as it arrives). Returns how many were written. */
-    int popInto(TimedMidi* out, int maxEvents) noexcept LATTICE_NONBLOCKING;
+        input is played as soon as it arrives). Returns how many were written. If arrivalSeconds is
+        given, it receives when each message was pushed (steady-clock seconds; see nowSeconds()),
+        for the input latency probe. */
+    int popInto(TimedMidi* out, int maxEvents, double* arrivalSeconds = nullptr) noexcept LATTICE_NONBLOCKING;
+
+    /** The clock arrival times are measured with (std::chrono::steady_clock, in seconds). */
+    static double nowSeconds() noexcept;
 
     std::uint32_t droppedCount() const noexcept { return dropped.load(std::memory_order_relaxed); }
 
@@ -46,6 +51,7 @@ private:
     std::mutex producerMutex;
     juce::AbstractFifo fifo{capacity};
     std::array<TimedMidi, capacity> buffer{};
+    std::array<double, capacity> arrivals{};
     std::atomic<std::uint32_t> dropped{0};
 };
 

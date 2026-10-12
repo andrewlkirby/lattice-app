@@ -27,8 +27,15 @@ juce::String TuningKeyboardComponent::getWhiteNoteText(int midiNoteNumber)
     return juce::String(midiNoteNumber); // the table index; the readout shows its frequency
 }
 
-PlayPanel::PlayPanel(AudioEngine& e, juce::PropertiesFile& s, TuningRegistry& r)
-    : engine(e), settings(s), registry(r),
+void PlayPanel::loadRememberedTunings(TuningRegistry& registry, const juce::PropertiesFile& settings)
+{
+    for (const auto& path : juce::StringArray::fromLines(settings.getValue(userTuningFilesKey)))
+        if (path.isNotEmpty())
+            registry.loadFile(juce::File(path));
+}
+
+PlayPanel::PlayPanel(SessionController& s, AudioEngine& e, juce::PropertiesFile& settingsFile, TuningRegistry& r)
+    : session(s), engine(e), settings(settingsFile), registry(r),
       keyboardInput([this](const juce::MidiMessage& m) {
           // Through the on-screen keyboard's state, so computer-keyboard notes light up its keys;
           // the state's listener (below) forwards them to the engine.
@@ -40,13 +47,16 @@ PlayPanel::PlayPanel(AudioEngine& e, juce::PropertiesFile& s, TuningRegistry& r)
 {
     keyboardState.addListener(this);
     registry.addListener(this);
+    session.set().state().addListener(this);
 
+    trackLabel.setFont(juce::FontOptions(15.0f, juce::Font::bold));
+    addAndMakeVisible(trackLabel);
     addAndMakeVisible(tuningLabel);
     tuningBox.setWantsKeyboardFocus(false);
     tuningBox.onChange = [this] {
         const int index = tuningBox.getSelectedId() - 1;
         const auto& all = registry.getAll();
-        if (index >= 0 && index < static_cast<int>(all.size()))
+        if (index >= 0 && index < static_cast<int>(all.size()) && all[static_cast<std::size_t>(index)] != trackTuning())
             selectTuning(all[static_cast<std::size_t>(index)]);
     };
     addAndMakeVisible(tuningBox);
@@ -67,43 +77,84 @@ PlayPanel::PlayPanel(AudioEngine& e, juce::PropertiesFile& s, TuningRegistry& r)
     keyboardInput.onStateChanged = [this] { updateKeyboardInfo(); };
     keyboardInput.setEnabled(settings.getBoolValue(computerKeyboardKey, true));
 
-    // Tunings the user loaded before.
-    for (const auto& path : juce::StringArray::fromLines(settings.getValue(userTuningFilesKey)))
-        if (path.isNotEmpty())
-            registry.loadFile(juce::File(path));
-
     rebuildTuningMenu();
-    auto initial = registry.findById(settings.getValue(tuningIdKey));
-    selectTuning(initial != nullptr ? initial : registry.defaultTuning());
-
+    refresh();
     startTimerHz(15);
 }
 
 PlayPanel::~PlayPanel()
 {
     keyboardInput.releaseAll();
+    session.set().state().removeListener(this);
     registry.removeListener(this);
     keyboardState.removeListener(this);
 }
 
+void PlayPanel::setTrack(int trackIndex)
+{
+    if (trackIndex == track)
+        return;
+    track = trackIndex;
+    shownLastNote = -2;
+    refresh();
+}
+
+TuningPtr PlayPanel::trackTuning() const
+{
+    const auto node = session.set().track(track);
+    if (!node.isValid())
+        return registry.defaultTuning();
+    auto t = registry.findById(node[ids::tuningId].toString());
+    return t != nullptr ? t : registry.defaultTuning();
+}
+
 void PlayPanel::selectTuning(const TuningPtr& tuning)
 {
-    if (tuning == nullptr)
+    if (tuning == nullptr || track >= session.set().numTracks())
         return;
-
-    keyboardInput.releaseAll();
-    engine.trackTuning().setTuning(tuning);
-    keyboardInput.configureForTuning(*tuning);
-    keyboard.setTuning(tuning);
-    keyboard.setLowestVisibleKey(keyboardInput.getBaseNote());
+    session.undoManager().beginNewTransaction("Tuning");
+    session.set().setTrackTuning(track, tuning->id);
     settings.setValue(tuningIdKey, tuning->id);
+    refresh();
+}
 
+void PlayPanel::refresh()
+{
+    needsRefresh = false;
+    const auto& set = session.set();
+    track = juce::jlimit(0, std::max(0, set.numTracks() - 1), track);
+
+    const auto node = set.track(track);
+    juce::String text = node[ids::name].toString();
+    if (static_cast<bool>(node[ids::arm]))
+    {
+        text << "  (armed: plays from the keyboards)";
+    }
+    else
+    {
+        juce::StringArray armed;
+        for (int t = 0; t < set.numTracks(); ++t)
+            if (static_cast<bool>(set.track(t)[ids::arm]))
+                armed.add(set.track(t)[ids::name].toString());
+        text << (armed.isEmpty() ? "  (no track is armed: arm one to play it)" : "  (keyboards play " + armed.joinIntoString(", ") + ")");
+    }
+    trackLabel.setText(text, juce::dontSendNotification);
+
+    const auto tuning = trackTuning();
     const auto& all = registry.getAll();
     for (std::size_t i = 0; i < all.size(); ++i)
         if (all[i] == tuning)
             tuningBox.setSelectedId(static_cast<int>(i) + 1, juce::dontSendNotification);
 
-    shownLastNote = -2; // refresh the readout for the new tuning
+    if (tuning != configuredTuning)
+    {
+        configuredTuning = tuning;
+        keyboardInput.releaseAll();
+        keyboardInput.configureForTuning(*tuning);
+        keyboard.setTuning(tuning);
+        keyboard.setLowestVisibleKey(keyboardInput.getBaseNote());
+        shownLastNote = -2;
+    }
     updateKeyboardInfo();
 }
 
@@ -113,16 +164,14 @@ void PlayPanel::rebuildTuningMenu()
     const auto& all = registry.getAll();
     for (std::size_t i = 0; i < all.size(); ++i)
         tuningBox.addItem(all[i]->name, static_cast<int>(i) + 1);
-
-    const auto current = engine.trackTuning().getTuning();
-    for (std::size_t i = 0; i < all.size(); ++i)
-        if (all[i] == current)
-            tuningBox.setSelectedId(static_cast<int>(i) + 1, juce::dontSendNotification);
+    configuredTuning = nullptr;
+    refresh();
 }
 
 void PlayPanel::tuningsChanged()
 {
     rebuildTuningMenu();
+    session.snapshots().invalidate(); // tracks may refer to the tuning that just arrived
 }
 
 void PlayPanel::chooseTuningFile()
@@ -159,7 +208,7 @@ void PlayPanel::updateKeyboardInfo()
     keyboardToggle.setToggleState(keyboardInput.isEnabled(), juce::dontSendNotification);
     settings.setValue(computerKeyboardKey, keyboardInput.isEnabled());
 
-    const auto tuning = engine.trackTuning().getTuning();
+    const auto tuning = configuredTuning;
     const int first = keyboardInput.getBaseNote();
     const int last = keyboardInput.getLastNote();
     juce::String range;
@@ -178,21 +227,23 @@ void PlayPanel::updateKeyboardInfo()
 
 void PlayPanel::timerCallback()
 {
-    engine.trackTuning().collectGarbage();
+    if (needsRefresh)
+        refresh();
 
-    const int note = engine.synth().lastNoteOn();
+    const int note = session.lastNoteOn(track);
     if (note == shownLastNote)
         return;
     shownLastNote = note;
 
-    const auto tuning = engine.trackTuning().getTuning();
-    if (note < 0 || tuning == nullptr)
+    const auto tuning = configuredTuning;
+    const auto processor = session.processorForTrack(track);
+    if (note < 0 || tuning == nullptr || processor == nullptr)
     {
         lastNoteLabel.setText("Last note: -", juce::dontSendNotification);
         return;
     }
 
-    const double hz = engine.trackTuning().hzFor(note);
+    const double hz = processor->tuning().hzFor(note);
     juce::String text = "Last note: #" + juce::String(note);
     if (tuning->usesNoteNames)
         text << " (" << tuning->labels[static_cast<std::size_t>(note)] << ")";
@@ -219,6 +270,9 @@ void PlayPanel::paint(juce::Graphics& g)
 void PlayPanel::resized()
 {
     auto area = getLocalBounds().reduced(10);
+
+    trackLabel.setBounds(area.removeFromTop(24));
+    area.removeFromTop(4);
 
     auto row = area.removeFromTop(28);
     tuningLabel.setBounds(row.removeFromLeft(60));
