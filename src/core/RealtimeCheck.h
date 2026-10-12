@@ -23,6 +23,19 @@
 #define LATTICE_NONBLOCKING
 #endif
 
+// LATTICE_RT_NONBLOCKING_SYSCALL: opens a scope for a system call the audio thread may make
+// because it never waits: waking sleeping worker threads (a futex wake / WakeByAddressAll).
+// RTSan can't tell a wake from a wait, so the scope switches it off; use it for nothing else.
+#if defined(__has_feature)
+#if __has_feature(realtime_sanitizer)
+#include <sanitizer/rtsan_interface.h>
+#define LATTICE_RT_NONBLOCKING_SYSCALL const __rtsan::ScopedDisabler latticeNonBlockingSyscall
+#endif
+#endif
+#ifndef LATTICE_RT_NONBLOCKING_SYSCALL
+#define LATTICE_RT_NONBLOCKING_SYSCALL static_cast<void>(0)
+#endif
+
 namespace lattice::rt
 {
 

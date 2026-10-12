@@ -133,8 +133,7 @@ void TrackProcessor::applyChainFade(int numSamples) noexcept
         chainFade = ChainFade::Steady;
 }
 
-void TrackProcessor::renderChain(int numSamples, const DeviceTimeInfo& time, const float* const* input,
-                                 int compensation) noexcept
+void TrackProcessor::reportEvents(int numSamples) noexcept
 {
     numSamples = std::min(numSamples, preparedBlockSize);
     if (numSamples <= 0)
@@ -157,6 +156,15 @@ void TrackProcessor::renderChain(int numSamples, const DeviceTimeInfo& time, con
         if (isNoteOn(e))
             lastNote.store(e.bytes[1], std::memory_order_relaxed);
     }
+}
+
+void TrackProcessor::renderChain(int numSamples, const DeviceTimeInfo& time, const float* const* input,
+                                 int compensation) noexcept
+{
+    numSamples = std::min(numSamples, preparedBlockSize);
+    if (numSamples <= 0)
+        return;
+
     MidiBlock midiInput{sink.events, sink.capacity, sink.count, 0};
     sink.count = 0; // consumed: a processor without a scheduler (a return, the master) starts empty
 

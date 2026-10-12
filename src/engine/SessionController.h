@@ -37,6 +37,8 @@ public:
     const LiveSet& set() const noexcept { return liveSet; }
     juce::UndoManager& undoManager() noexcept { return undo; }
     SnapshotBuilder& snapshots() noexcept { return builder; }
+    /** The device types this session creates devices from. */
+    const DeviceRegistry& deviceRegistry() const noexcept { return deviceTypes; }
 
     /** Publishes any pending document change to the engine now. */
     void flush() { builder.rebuildIfNeeded(); }
@@ -70,6 +72,7 @@ public:
     TrackPlayState trackState(int trackIndex) const;
     std::array<float, 2> takeTrackPeaks(int trackIndex);
     std::array<float, 2> takeMasterPeaks() { return engine.session().takeMasterPeaks(); }
+    std::array<float, 2> takeReturnPeaks(int returnIndex) { return engine.session().takeReturnPeaks(returnIndex); }
     int lastNoteOn(int trackIndex) const;
     std::shared_ptr<TrackProcessor> processorForTrack(int trackIndex) const;
 
@@ -117,6 +120,7 @@ private:
 
     AudioEngine& engine;
     TuningRegistry& registry;
+    const DeviceRegistry& deviceTypes;
     juce::UndoManager undo;
     LiveSet liveSet{&undo};
     SnapshotBuilder builder;

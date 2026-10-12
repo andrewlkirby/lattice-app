@@ -138,11 +138,13 @@ target_compile_definitions(lattice_juce
 set_target_properties(lattice_juce PROPERTIES FOLDER "Dependencies")
 
 # --- Embedded resources ----------------------------------------------------------------------------
-# The Colundi table is compiled in, so the app works without the file on disk.
+# The Colundi table and the factory presets are compiled in, so the app works without the files on
+# disk. The presets are generated (tests/support/FactoryPresets.h).
+file(GLOB LATTICE_FACTORY_PRESETS CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/resources/presets/*.lpreset)
 juce_add_binary_data(lattice_binary_data
     HEADER_NAME LatticeBinaryData.h
     NAMESPACE LatticeResources
-    SOURCES resources/tunings/colundi_scale.txt)
+    SOURCES resources/tunings/colundi_scale.txt ${LATTICE_FACTORY_PRESETS})
 set_target_properties(lattice_binary_data PROPERTIES FOLDER "Dependencies" POSITION_INDEPENDENT_CODE ON)
 
 # --- lattice_core: all non-UI Lattice code ------------------------------------------------------
@@ -155,6 +157,7 @@ add_library(lattice_core STATIC
     src/core/model/LiveSet.cpp
     src/core/model/MidiImport.cpp
     src/devices/BuiltinDevices.cpp
+    src/devices/ChainEditing.cpp
     src/devices/dsp/Biquad.cpp
     src/devices/dsp/FirHalfBand.cpp
     src/devices/dsp/HalfBand.cpp
@@ -181,6 +184,7 @@ add_library(lattice_core STATIC
     src/devices/midi/Arpeggiator.cpp
     src/devices/midi/Chord.cpp
     src/devices/racks/Rack.cpp
+    src/devices/presets/Presets.cpp
     src/devices/racks/RackEditing.cpp
     src/devices/racks/RackLayout.cpp
     src/devices/samples/SamplePool.cpp
@@ -193,6 +197,7 @@ add_library(lattice_core STATIC
     src/engine/SnapshotBuilder.cpp
     src/engine/TestToneSource.cpp
     src/engine/TrackProcessor.cpp
+    src/engine/WorkerPool.cpp
     src/engine/Transport.cpp
     src/engine/session/ClipData.cpp
     src/engine/session/ClipPlayer.cpp
@@ -207,6 +212,7 @@ add_library(lattice_core STATIC
     src/tuning/parsers/ScalaParser.cpp)
 if(WIN32)
     target_sources(lattice_core PRIVATE src/platform/windows/PlatformWindows.cpp)
+    target_link_libraries(lattice_core PRIVATE avrt) # MMCSS for the audio worker threads
 elseif(APPLE)
     target_sources(lattice_core PRIVATE src/platform/macos/PlatformMacOS.cpp)
 else()

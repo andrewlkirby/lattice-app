@@ -14,16 +14,19 @@ add_executable(lattice_tests
     core/RealtimeCheckTests.cpp
     core/RtSharedTests.cpp
     core/StartupTimelineTests.cpp
+    devices/ChainEditingTests.cpp
     devices/DspTests.cpp
     devices/EffectTests.cpp
     devices/FrameworkTests.cpp
     devices/MidiEffectTests.cpp
+    devices/PresetTests.cpp
     devices/RackTests.cpp
     devices/SamplerTests.cpp
     devices/SynthTests.cpp
     devices/TuningTestSynthTests.cpp
     engine/AudioEngineTests.cpp
     engine/MixerRoutingTests.cpp
+    engine/ParallelProcessingTests.cpp
     engine/SessionEngineTests.cpp
     engine/SnapshotStressTests.cpp
     engine/TestToneTests.cpp

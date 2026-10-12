@@ -41,6 +41,8 @@ public:
         timeline.mark("settings loaded");
 
         engine = std::make_unique<AudioEngine>();
+        // Parallel track processing: a worker per physical core, unless switched off in the settings.
+        engine->setWorkerThreads(settings->getBoolValue("multiThreadedAudio", true) ? WorkerPool::defaultWorkers() : 0);
         timeline.mark("engine created");
 
         tunings = std::make_unique<TuningRegistry>();

@@ -81,20 +81,67 @@ const float* const* SessionProcessor::channels(const SidechainRoute& route) cons
     return nullptr;
 }
 
+namespace
+{
+/** One parallel job's shared, read-only context. */
+struct ChainJob
+{
+    const EngineSnapshot* snapshot = nullptr;
+    const std::vector<int>* level = nullptr;
+    const DeviceTimeInfo* time = nullptr;
+    float* const* returnInputs = nullptr;
+    int numSamples = 0;
+};
+
+void renderTrackTask(void* context, int index) noexcept
+{
+    const auto& job = *static_cast<const ChainJob*>(context);
+    const auto& track = job.snapshot->tracks[static_cast<std::size_t>((*job.level)[static_cast<std::size_t>(index)])];
+    track.processor->renderChain(job.numSamples, *job.time, nullptr, track.compensation);
+}
+
+void renderReturnTask(void* context, int index) noexcept
+{
+    const auto& job = *static_cast<const ChainJob*>(context);
+    const auto& ret = job.snapshot->returns[static_cast<std::size_t>(index)];
+    const float* input[2] = {job.returnInputs[2 * index], job.returnInputs[2 * index + 1]};
+    ret.processor->renderChain(job.numSamples, *job.time, input, ret.compensation);
+}
+
+void runOn(const WorkerPool* pool, int count, WorkerPool::Task task, ChainJob& job) noexcept
+{
+    if (pool != nullptr)
+    {
+        pool->run(count, task, &job);
+        return;
+    }
+    for (int i = 0; i < count; ++i)
+        task(&job, i);
+}
+} // namespace
+
 void SessionProcessor::renderMix(const EngineSnapshot& snapshot, const DeviceTimeInfo& time, int n, float* left,
-                                 float* right) noexcept
+                                 float* right, const WorkerPool* pool) noexcept
 {
     rendering = &snapshot;
     DeviceTimeInfo t = time;
     t.sidechains = this;
+    ChainJob job;
+    job.snapshot = &snapshot;
+    job.time = &t;
+    job.numSamples = n;
+    job.returnInputs = returnInputPointers.data();
 
-    // 1. Every track's chain, level by level: sidechain sources before their listeners.
+    for (const auto& track : snapshot.tracks)
+        track.processor->reportEvents(n);
+
+    // 1. Every track's chain, level by level (sidechain sources before their listeners); the
+    //    tracks of a level in parallel. Each writes only its own buffers.
     for (const auto& level : snapshot.levels)
-        for (const int index : level)
-        {
-            const auto& track = snapshot.tracks[static_cast<std::size_t>(index)];
-            track.processor->renderChain(n, t, nullptr, track.compensation);
-        }
+    {
+        job.level = &level;
+        runOn(pool, static_cast<int>(level.size()), renderTrackTask, job);
+    }
 
     // 2. Faders, pans and sends, in track order: the same sums whatever ran in parallel.
     const int numReturns = static_cast<int>(snapshot.returns.size());
@@ -127,12 +174,10 @@ void SessionProcessor::renderMix(const EngineSnapshot& snapshot, const DeviceTim
     float* retR = returnBus.getWritePointer(1);
     std::fill_n(retL, n, 0.0f);
     std::fill_n(retR, n, 0.0f);
+    runOn(pool, numReturns, renderReturnTask, job); // the returns' chains, in parallel
     for (int r = 0; r < numReturns; ++r)
     {
         const auto& ret = snapshot.returns[static_cast<std::size_t>(r)];
-        const float* input[2] = {returnInputPointers[static_cast<std::size_t>(2 * r)],
-                                 returnInputPointers[static_cast<std::size_t>(2 * r + 1)]};
-        ret.processor->renderChain(n, t, input, ret.compensation);
         const bool audible = !ret.mute && (!snapshot.anyReturnSolo || ret.solo);
         TrackProcessor::Sends none;
         ret.processor->mix(n, audible ? ret.gainLeft : 0.0f, audible ? ret.gainRight : 0.0f, none, retL, retR);
@@ -186,7 +231,7 @@ double SessionProcessor::nextRandom() noexcept
 
 void SessionProcessor::process(const EngineSnapshot* snapshot, const EngineCommand* commands, int numCommands,
                                const TimedMidi* liveInput, int numLiveInput, int numSamples, float* left,
-                               float* right) noexcept
+                               float* right, const WorkerPool* pool) noexcept
 {
     numSamples = std::min(numSamples, maxBlock);
     std::fill(left, left + numSamples, 0.0f);
@@ -253,7 +298,7 @@ void SessionProcessor::process(const EngineSnapshot* snapshot, const EngineComma
     }
 
     // Instruments, effects, mixer, returns, master chain.
-    renderMix(*snapshot, time, numSamples, left, right);
+    renderMix(*snapshot, time, numSamples, left, right, pool);
 
     masterLeft.setTargetValue(snapshot->masterGainLeft);
     masterRight.setTargetValue(snapshot->masterGainRight);

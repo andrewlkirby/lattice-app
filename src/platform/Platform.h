@@ -48,6 +48,11 @@ private:
     [[maybe_unused]] bool needsRelease = false; // used on Windows only
 };
 
+/** Puts the calling thread in the OS's audio scheduling class, for the engine's worker threads:
+    on Windows the MMCSS "Pro Audio" task (juce::Thread's real-time start sets the priority
+    elsewhere). Returns false if that wasn't possible. */
+bool joinProAudioClass();
+
 /** True if this device type must be opened on the message thread (e.g. ASIO drivers, which are
     single-threaded COM objects bound to the thread that creates them). */
 bool audioDeviceTypeNeedsMessageThread(const juce::String& typeName);

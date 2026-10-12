@@ -11,6 +11,16 @@ namespace lattice
 
 AudioEngine::AudioEngine() = default;
 
+void AudioEngine::setWorkerThreads(int count)
+{
+    RT_ASSERT_NOT_AUDIO_THREAD();
+    count = std::max(0, count);
+    if (count == workerCount && workers.published() != nullptr)
+        return;
+    workerCount = count;
+    workers.publish(count > 0 ? std::make_shared<const WorkerPool>(count) : nullptr);
+}
+
 AudioEngine::~AudioEngine()
 {
     alive->store(false);
@@ -221,8 +231,9 @@ void AudioEngine::process(float* const* outputs, int numOutputs, int numSamples)
         const int n = std::min(chunkSize, numSamples - offset);
         {
             const RtShared<EngineSnapshot>::ReadScope scope(snapshots);
+            const RtShared<WorkerPool>::ReadScope pool(workers);
             sessionProcessor.process(scope.get(), commandScratch.data(), numCommands, liveEvents.data(), numLive, n,
-                                     left.data(), right.data());
+                                     left.data(), right.data(), pool.get());
         }
         numCommands = 0; // commands and live input belong to the first chunk
         numLive = 0;

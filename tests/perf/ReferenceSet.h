@@ -1,12 +1,22 @@
 #pragma once
 
 // The performance reference set (docs/09-performance-charter.md §1, "The reference set"), as it
-// stands at M2: 32 tracks, all playing the test synth as a placeholder for the M3 devices, with
-// clips in 8 scenes. 16 "Synth" tracks hold chords plus a 16th-note line (about 8 voices each),
-// 8 "Drums" tracks short 16th-note hits, and 8 "Sampler" tracks an 8th-note bass line. It grows
-// with each milestone; tests/perf/reference-set/ holds the generated .lset for opening in the app.
+// stands at M3: 32 tracks with clips in 8 scenes, built from the M3 devices.
+// - 16 "Synth" tracks: the Synth (chords plus a 16th-note line, about 8 voices each) and an EQ
+//   Eight; the first four duck under a sidechain compressor keyed from the first drum track.
+// - 8 "Drums" tracks: short, noisy Synth hits on 16ths.
+// - 8 "Sampler" tracks: an 8th-note bass line (a Synth stands in until the set can carry sample
+//   files; tests/perf/reference-set/README.md).
+// - Every track sends to return A (Reverb) and the odd ones to return B (Delay); a Limiter on the
+//   master.
+// It grows with each milestone; tests/perf/reference-set/ holds the generated .lset for the app.
 
 #include "core/model/LiveSet.h"
+#include "devices/effects/Compressor.h"
+#include "devices/effects/Delay.h"
+#include "devices/effects/EqEight.h"
+#include "devices/effects/Limiter.h"
+#include "devices/effects/Reverb.h"
 
 namespace lattice::perf
 {
@@ -30,9 +40,47 @@ inline void buildReferenceSet(LiveSet& set)
         set.addNote(clip, n);
     };
 
+    // Returns and master.
+    while (set.numReturns() < 2)
+        set.addReturn();
+    set.insertDevice(LiveSet::chainOf(set.returnTrack(0)), -1, ReverbDevice::typeId);
+    set.insertDevice(LiveSet::chainOf(set.returnTrack(1)), -1, DelayDevice::typeId);
+    set.insertDevice(LiveSet::chainOf(set.master()), -1, LimiterDevice::typeId);
+    const std::int64_t kickTrack = set.trackId(16);
+
     for (int t = 0; t < referenceTracks; ++t)
     {
         set.setTrackArm(t, false, true);
+        const auto chain = LiveSet::chainOf(set.track(t));
+        const auto synthDevice = chain.getChild(0); // the default instrument
+        set.setSendLevel(t, 0, -15.0);
+        if (t % 2 == 1)
+            set.setSendLevel(t, 1, -21.0);
+        if (t < 16)
+        {
+            set.insertDevice(chain, -1, EqEightDevice::typeId);
+            if (t < 4)
+            {
+                auto comp = set.insertDevice(chain, -1, CompressorDevice::typeId);
+                set.setDeviceParameter(comp, "comp.sidechain", 1.0);
+                comp.getChildWithName(ids::deviceState).setProperty(ids::sidechainTrack, static_cast<juce::int64>(kickTrack), nullptr);
+            }
+        }
+        else if (t < 24)
+        {
+            // A short, noisy hit.
+            set.setDeviceParameter(synthDevice, "noise.level", -6.0);
+            set.setDeviceParameter(synthDevice, "amp.decay", 90.0);
+            set.setDeviceParameter(synthDevice, "amp.sustain", 0.0);
+            set.setDeviceParameter(synthDevice, "amp.release", 60.0);
+            set.setDeviceParameter(synthDevice, "filter.type", 6.0); // the ladder
+        }
+        else
+        {
+            set.setDeviceParameter(synthDevice, "osc1.shape", 3.0); // pulse
+            set.setDeviceParameter(synthDevice, "sub.level", -6.0);
+            set.setDeviceParameter(synthDevice, "filter.cutoff", 800.0);
+        }
         const bool synth = t < 16;
         const bool drums = t >= 16 && t < 24;
         set.setTrackName(t, synth   ? "Synth " + juce::String(t + 1)

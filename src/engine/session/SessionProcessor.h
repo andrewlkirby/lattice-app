@@ -8,6 +8,7 @@
 #include "engine/Metronome.h"
 #include "devices/dsp/DelayLine.h"
 #include "engine/Transport.h"
+#include "engine/WorkerPool.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
@@ -53,8 +54,8 @@ public:
 
     /** Audio thread. numSamples must not exceed the prepared block size. Fills left/right. */
     void process(const EngineSnapshot* snapshot, const EngineCommand* commands, int numCommands,
-                 const TimedMidi* liveInput, int numLiveInput, int numSamples, float* left,
-                 float* right) noexcept LATTICE_NONBLOCKING;
+                 const TimedMidi* liveInput, int numLiveInput, int numSamples, float* left, float* right,
+                 const WorkerPool* pool = nullptr) noexcept LATTICE_NONBLOCKING;
 
     /** Any thread. */
     TransportState transportState() const noexcept { return published.load(); }
@@ -117,7 +118,7 @@ private:
     void publish(const EngineSnapshot& snapshot) noexcept;
     /** The mixer: every track's chain (by level), the sends, the returns, the master's chain. */
     void renderMix(const EngineSnapshot& snapshot, const DeviceTimeInfo& time, int numSamples, float* left,
-                   float* right) noexcept LATTICE_NONBLOCKING;
+                   float* right, const WorkerPool* pool) noexcept LATTICE_NONBLOCKING;
     const float* const* channels(const SidechainRoute& route) const noexcept override;
     void post(const EngineEvent& event) noexcept { eventsOut.push(event); }
     double nextRandom() noexcept;

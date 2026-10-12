@@ -316,7 +316,7 @@ public:
     /** The device chain (DEVICES node) of a track (later also returns and the master). */
     static juce::ValueTree chainOf(const juce::ValueTree& owner);
     /** Inserts a new device of the given type at index (the end when out of range). The caller
-        decides where it may go (see devices/framework/ChainEditing.h). */
+        decides where it may go (see devices/ChainEditing.h). */
     juce::ValueTree insertDevice(juce::ValueTree chain, int index, const juce::String& typeId);
     /** Inserts a copy of a device tree (a preset, a pasted device) with new IDs. */
     juce::ValueTree insertDeviceCopy(juce::ValueTree chain, int index, const juce::ValueTree& device);

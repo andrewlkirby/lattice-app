@@ -226,6 +226,32 @@ void recallVariation(LiveSet& set, juce::ValueTree rack, int index)
     }
 }
 
+juce::String variationName(const juce::ValueTree& rack, int index)
+{
+    int n = 0;
+    for (const auto& v : rack.getChildWithName(ids::deviceState))
+        if (v.hasType("VARIATION") && n++ == index)
+            return v[ids::name].toString();
+    return {};
+}
+
+juce::String macroName(const juce::ValueTree& rack, int macro)
+{
+    for (const auto& m : rack.getChildWithName(ids::deviceState))
+        if (m.hasType("MACRO") && static_cast<int>(m["index"]) == macro && m[ids::name].toString().isNotEmpty())
+            return m[ids::name].toString();
+    return "Macro " + juce::String(macro + 1);
+}
+
+std::vector<juce::ValueTree> mappingsOf(const juce::ValueTree& rack, int macro)
+{
+    std::vector<juce::ValueTree> out;
+    for (const auto& m : rack.getChildWithName(ids::mappings))
+        if (macro < 0 || static_cast<int>(m[ids::macro]) == macro)
+            out.push_back(m);
+    return out;
+}
+
 int numVariations(const juce::ValueTree& rack)
 {
     int n = 0;

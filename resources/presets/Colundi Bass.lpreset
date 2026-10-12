@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<PRESET formatVersion="1" setFormatVersion="3" name="Colundi Bass" type="lattice.synth">
+  <DEVICE id="6" type="lattice.synth" enabled="1">
+    <PARAMS osc1.shape="2.0" osc1.level="-4.0" osc2.shape="3.0" osc2.level="-10.0"
+            osc2.transpose="-12.0" osc2.pw="0.3" sub.level="-8.0" filter.type="6.0"
+            filter.cutoff="320.0" filter.resonance="0.35" filter.drive="6.0"
+            filter.keytrack="0.6" filter.envAmount="2.8" filter.velocity="1.0"
+            env2.attack="1.0" env2.decay="220.0" env2.sustain="0.1" env2.release="150.0"
+            amp.attack="1.0" amp.decay="500.0" amp.sustain="0.7" amp.release="90.0"
+            voice.mode="2.0" voice.glide="70.0" out.volume="-8.0"/>
+    <STATE/>
+  </DEVICE>
+</PRESET>

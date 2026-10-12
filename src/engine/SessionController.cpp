@@ -79,7 +79,7 @@ private:
 } // namespace
 
 SessionController::SessionController(AudioEngine& e, TuningRegistry& tunings, const DeviceRegistry& devices)
-    : engine(e), registry(tunings), builder(
+    : engine(e), registry(tunings), deviceTypes(devices), builder(
                                         liveSet, engine,
                                         [this](const juce::String& id) {
                                             auto t = registry.findById(id);

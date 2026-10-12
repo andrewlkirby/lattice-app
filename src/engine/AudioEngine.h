@@ -8,6 +8,7 @@
 #include "engine/EngineCommands.h"
 #include "engine/EngineSnapshot.h"
 #include "engine/MidiInputQueue.h"
+#include "engine/WorkerPool.h"
 #include "engine/TestToneSource.h"
 #include "devices/racks/RackLayout.h"
 #include "engine/session/SessionProcessor.h"
@@ -56,7 +57,11 @@ public:
     /** Message thread. The snapshot published last. */
     const std::shared_ptr<const EngineSnapshot>& currentSnapshot() const noexcept { return snapshots.published(); }
     /** Message thread. Frees snapshots the audio thread has finished with. */
-    void collectGarbage() { snapshots.collect(); }
+    void collectGarbage()
+    {
+        snapshots.collect();
+        workers.collect();
+    }
 
     /** Any thread except the audio thread. Returns false if the queue was full. */
     bool sendCommand(const EngineCommand& command) { return commands.push(command); }
@@ -64,6 +69,13 @@ public:
     SpscFifo<EngineEvent>& engineEvents() noexcept { return events; }
     /** Transport state and master peaks (any thread, see SessionProcessor). */
     SessionProcessor& session() noexcept { return sessionProcessor; }
+
+    /** Message thread. Parallel track processing: 0 workers processes everything on the audio
+        thread (the default, and what tests use unless they ask); WorkerPool::defaultWorkers() uses
+        every physical core. Safe while audio runs: the old pool goes once the audio thread is done
+        with it. */
+    void setWorkerThreads(int count);
+    int workerThreads() const noexcept { return workerCount; }
 
     /** Message thread. A new track processor, already prepared for the current device settings,
         and re-prepared whenever they change. */
@@ -127,6 +139,8 @@ private:
     MpscQueue<EngineCommand> commands{commandQueueSize};
     SpscFifo<EngineEvent> events{eventQueueSize};
     RtShared<EngineSnapshot> snapshots;
+    RtShared<WorkerPool> workers;
+    int workerCount = 0;
     SessionProcessor sessionProcessor{events};
 
     // Track processors to re-prepare when the device settings change.

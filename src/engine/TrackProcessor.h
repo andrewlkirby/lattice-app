@@ -147,6 +147,10 @@ public:
     static constexpr int maxReturns = 12;
     static constexpr double maxCompensationSeconds = 0.5;
 
+    /** Stage 0 (audio thread, serially for every track before stage 1): keeps the chunk's events
+        inside the block and reports them to the event tap, which isn't thread-safe. */
+    void reportEvents(int numSamples) noexcept LATTICE_NONBLOCKING;
+
     /** Stage 1 (may run on a worker thread): the device chain over the chunk's events. input is the
         chain's audio input (a return's sends, the master's mix) or null for silence (MIDI tracks).
         Leaves the chain's output in chainOutput(), and that output delayed by `compensation`

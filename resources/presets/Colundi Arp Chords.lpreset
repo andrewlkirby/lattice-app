@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<PRESET formatVersion="1" setFormatVersion="3" name="Colundi Arp Chords"
+        type="lattice.instrumentRack">
+  <DEVICE id="7" type="lattice.instrumentRack" enabled="1">
+    <PARAMS macro1="64.0" macro2="38.0" macro3="64.0" macro4="64.0" macro5="64.0"
+            macro6="51.0" macro7="47.0" macro8="52.0"/>
+    <STATE macroCount="8">
+      <MACRO index="0" name="Cutoff"/>
+      <MACRO index="1" name="Resonance"/>
+      <MACRO index="2" name="Decay"/>
+      <MACRO index="3" name="Arp Rate"/>
+      <MACRO index="4" name="Arp Gate"/>
+      <MACRO index="5" name="Arp Style"/>
+      <MACRO index="6" name="Delay Mix"/>
+      <MACRO index="7" name="Feedback"/>
+    </STATE>
+    <CHAINS>
+      <CHAIN id="8" name="Arp" volumeDb="0.0" pan="0.0" mute="0" solo="0">
+        <DEVICES>
+          <DEVICE id="9" type="lattice.chord" enabled="1">
+            <PARAMS chord.shift1="3.0" chord.shift2="7.0" chord.velocity2="0.8"/>
+            <STATE/>
+          </DEVICE>
+          <DEVICE id="10" type="lattice.arpeggiator" enabled="1">
+            <PARAMS arp.style="2.0" arp.rate="13.0" arp.gate="0.6" arp.range="2.0"
+                    arp.distance="12.0"/>
+            <STATE/>
+          </DEVICE>
+          <DEVICE id="11" type="lattice.synth" enabled="1">
+            <PARAMS osc1.shape="1.0" osc1.level="-4.0" osc2.shape="2.0" osc2.level="-12.0"
+                    osc2.detune="4.0" filter.type="1.0" filter.cutoff="2400.0" filter.resonance="0.25"
+                    filter.envAmount="2.0" env2.decay="180.0" env2.sustain="0.0"
+                    amp.attack="1.0" amp.decay="320.0" amp.sustain="0.0" amp.release="260.0"
+                    out.volume="-9.0"/>
+            <STATE/>
+          </DEVICE>
+          <DEVICE id="12" type="lattice.delay" enabled="1">
+            <PARAMS delay.mode="1.0" delay.syncLeft="9.0" delay.syncRight="9.0" delay.feedback="0.35"
+                    delay.highCut="6000.0" delay.mix="0.22"/>
+            <STATE/>
+          </DEVICE>
+        </DEVICES>
+      </CHAIN>
+    </CHAINS>
+    <MAPPINGS>
+      <MAPPING macro="0" targetDevice="11" parameter="filter.cutoff" minimum="0.25"
+               maximum="0.95" curve="0.0"/>
+      <MAPPING macro="1" targetDevice="11" parameter="filter.resonance" minimum="0.0"
+               maximum="0.85" curve="0.0"/>
+      <MAPPING macro="2" targetDevice="11" parameter="amp.decay" minimum="0.05"
+               maximum="0.6" curve="0.0"/>
+      <MAPPING macro="3" targetDevice="10" parameter="arp.rate" minimum="0.45"
+               maximum="0.85" curve="0.0"/>
+      <MAPPING macro="4" targetDevice="10" parameter="arp.gate" minimum="0.05"
+               maximum="0.8" curve="0.0"/>
+      <MAPPING macro="5" targetDevice="10" parameter="arp.style" minimum="0.0"
+               maximum="1.0" curve="0.0"/>
+      <MAPPING macro="6" targetDevice="12" parameter="delay.mix" minimum="0.0"
+               maximum="0.6" curve="0.0"/>
+      <MAPPING macro="7" targetDevice="12" parameter="delay.feedback" minimum="0.0"
+               maximum="0.85" curve="0.0"/>
+    </MAPPINGS>
+  </DEVICE>
+</PRESET>

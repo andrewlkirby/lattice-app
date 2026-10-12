@@ -3,7 +3,10 @@
 // callgrind (scripts/linux-test.sh --callgrind) only renderReferenceSet() is counted, which gives
 // an instruction count that doesn't depend on how fast or busy the machine is.
 //
-//   lattice_engine_bench [--seconds N] [--block N] [--write-set file.lset]
+//   lattice_engine_bench [--seconds N] [--block N] [--workers N] [--write-set file.lset]
+//
+// --workers: parallel track processing (default 0: everything on the calling thread, which is
+// what callgrind counts; -1: WorkerPool::defaultWorkers()).
 
 #include "core/AudioCallbackStats.h"
 #include "engine/AudioEngine.h"
@@ -62,6 +65,7 @@ int main(int argc, char* argv[])
 
     double seconds = 10.0;
     int blockSize = 64;
+    int workers = 0;
     juce::String writeSet;
     for (int i = 1; i + 1 < argc; i += 2)
     {
@@ -71,6 +75,8 @@ int main(int argc, char* argv[])
             seconds = value.getDoubleValue();
         else if (arg == "--block")
             blockSize = std::max(1, value.getIntValue());
+        else if (arg == "--workers")
+            workers = value.getIntValue() < 0 ? lattice::WorkerPool::defaultWorkers() : value.getIntValue();
         else if (arg == "--write-set")
             writeSet = value;
     }
@@ -79,6 +85,7 @@ int main(int argc, char* argv[])
     lattice::AudioEngine engine;
     engine.prepare(sampleRate, blockSize);
     lattice::SessionController session(engine, tunings);
+    engine.setWorkerThreads(workers);
     lattice::perf::buildReferenceSet(session.set());
     session.markClean();
 
@@ -95,8 +102,8 @@ int main(int argc, char* argv[])
     const auto totalSamples = static_cast<std::int64_t>(seconds * sampleRate);
     const auto r = renderReferenceSet(engine, blockSize, totalSamples);
 
-    std::printf("Reference set (%d tracks, M2 test-synth placeholders), %d-sample blocks at %.0f Hz\n",
-                lattice::perf::referenceTracks, blockSize, sampleRate);
+    std::printf("Reference set (%d tracks, M3 devices), %d-sample blocks at %.0f Hz, %d worker threads\n",
+                lattice::perf::referenceTracks, blockSize, sampleRate, workers);
     std::printf("Rendered %.1f s of audio in %.3f s: %.1fx real time\n", seconds, r.renderSeconds,
                 seconds / std::max(r.renderSeconds, 1.0e-9));
     std::printf(

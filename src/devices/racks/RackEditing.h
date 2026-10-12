@@ -4,6 +4,8 @@
 
 #include <juce_data_structures/juce_data_structures.h>
 
+#include <vector>
+
 namespace lattice::racks
 {
 
@@ -43,6 +45,10 @@ int macroCount(const juce::ValueTree& rack);
 /** 0..64. Lowering it removes the mappings of the macros that go (undo brings them back). */
 void setMacroCount(LiveSet& set, juce::ValueTree rack, int count);
 void setMacroName(LiveSet& set, juce::ValueTree rack, int macro, const juce::String& name);
+/** The macro's name, or "Macro N" if it has none. */
+juce::String macroName(const juce::ValueTree& rack, int macro);
+/** The MAPPING nodes of one macro, or of every macro (macro = -1). */
+std::vector<juce::ValueTree> mappingsOf(const juce::ValueTree& rack, int macro = -1);
 /** Maps a macro (0-based) to a parameter of a device inside the rack, over [minimum, maximum] of
     the parameter's normalised range. Returns the MAPPING node. */
 juce::ValueTree addMapping(LiveSet& set, juce::ValueTree rack, int macro, const juce::ValueTree& device,
@@ -56,5 +62,6 @@ int storeVariation(LiveSet& set, juce::ValueTree rack, const juce::String& name)
 /** Sets every macro to the values stored in a variation. */
 void recallVariation(LiveSet& set, juce::ValueTree rack, int index);
 int numVariations(const juce::ValueTree& rack);
+juce::String variationName(const juce::ValueTree& rack, int index);
 
 } // namespace lattice::racks
