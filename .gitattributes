@@ -1,0 +1,10 @@
+# LF everywhere so scripts and sources work unchanged inside the Linux container.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.png binary
+*.wav binary
+*.ttf binary
+# Tuning data is kept byte-for-byte as supplied (CRLF), which also exercises the parsers on CRLF input.
+resources/tunings/*.txt -text

@@ -1,0 +1,9 @@
+# Charter §3: performance-* must stay clean on every commit.
+Checks: >
+  -*,
+  performance-*,
+  bugprone-use-after-move,
+  bugprone-dangling-handle
+WarningsAsErrors: 'performance-*'
+# Paths as seen inside the Docker image (the repo is mounted at /src); see scripts/linux-test.sh --tidy.
+HeaderFilterRegex: '^/src/(src|tests)/'
