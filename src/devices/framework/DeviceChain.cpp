@@ -1,15 +1,27 @@
 #include "devices/framework/DeviceChain.h"
 
+#include "devices/racks/RackLayout.h"
+
 namespace lattice
 {
 
 void DeviceChainLayout::finalise()
 {
+    racks.resize(devices.size());
     latencySamples = 0;
     midiPath.clear();
-    for (const auto& d : devices)
+    for (std::size_t i = 0; i < devices.size(); ++i)
     {
-        latencySamples += d->latencySamples();
+        const auto& d = devices[i];
+        if (const auto& rack = racks[i])
+        {
+            rack->finalise();
+            latencySamples += rack->latencySamples;
+        }
+        else
+        {
+            latencySamples += d->latencySamples();
+        }
         if (d->kind() != DeviceKind::AudioEffect)
             midiPath.push_back(d.get());
     }

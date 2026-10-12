@@ -141,6 +141,7 @@ public:
     explicit SynthDevice(const TrackTuning& tuning);
 
     void releaseAllNotes() noexcept override;
+    void choke() noexcept override;
     void reset() noexcept override;
     double getTailLengthSeconds() const override { return 2.0; }
 

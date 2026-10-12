@@ -236,6 +236,18 @@ void SynthDevice::releaseAllNotes() noexcept
     sustainDown = false;
 }
 
+void SynthDevice::choke() noexcept
+{
+    for (auto& v : voices)
+        if (v.isActive() && !v.stealing)
+        {
+            v.stealing = true;
+            v.gate = v.keyDown = false;
+            v.amp.kill(static_cast<float>(stealFadeSeconds));
+        }
+    monoCount = 0;
+}
+
 int SynthDevice::activeVoiceCount() const noexcept
 {
     int n = 0;

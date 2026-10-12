@@ -2,6 +2,7 @@
 
 #include "core/model/LiveSet.h"
 #include "devices/framework/DeviceRegistry.h"
+#include "devices/racks/RackLayout.h"
 #include "engine/EngineSnapshot.h"
 #include "tuning/TuningTable.h"
 
@@ -80,8 +81,23 @@ private:
         std::shared_ptr<TrackProcessor> processor;
         juce::String tuningId;
         TuningPtr tuning;
-        std::unordered_map<std::int64_t, DevicePtr> devices; // by device ID
+        std::unordered_map<std::int64_t, DevicePtr> devices; // by device ID (racks' contents too)
+        std::unordered_map<std::int64_t, std::shared_ptr<RackChainState>> rackChains; // by chain ID
     };
+
+    /** What a chain rebuild collects: what is new, for the engine to prepare. */
+    struct ChainBuild
+    {
+        TrackCache* cache = nullptr;
+        std::unordered_map<std::int64_t, DevicePtr> kept;
+        std::unordered_map<std::int64_t, std::shared_ptr<RackChainState>> keptChains;
+        std::vector<DevicePtr> fresh;
+        std::vector<std::shared_ptr<RackChainState>> freshChains;
+        DeviceCreateContext context;
+    };
+    /** One DEVICES node to a layout (racks inside, up to RackDevice::maxDepth deep). */
+    void buildChain(const juce::ValueTree& devicesNode, DeviceChainLayout& out, ChainBuild& build, int depth);
+    std::shared_ptr<RackLayout> buildRack(const juce::ValueTree& rackNode, ChainBuild& build, int depth);
 
     /** The STATE node that `node` is in (or is), if it belongs to a device. */
     static juce::ValueTree enclosingDeviceState(const juce::ValueTree& node);
@@ -89,6 +105,7 @@ private:
     void forwardState(const juce::ValueTree& stateNode);
     /** Copies the document's values for a device into its instance. */
     static void applyDocument(const juce::ValueTree& deviceNode, StudioDevice& device);
+    static void applyChainMix(const juce::ValueTree& chainNode, RackChainState& state);
     void rebuildChain(const juce::ValueTree& owner, TrackCache& cache);
 
     LiveSet& set;

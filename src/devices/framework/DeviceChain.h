@@ -8,20 +8,30 @@
 namespace lattice
 {
 
+struct RackLayout;
+
 /** One version of a device chain, immutable once published (docs/04-m3-devices.md, "Chain
     changes"). Devices that stay in the chain from one version to the next are the same instances,
     so their sound continues. */
 struct DeviceChainLayout
 {
     std::vector<DevicePtr> devices; // in processing order: MIDI effects, instrument, audio effects
-    int latencySamples = 0;          // sum of the devices' latencies
+    /** For each device that is a rack, its structure (chains, macro mappings); null otherwise. The
+        whole tree switches together, so editing inside a rack fades like any chain change. */
+    std::vector<std::shared_ptr<RackLayout>> racks;
+    int latencySamples = 0;          // sum of the devices' latencies (racks: their slowest chain)
 
     /** The devices MIDI goes through (MIDI effects, instruments, racks), in order. A change here
         means held notes could be left hanging, so the chain releases them when it switches. */
     std::vector<const StudioDevice*> midiPath;
 
-    /** Fills latencySamples and midiPath from devices. */
+    /** Message thread, once every device is prepared: fills latencySamples and midiPath, and
+        finalises the racks inside (their latencies and compensation delays). */
     void finalise();
+
+    /** Calls fn(device) for every device in the tree, racks' chains included. */
+    template <typename F>
+    void forEachDevice(F&& fn) const;
 };
 
 /** Runs a DeviceChainLayout over one block (audio thread). Owns the scratch MIDI buffer the MIDI

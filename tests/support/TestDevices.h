@@ -142,6 +142,68 @@ private:
     double increment = 0.0;
 };
 
+/** Instrument: records the note-ons it gets (note and velocity) and outputs a steady level of
+    0.25 per held note on both channels (so mixing and gains are easy to check). Choking or
+    releasing ends every note at once. */
+class TestRecorderDevice final : public StudioDevice
+{
+public:
+    static constexpr const char* typeId = "test.recorder";
+    TestRecorderDevice() : StudioDevice(typeId, "Test Recorder", DeviceKind::Instrument, {}) {}
+
+    struct NoteOn
+    {
+        int note = 0;
+        int velocity = 0;
+    };
+    std::array<NoteOn, 256> received{};
+    std::atomic<int> count{0};
+    std::array<int, 128> held{};
+    std::atomic<int> chokes{0};
+
+    void releaseAllNotes() noexcept override { held.fill(0); }
+    void choke() noexcept override
+    {
+        chokes.fetch_add(1);
+        held.fill(0);
+    }
+
+protected:
+    void prepare(double, int) override { held.fill(0); }
+    void process(DeviceBuffers& io, const DeviceTimeInfo&) noexcept override
+    {
+        int pos = 0;
+        const auto fill = [&](int to) {
+            int sounding = 0;
+            for (const int h : held)
+                sounding += h > 0 ? 1 : 0;
+            for (int ch = 0; ch < io.numChannels; ++ch)
+                for (int i = pos; i < to; ++i)
+                    io.channels[ch][i] = 0.25f * static_cast<float>(sounding);
+            pos = to;
+        };
+        for (const auto& e : *io.midiIn)
+        {
+            fill(e.sampleOffset);
+            if (isNoteOn(e))
+            {
+                ++held[e.bytes[1]];
+                const int n = count.load();
+                if (n < static_cast<int>(received.size()))
+                {
+                    received[static_cast<std::size_t>(n)] = {e.bytes[1], e.bytes[2]};
+                    count.store(n + 1);
+                }
+            }
+            else if (isNoteOff(e) && held[e.bytes[1]] > 0)
+            {
+                --held[e.bytes[1]];
+            }
+        }
+        fill(io.numSamples);
+    }
+};
+
 /** The built-in devices plus the test devices above. */
 inline const DeviceRegistry& testRegistry()
 {
@@ -156,6 +218,8 @@ inline const DeviceRegistry& testRegistry()
                [](const DeviceCreateContext&) { return std::make_unique<TestTransposeDevice>(); }});
         r.add({TestSineDevice::typeId, "Test Sine", "Test", DeviceKind::Instrument, true,
                [](const DeviceCreateContext&) { return std::make_unique<TestSineDevice>(); }});
+        r.add({TestRecorderDevice::typeId, "Test Recorder", "Test", DeviceKind::Instrument, true,
+               [](const DeviceCreateContext&) { return std::make_unique<TestRecorderDevice>(); }});
         return r;
     }();
     return registry;

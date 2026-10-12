@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <functional>
 #include <utility>
 
@@ -51,7 +52,8 @@ struct ParameterSpec
     float minValue = 0.0f;
     float maxValue = 1.0f;
     float defaultValue = 0.0f;
-    float centreValue = 0.0f; // > min: the value at the middle of a knob's travel (skewed range)
+    /** The value at the middle of a knob's travel (a skewed range), or NaN for a linear range. */
+    float centreValue = std::numeric_limits<float>::quiet_NaN();
     float interval = 0.0f;    // 0 = continuous
     ParamUnit unit = ParamUnit::None;
     juce::StringArray choices; // Choice parameters: one name per value 0..n-1

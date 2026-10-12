@@ -1,6 +1,8 @@
 #include "core/model/LiveSet.h"
 
 #include <array>
+#include <functional>
+#include <map>
 #include <cmath>
 
 namespace lattice
@@ -451,10 +453,29 @@ juce::ValueTree LiveSet::makeScene()
 
 void LiveSet::reassignIds(juce::ValueTree tree)
 {
-    if (tree.hasType(ids::track) || tree.hasType(ids::clip) || tree.hasType(ids::scene) || tree.hasType(ids::device))
-        tree.setProperty(ids::id, static_cast<juce::int64>(allocateId()), nullptr);
-    for (auto child : tree)
-        reassignIds(child);
+    // New IDs for everything that has one; macro mappings then follow their devices' new IDs.
+    std::map<juce::int64, juce::int64> renamed;
+    std::function<void(juce::ValueTree)> assign = [&](juce::ValueTree node) {
+        if (node.hasType(ids::track) || node.hasType(ids::clip) || node.hasType(ids::scene) ||
+            node.hasType(ids::device) || node.hasType(ids::rackChain))
+        {
+            const auto fresh = static_cast<juce::int64>(allocateId());
+            if (node.hasType(ids::device))
+                renamed[static_cast<juce::int64>(node[ids::id])] = fresh;
+            node.setProperty(ids::id, fresh, nullptr);
+        }
+        for (auto child : node)
+            assign(child);
+    };
+    assign(tree);
+    std::function<void(juce::ValueTree)> remap = [&](juce::ValueTree node) {
+        if (node.hasType(ids::mapping))
+            if (const auto it = renamed.find(static_cast<juce::int64>(node[ids::targetDevice])); it != renamed.end())
+                node.setProperty(ids::targetDevice, it->second, nullptr);
+        for (auto child : node)
+            remap(child);
+    };
+    remap(tree);
 }
 
 int LiveSet::addTrack(int insertIndex)

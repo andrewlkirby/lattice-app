@@ -18,6 +18,7 @@ add_executable(lattice_tests
     devices/EffectTests.cpp
     devices/FrameworkTests.cpp
     devices/MidiEffectTests.cpp
+    devices/RackTests.cpp
     devices/SamplerTests.cpp
     devices/SynthTests.cpp
     devices/TuningTestSynthTests.cpp

@@ -160,6 +160,16 @@ void SamplerDevice::releaseAllNotes() noexcept
     sustained.fill(false);
 }
 
+void SamplerDevice::choke() noexcept
+{
+    for (auto& v : voices)
+        if (v.active && !v.stealing)
+        {
+            v.stealing = true;
+            v.killStep = static_cast<float>(1.0 / (stealFadeSeconds * sampleRate()));
+        }
+}
+
 int SamplerDevice::activeVoiceCount() const noexcept
 {
     int n = 0;

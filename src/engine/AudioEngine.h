@@ -9,6 +9,7 @@
 #include "engine/EngineSnapshot.h"
 #include "engine/MidiInputQueue.h"
 #include "engine/TestToneSource.h"
+#include "devices/racks/RackLayout.h"
 #include "engine/session/SessionProcessor.h"
 
 #include <juce_audio_devices/juce_audio_devices.h>
@@ -72,6 +73,7 @@ public:
         chain to the track, both under the prepare lock, so a device restart on another thread can
         never see a half-prepared device. Fills in the chain's latency once its devices are prepared. */
     void installChain(TrackProcessor& track, const std::vector<DevicePtr>& newDevices,
+                      const std::vector<std::shared_ptr<RackChainState>>& newRackChains,
                       std::shared_ptr<DeviceChainLayout> chain);
 
     /** Message thread. Opens the saved device setup if there is one, otherwise the first device

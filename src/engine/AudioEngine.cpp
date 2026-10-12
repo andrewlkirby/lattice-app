@@ -176,12 +176,15 @@ std::shared_ptr<TrackProcessor> AudioEngine::createTrackProcessor(std::int64_t t
 }
 
 void AudioEngine::installChain(TrackProcessor& track, const std::vector<DevicePtr>& newDevices,
+                               const std::vector<std::shared_ptr<RackChainState>>& newRackChains,
                                std::shared_ptr<DeviceChainLayout> chain)
 {
     RT_ASSERT_NOT_AUDIO_THREAD();
     const std::scoped_lock lock(processorsMutex);
     for (const auto& device : newDevices)
         device->prepareDevice(preparedSampleRate, preparedBlockSize);
+    for (const auto& state : newRackChains)
+        state->prepare(preparedBlockSize);
     chain->finalise();
     track.setChain(std::move(chain));
 }

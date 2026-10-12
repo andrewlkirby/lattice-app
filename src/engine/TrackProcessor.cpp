@@ -1,5 +1,7 @@
 #include "engine/TrackProcessor.h"
 
+#include "devices/racks/Rack.h"
+
 #include <algorithm>
 
 namespace lattice
@@ -21,8 +23,11 @@ void TrackProcessor::prepare(double sampleRate, int maxBlockSize)
     // depend on the sample rate, so the chain is republished with them, and nothing older is in use.
     if (const auto chain = chains.published())
     {
-        for (const auto& device : chain->devices)
-            device->prepareDevice(sampleRate, maxBlockSize);
+        chain->forEachDevice([&](StudioDevice& device) { device.prepareDevice(sampleRate, maxBlockSize); });
+        forEachRack(*chain, [&](StudioDevice&, RackLayout& rack) {
+            for (auto& c : rack.chains)
+                c.state->prepare(maxBlockSize);
+        });
         auto updated = std::make_shared<DeviceChainLayout>(*chain);
         updated->finalise();
         chains.publish(std::move(updated));
@@ -81,6 +86,12 @@ void TrackProcessor::switchChain(const ChainVersion* next) noexcept
     activeChain = next;
     chains.settle(next);
     chainFade = ChainFade::In;
+
+    // Every rack in the new tree takes its part of the layout.
+    if (after != nullptr)
+        forEachRack(*after, [](StudioDevice& device, const RackLayout& rack) {
+            static_cast<RackDevice&>(device).activate(&rack);
+        });
 
     // A different MIDI path (a MIDI effect or instrument added, removed or moved) could leave notes
     // hanging in devices that stay: release them.

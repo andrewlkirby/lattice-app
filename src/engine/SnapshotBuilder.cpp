@@ -1,6 +1,10 @@
 #include "engine/SnapshotBuilder.h"
 
+#include "devices/racks/Rack.h"
 #include "engine/AudioEngine.h"
+
+#include <algorithm>
+#include <functional>
 
 namespace lattice
 {
@@ -71,8 +75,24 @@ juce::ValueTree SnapshotBuilder::enclosingDeviceState(const juce::ValueTree& nod
     return {};
 }
 
+void SnapshotBuilder::applyChainMix(const juce::ValueTree& chainNode, RackChainState& state)
+{
+    state.setMix(chainNode.getProperty(ids::volumeDb, 0.0), chainNode.getProperty(ids::pan, 0.0),
+                 chainNode.getProperty(ids::mute, false), chainNode.getProperty(ids::solo, false));
+}
+
 void SnapshotBuilder::valueTreePropertyChanged(juce::ValueTree& tree, const juce::Identifier& property)
 {
+    // A rack chain's mix is live, like a parameter: no rebuild.
+    if (tree.hasType(ids::rackChain) &&
+        (property == ids::volumeDb || property == ids::pan || property == ids::mute || property == ids::solo))
+    {
+        const auto chainId = LiveSet::idOf(tree);
+        for (auto& [trackId, cache] : tracks)
+            if (const auto it = cache.rackChains.find(chainId); it != cache.rackChains.end())
+                applyChainMix(tree, *it->second);
+        return;
+    }
     // Device values go straight to the instance: nothing is rebuilt.
     if (tree.hasType(ids::params) && tree.getParent().hasType(ids::device))
     {
@@ -88,6 +108,10 @@ void SnapshotBuilder::valueTreePropertyChanged(juce::ValueTree& tree, const juce
     if (const auto stateNode = enclosingDeviceState(tree); stateNode.isValid())
     {
         forwardState(stateNode);
+        // A rack's macro count and tuned pads change its structure: rebuild.
+        if (RackDevice::isRackType(stateNode.getParent()[ids::deviceType].toString()) && stateNode == tree &&
+            (property == juce::Identifier("macroCount") || property == juce::Identifier("tunedPads")))
+            markDirty(stateNode.getParent());
         return;
     }
     markDirty(tree);
@@ -167,42 +191,125 @@ StudioDevice* SnapshotBuilder::deviceFor(std::int64_t deviceId) const
     return it != deviceIndex.end() ? it->second : nullptr;
 }
 
-void SnapshotBuilder::rebuildChain(const juce::ValueTree& owner, TrackCache& cache)
+void SnapshotBuilder::buildChain(const juce::ValueTree& devicesNode, DeviceChainLayout& out, ChainBuild& build,
+                                 int depth)
 {
-    const auto chainNode = LiveSet::chainOf(owner);
-    auto layout = std::make_shared<DeviceChainLayout>();
-    std::unordered_map<std::int64_t, DevicePtr> kept;
-    std::vector<DevicePtr> fresh;
-
-    DeviceCreateContext context;
-    context.tuning = &cache.processor->tuning();
-
-    for (const auto& node : chainNode)
+    for (const auto& node : devicesNode)
     {
         if (!node.hasType(ids::device))
             continue;
         const auto deviceId = LiveSet::idOf(node);
         const auto type = node[ids::deviceType].toString();
+        const bool isRack = RackDevice::isRackType(type);
+        if (isRack && depth >= RackDevice::maxDepth)
+            continue; // racks nest at most maxDepth deep (the editor refuses deeper ones)
+
         DevicePtr device;
-        if (const auto it = cache.devices.find(deviceId); it != cache.devices.end() && it->second->typeId() == type)
+        if (const auto it = build.cache->devices.find(deviceId); it != build.cache->devices.end() && it->second->typeId() == type)
             device = it->second;
-        if (device == nullptr || kept.contains(deviceId)) // a duplicated ID gets its own instance
+        if (device == nullptr || build.kept.contains(deviceId)) // a duplicated ID gets its own instance
         {
-            device = DevicePtr(registry.create(type, context));
+            device = DevicePtr(registry.create(type, build.context));
             applyDocument(node, *device);
-            fresh.push_back(device);
+            build.fresh.push_back(device);
         }
-        kept[deviceId] = device;
-        layout->devices.push_back(device);
+        build.kept[deviceId] = device;
+        out.devices.push_back(device);
+        out.racks.push_back(isRack ? buildRack(node, build, depth + 1) : nullptr);
     }
-    cache.devices = std::move(kept);
+}
+
+std::shared_ptr<RackLayout> SnapshotBuilder::buildRack(const juce::ValueTree& rackNode, ChainBuild& build, int depth)
+{
+    auto rack = std::make_shared<RackLayout>();
+    rack->kind = RackDevice::kindForType(rackNode[ids::deviceType].toString());
+    rack->tunedPads = rackNode.getChildWithName(ids::deviceState).getProperty("tunedPads", false);
+
+    for (const auto& chainNode : rackNode.getChildWithName(ids::rackChains))
+    {
+        if (!chainNode.hasType(ids::rackChain))
+            continue;
+        RackChainLayout c;
+        c.id = LiveSet::idOf(chainNode);
+        c.keyLow = chainNode.getProperty(ids::keyLow, 0);
+        c.keyHigh = chainNode.getProperty(ids::keyHigh, 127);
+        c.keyFadeLow = chainNode.getProperty(ids::keyFadeLow, 0);
+        c.keyFadeHigh = chainNode.getProperty(ids::keyFadeHigh, 0);
+        c.velocityLow = chainNode.getProperty(ids::velocityLow, 1);
+        c.velocityHigh = chainNode.getProperty(ids::velocityHigh, 127);
+        c.velocityFadeLow = chainNode.getProperty(ids::velocityFadeLow, 0);
+        c.velocityFadeHigh = chainNode.getProperty(ids::velocityFadeHigh, 0);
+        c.receiveNote = chainNode.getProperty(ids::receiveNote, -1);
+        c.playNote = chainNode.getProperty(ids::playNote, 60);
+        c.chokeGroup = chainNode.getProperty(ids::chokeGroup, 0);
+
+        // The chain's working state carries over by chain ID.
+        if (const auto it = build.cache->rackChains.find(c.id); it != build.cache->rackChains.end() &&
+                                                               !build.keptChains.contains(c.id))
+            c.state = it->second;
+        if (c.state == nullptr)
+        {
+            c.state = std::make_shared<RackChainState>();
+            build.freshChains.push_back(c.state);
+        }
+        build.keptChains[c.id] = c.state;
+        applyChainMix(chainNode, *c.state);
+        buildChain(chainNode.getChildWithName(ids::devices), c.chain, build, depth);
+        rack->chains.push_back(std::move(c));
+    }
+
+    // Macro mappings, to parameters of devices inside this rack.
+    std::unordered_set<std::int64_t> inside;
+    std::function<void(const juce::ValueTree&)> collect = [&](const juce::ValueTree& node) {
+        if (node.hasType(ids::device))
+            inside.insert(LiveSet::idOf(node));
+        for (const auto& child : node)
+            if (!child.hasType(ids::params) && !child.hasType(ids::deviceState))
+                collect(child);
+    };
+    collect(rackNode.getChildWithName(ids::rackChains));
+    const int macroCount = rackNode.getChildWithName(ids::deviceState).getProperty("macroCount", RackDevice::defaultMacros);
+    for (const auto& m : rackNode.getChildWithName(ids::mappings))
+    {
+        const std::int64_t target = static_cast<juce::int64>(m[ids::targetDevice]);
+        const int macro = m[ids::macro];
+        if (!inside.contains(target) || macro < 0 || macro >= macroCount)
+            continue;
+        const auto it = build.kept.find(target);
+        if (it == build.kept.end())
+            continue;
+        if (auto* p = it->second->findParameter(m[ids::parameter].toString()); p != nullptr && p->spec().modulatable)
+        {
+            MacroMapping mapping;
+            mapping.macro = macro;
+            mapping.target = p;
+            mapping.minimum = static_cast<float>(static_cast<double>(m.getProperty(ids::minimum, 0.0)));
+            mapping.maximum = static_cast<float>(static_cast<double>(m.getProperty(ids::maximum, 1.0)));
+            mapping.curve = static_cast<float>(static_cast<double>(m.getProperty(ids::curve, 0.0)));
+            rack->mappings.push_back(mapping);
+        }
+    }
+    return rack;
+}
+
+void SnapshotBuilder::rebuildChain(const juce::ValueTree& owner, TrackCache& cache)
+{
+    auto layout = std::make_shared<DeviceChainLayout>();
+    ChainBuild build;
+    build.cache = &cache;
+    build.context.tuning = &cache.processor->tuning();
+    buildChain(LiveSet::chainOf(owner), *layout, build, 0);
+    cache.devices = std::move(build.kept);
+    cache.rackChains = std::move(build.keptChains);
 
     // Nothing changed for the engine (e.g. only a name): keep the published chain, so nothing fades.
-    if (const auto current = cache.processor->chain();
-        current != nullptr && fresh.empty() && current->devices == layout->devices)
+    const auto current = cache.processor->chain();
+    const bool hasRacks = std::any_of(layout->racks.begin(), layout->racks.end(), [](const auto& r) { return r != nullptr; });
+    if (current != nullptr && build.fresh.empty() && build.freshChains.empty() && !hasRacks &&
+        current->devices == layout->devices)
         return;
 
-    engine.installChain(*cache.processor, fresh, std::move(layout));
+    engine.installChain(*cache.processor, build.fresh, build.freshChains, std::move(layout));
 }
 
 void SnapshotBuilder::handleAsyncUpdate()

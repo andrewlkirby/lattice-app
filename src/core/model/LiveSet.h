@@ -30,6 +30,10 @@ inline const juce::Identifier devices{"DEVICES"};
 inline const juce::Identifier device{"DEVICE"};
 inline const juce::Identifier params{"PARAMS"};
 inline const juce::Identifier deviceState{"STATE"};
+inline const juce::Identifier rackChains{"CHAINS"};
+inline const juce::Identifier rackChain{"CHAIN"};
+inline const juce::Identifier mappings{"MAPPINGS"};
+inline const juce::Identifier mapping{"MAPPING"};
 
 // Set
 inline const juce::Identifier formatVersion{"formatVersion"};
@@ -84,6 +88,27 @@ inline const juce::Identifier muted{"muted"};
 // Device
 inline const juce::Identifier deviceType{"type"};
 inline const juce::Identifier enabled{"enabled"};
+
+// Rack chain (also volumeDb, pan, mute, solo, name)
+inline const juce::Identifier keyLow{"keyLow"};
+inline const juce::Identifier keyHigh{"keyHigh"};
+inline const juce::Identifier keyFadeLow{"keyFadeLow"};
+inline const juce::Identifier keyFadeHigh{"keyFadeHigh"};
+inline const juce::Identifier velocityLow{"velocityLow"};
+inline const juce::Identifier velocityHigh{"velocityHigh"};
+inline const juce::Identifier velocityFadeLow{"velocityFadeLow"};
+inline const juce::Identifier velocityFadeHigh{"velocityFadeHigh"};
+inline const juce::Identifier receiveNote{"receiveNote"};
+inline const juce::Identifier playNote{"playNote"};
+inline const juce::Identifier chokeGroup{"chokeGroup"};
+
+// Macro mapping
+inline const juce::Identifier macro{"macro"};
+inline const juce::Identifier targetDevice{"targetDevice"};
+inline const juce::Identifier parameter{"parameter"};
+inline const juce::Identifier minimum{"minimum"};
+inline const juce::Identifier maximum{"maximum"};
+inline const juce::Identifier curve{"curve"};
 
 // Scene
 inline const juce::Identifier sceneTempo{"sceneTempo"};           // 0 = none

@@ -80,12 +80,17 @@ public:
     bool isEnabled() const noexcept { return enabled.load(std::memory_order_relaxed); }
 
     // --- Audio thread -----------------------------------------------------------------------------
-    /** process() with the on/off switch, latency-aligned dry path and MIDI-effect pass-through. */
-    void processInChain(DeviceBuffers& io, const DeviceTimeInfo& time) noexcept LATTICE_NONBLOCKING;
+    /** process() with the on/off switch, latency-aligned dry path and MIDI-effect pass-through.
+        (Racks do their own.) */
+    virtual void processInChain(DeviceBuffers& io, const DeviceTimeInfo& time) noexcept LATTICE_NONBLOCKING;
 
     /** Instruments release every voice (with their release stage); MIDI effects forget held notes
         and send note-offs for what they were playing. Called when the chain's MIDI path changes. */
     virtual void releaseAllNotes() noexcept LATTICE_NONBLOCKING {}
+
+    /** Audio thread: stops every voice at once, with a fade of a few milliseconds (Drum Rack choke
+        groups). Instruments override it; by default it releases notes. */
+    virtual void choke() noexcept LATTICE_NONBLOCKING { releaseAllNotes(); }
 
     /** Audio thread: clears internal state (delay lines, voices, filters). (Also
         juce::AudioProcessor's reset().) */

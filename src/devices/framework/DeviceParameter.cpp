@@ -1,5 +1,7 @@
 #include "devices/framework/DeviceParameter.h"
 
+#include <cmath>
+
 namespace lattice
 {
 namespace
@@ -7,7 +9,7 @@ namespace
 juce::NormalisableRange<float> makeRange(const ParameterSpec& s)
 {
     juce::NormalisableRange<float> r(s.minValue, s.maxValue, s.interval);
-    if (s.kind == ParamKind::Float && s.centreValue > s.minValue && s.centreValue < s.maxValue)
+    if (s.kind == ParamKind::Float && !std::isnan(s.centreValue) && s.centreValue > s.minValue && s.centreValue < s.maxValue)
         r.setSkewForCentre(s.centreValue);
     return r;
 }
