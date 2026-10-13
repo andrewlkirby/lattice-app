@@ -11,6 +11,7 @@
 #include "support/OfflineRenderer.h"
 #include "support/TestDevices.h"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 using namespace lattice;
@@ -266,7 +267,7 @@ TEST_CASE("Mixer: track strips have a send per return; return strips switch pre/
     REQUIRE(send != nullptr);
     send->onDragStart();
     send->setValue(-6.0, juce::sendNotificationSync);
-    CHECK(f.session.set().sendLevel(0, 0) == -6.0);
+    CHECK(f.session.set().sendLevel(0, 0) == Catch::Approx(-6.0)); // the slider snaps to 0.1 dB steps
 
     MixerStrip ret(f.session, f.tunings, MixerStrip::Kind::Return, 0);
     ret.setSize(120, MixerStrip::heightFor(returns));
