@@ -192,10 +192,10 @@ DetailView::DetailView(SessionController& s, AudioEngine& engine, juce::Properti
       context{s, engine, specs, library,
               [this](const juce::String& title, const juce::String& patterns, std::function<void(const juce::File&)> chosen) {
                   chooseFile(title, patterns, std::move(chosen));
-              }},
+              },
+              [this] { browser.refresh(); }},
       browser(context, settings)
 {
-    context.presetsChanged = [this] { browser.refresh(); };
     browser.onInsert = [this](const juce::String& description) {
         if (row != nullptr)
             row->insertFromDescription(description, -1);
