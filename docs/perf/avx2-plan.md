@@ -92,6 +92,47 @@ pattern instead of hardware gathers. `vdivps` gains little from 256 bits, so div
 - **Unison 1:** `renderCopy` (one copy, four samples per step) becomes eight samples per step.
 - Expected: the 8-lane kernel halves the table-reading work; the batched mixing removes about a
   fifth of the remaining per-sample overhead.
+- As built (2026-10-13): the Synth describes each oscillator copy as a plain job
+  (`OscillatorKernels.h`: raw table pointers, sizes, blend, pulse offset, gains, phase) and calls
+  the kernels it picked in `prepare()`. There are two kinds: unison groups side by side, and one
+  copy several samples at a time. The SSE2 kernels (`OscillatorSimd.cpp`) are the previous ones
+  on the new interface. In the AVX2 kernels (`OscillatorSimdAvx2.cpp`):
+  - the groups kernel puts two groups in a register, each lane with its own tables
+    (`vpsrlvd`/`vpsllvd`), and sums the lanes into the channels eight samples at a time (an `hadd`
+    tree);
+  - the single-copy kernel reads eight samples per step, with the phases in closed form
+    (p + s v + step s (s + 1) / 2);
+  - the groups keep the SSE2 rule for which table a group reads, so both paths sound the same.
+  - **What mattered:** MSVC didn't inline the per-sample lambdas: a call per sample, with the
+    registers going through memory. Forcing the helpers inline took the groups kernel from 1.42 to
+    1.03 ns per copy-sample. Moving two indices per 64-bit transfer gave a few percent more.
+  - **Kernel timings** (`lattice_tests "[bench][simd]"`, 16 voices × 8 copies on the benchmark's
+    notes, ns per copy-sample):
+
+    | Kernel | SSE2 | AVX2 |
+    |---|---|---|
+    | Groups | 2.68 | 1.35 |
+    | One copy at a time | 5.93 | 1.38 |
+  - **Result:**
+
+    | Synth case | Before | AVX2 |
+    |---|---|---|
+    | 16 voices, unison 1 | 1.8% | 1.1% |
+    | 16 voices, ladder | 2.0% (after step 2) | 1.4% (meets the 1.6% target) |
+    | 16 voices, unison 4 | 2.8% | 2.15% (target 1.8%) |
+  - **Why unison 4 stops short:**
+    - with the copies kernel skipped, unison 4 costs 1.06%, so the oscillators are now half of
+      it;
+    - most copies blend into the next table, which doubles the reads;
+    - the rest is per-voice work: envelopes, filters, mixing, and the per-copy table position each
+      block (5% of instructions);
+    - going further means a different table layout (for example, precomputed interpolation
+      coefficients: four times the table memory) or a cheaper blend, both of which change the
+      oscillator design. So the unison-4 budget is for step 6.
+  - Tests: each kernel against `MipmappedWave`'s own reads at each level (1–4 groups of mixed
+    shapes, sizes, blends and pulse widths; 1–64-sample blocks; phases carried across blocks), and
+    the Synth rendered at each level for unison 1–8 with saw, pulse, sine and triangle, which must
+    match within 1e-5.
 
 ## 4. Sampler sinc (2.4% → about 1.5%)
 

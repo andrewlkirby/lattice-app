@@ -1,6 +1,5 @@
 #include "devices/instruments/Synth.h"
 
-#include "devices/dsp/OscillatorSimd.h"
 #include "devices/dsp/Simd.h"
 #include "devices/dsp/SyncRates.h"
 
@@ -198,6 +197,7 @@ void SynthDevice::prepare(double sr, int)
     }
     gainStep = static_cast<float>(1.0 / (0.02 * sr));
     voiceFilters.prepare(dsp::simdLevel()); // the CPU's best
+    oscKernels = dsp::oscillatorKernelsFor(dsp::simdLevel());
     reset();
 }
 
@@ -958,17 +958,44 @@ void SynthDevice::renderVoiceBlock(Voice& v, int start, int m, const DeviceTimeI
         }
         else
         {
+            // The usual shapes go to the oscillator kernels (dsp/OscillatorKernels.h): unison groups
+            // of four copies side by side, single copies several samples at a time. Wavetables and
+            // silent copies run the scalar loop.
+            dsp::OscCopyJob groupJobs[2 * maxUnison];
+            OscCopy* groupCopies[2 * maxUnison];
+            int numGroupJobs = 0;
+            const auto job = [](const dsp::MipmappedWave& w, int level, float blend, const OscCopy& c,
+                                std::int64_t step, std::uint32_t pulseOffset, float gl, float gr) {
+                const bool blending = blend > 0.0f && level + 1 < dsp::MipmappedWave::numLevels;
+                const int nextLevel = level + 1 < dsp::MipmappedWave::numLevels ? level + 1 : level;
+                return dsp::OscCopyJob{w.levelData(level) + dsp::MipmappedWave::guard - 1,
+                                       w.levelData(nextLevel) + dsp::MipmappedWave::guard - 1,
+                                       w.levelBits(level),
+                                       w.levelBits(nextLevel),
+                                       blending ? blend : 0.0f,
+                                       pulseOffset,
+                                       gl,
+                                       gr,
+                                       static_cast<std::int32_t>(step),
+                                       c.phase,
+                                       c.inc};
+            };
             for (int o = 0; o < 2; ++o)
             {
                 if (!(o == 0 ? osc1On : osc2On))
                     continue;
                 const float level = o == 0 ? level1 : level2;
                 auto& copies = o == 0 ? v.osc1 : v.osc2;
+                const bool pulse = p.shape[o] == Shape::Pulse;
+                const auto gainsOf = [&](int u, float& gl, float& gr) {
+                    gl = level * (stereo ? p.unisonLeft[static_cast<std::size_t>(u)] : 1.0f);
+                    gr = level * (stereo ? p.unisonRight[static_cast<std::size_t>(u)] : 0.0f);
+                };
                 int firstSingle = 0;
-                // Unison: groups of four copies, one SSE lane each.
+                // Unison: groups of four copies, one SIMD lane each.
                 if (p.shape[o] != Shape::Wavetable)
                 {
-                    const auto& w = p.shape[o] == Shape::Pulse ? saw : *wave[o];
+                    const auto& w = pulse ? saw : *wave[o];
                     for (int g = 0; g + 4 <= unison; g += 4)
                     {
                         // Copies detuned across a table boundary share the sparser table (alias-free
@@ -984,40 +1011,35 @@ void SynthDevice::renderVoiceBlock(Voice& v, int start, int m, const DeviceTimeI
                             usable = usable && at[o][g + k].level >= groupLevel - 1;
                         if (!usable)
                             break;
-                        std::uint32_t phases[4];
-                        std::uint32_t incs[4];
-                        std::int32_t steps[4];
-                        float blends[4];
-                        float gl[4];
-                        float gr[4];
                         for (int k = 0; k < 4; ++k)
                         {
-                            const auto u = static_cast<std::size_t>(g + k);
-                            phases[k] = copies[u].phase;
-                            incs[k] = copies[u].inc;
-                            steps[k] = static_cast<std::int32_t>(incStep[o][g + k]);
-                            blends[k] = at[o][g + k].level == groupLevel ? at[o][g + k].blend : 0.0f;
-                            gl[k] = level * (stereo ? p.unisonLeft[u] : 1.0f);
-                            gr[k] = level * (stereo ? p.unisonRight[u] : 0.0f);
-                        }
-                        if (!dsp::renderFourCopies(w, groupLevel, blends, phases, incs, steps,
-                                                   p.shape[o] == Shape::Pulse ? pwOff[o] : 0u, gl, gr, bufL, bufR, m))
-                            break;
-                        for (int k = 0; k < 4; ++k)
-                        {
-                            copies[static_cast<std::size_t>(g + k)].phase = phases[k];
-                            copies[static_cast<std::size_t>(g + k)].inc = incs[k];
+                            // The group shares both tables; a copy on the richer level doesn't blend.
+                            const int u = g + k;
+                            float gl = 0.0f, gr = 0.0f;
+                            gainsOf(u, gl, gr);
+                            const float blend = at[o][u].level == groupLevel ? at[o][u].blend : 0.0f;
+                            auto& c = copies[static_cast<std::size_t>(u)];
+                            groupJobs[numGroupJobs] = job(w, groupLevel, blend, c, incStep[o][u], pulse ? pwOff[o] : 0u, gl, gr);
+                            groupCopies[numGroupJobs++] = &c;
                         }
                         firstSingle = g + 4;
                     }
                 }
                 for (int u = firstSingle; u < unison; ++u)
                 {
-                    auto& c = (o == 0 ? v.osc1 : v.osc2)[static_cast<std::size_t>(u)];
+                    auto& c = copies[static_cast<std::size_t>(u)];
                     const auto& pos = at[o][u];
-                    const float gl = level * (stereo ? p.unisonLeft[static_cast<std::size_t>(u)] : 1.0f);
-                    const float gr = level * (stereo ? p.unisonRight[static_cast<std::size_t>(u)] : 0.0f);
+                    float gl = 0.0f, gr = 0.0f;
+                    gainsOf(u, gl, gr);
                     const std::int64_t step = incStep[o][u];
+                    if (!pos.silent && p.shape[o] != Shape::Wavetable)
+                    {
+                        auto j = job(pulse ? saw : *wave[o], pos.level, pos.blend, c, step, pulse ? pwOff[o] : 0u, gl, gr);
+                        oscKernels.copy(j, m, bufL, bufR);
+                        c.phase = j.phase;
+                        c.inc = j.inc;
+                        continue;
+                    }
                     const auto run = [&](auto&& read) {
                         std::uint32_t phase = c.phase;
                         auto inc = static_cast<std::int64_t>(c.inc);
@@ -1037,46 +1059,18 @@ void SynthDevice::renderVoiceBlock(Voice& v, int start, int m, const DeviceTimeI
                         run([](std::uint32_t) { return 0.0f; });
                         continue;
                     }
-                    // The usual shapes: four samples at a time (SSE2).
-                    if (p.shape[o] != Shape::Wavetable)
-                    {
-                        const bool pulse = p.shape[o] == Shape::Pulse;
-                        if (dsp::renderCopy(pulse ? saw : *wave[o], pos, c.phase, c.inc, static_cast<std::int32_t>(step),
-                                            pulse ? pwOff[o] : 0u, gl, gr, bufL, bufR, m))
-                            continue;
-                    }
-                    switch (p.shape[o])
-                    {
-                    case Shape::Pulse:
-                    {
-                        const std::uint32_t off = pwOff[o];
-                        if (pos.blend <= 0.0f)
-                            run([&](std::uint32_t ph) {
-                                return saw.readLevel(pos.level, ph) - saw.readLevel(pos.level, ph + off);
-                            });
-                        else
-                            run([&](std::uint32_t ph) { return saw.sample(ph, pos) - saw.sample(ph + off, pos); });
-                        break;
-                    }
-                    case Shape::Wavetable:
-                    {
-                        const auto* t = table[o];
-                        const float morph = position[o];
-                        run([&](std::uint32_t ph) { return t->sample(ph, pos, morph); });
-                        break;
-                    }
-                    case Shape::Sine:
-                    case Shape::Triangle:
-                    case Shape::Saw:
-                    {
-                        const auto* w = wave[o];
-                        if (pos.blend <= 0.0f)
-                            run([&](std::uint32_t ph) { return w->readLevel(pos.level, ph); });
-                        else
-                            run([&](std::uint32_t ph) { return w->sample(ph, pos); });
-                        break;
-                    }
-                    }
+                    const auto* t = table[o];
+                    const float morph = position[o];
+                    run([&](std::uint32_t ph) { return t->sample(ph, pos, morph); });
+                }
+            }
+            if (numGroupJobs > 0)
+            {
+                oscKernels.groups(groupJobs, numGroupJobs, m, bufL, bufR);
+                for (int k = 0; k < numGroupJobs; ++k)
+                {
+                    groupCopies[k]->phase = groupJobs[k].phase;
+                    groupCopies[k]->inc = groupJobs[k].inc;
                 }
             }
         }
@@ -1150,15 +1144,14 @@ void SynthDevice::finishVoiceBlock(Voice& v, float* outL, float* outR, int m) no
     float ampBuf[controlBlock];
     v.amp.renderBlock(ampBuf, m);
     const float* rightSource = stereo ? bufR : bufL;
-    float panL = v.panFromL;
-    float panR = v.panFromR;
+    // The pan ramp in closed form (not a running sum), so the loop vectorises.
+    const float panL = v.panFromL, panR = v.panFromR, stepL = v.panStepL, stepR = v.panStepR, blockGain = v.blockGain;
     for (int i = 0; i < m; ++i)
     {
-        const float gain = ampBuf[i] * v.blockGain;
-        panL += v.panStepL;
-        panR += v.panStepR;
-        outL[i] += bufL[i] * gain * panL;
-        outR[i] += rightSource[i] * gain * panR;
+        const float gain = ampBuf[i] * blockGain;
+        const auto t = static_cast<float>(i + 1);
+        outL[i] += bufL[i] * gain * (panL + stepL * t);
+        outR[i] += rightSource[i] * gain * (panR + stepR * t);
     }
 }
 

@@ -163,6 +163,8 @@ add_library(lattice_core STATIC
     src/devices/dsp/Biquad.cpp
     src/devices/dsp/FirHalfBand.cpp
     src/devices/dsp/HalfBand.cpp
+    src/devices/dsp/OscillatorSimd.cpp
+    src/devices/dsp/OscillatorSimdAvx2.cpp
     src/devices/dsp/Simd.cpp
     src/devices/dsp/SincBlock.cpp
     src/devices/dsp/SincBlockAvx2.cpp

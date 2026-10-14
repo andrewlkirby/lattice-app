@@ -360,8 +360,9 @@ Where the code differs from the plan above, and why. Each device's header descri
   that keeps the saved state, so saving loses nothing.
 
 ### DSP building blocks (`src/devices/dsp/`)
-- Oscillators: mipmapped band-limited wavetables (2 tables per octave, crossfaded), SSE paths that
-  run 4 unison copies or voices at once. Filters: TPT SVF, the nonlinear ZDF ladder at 2× through
+- Oscillators: mipmapped band-limited wavetables (2 tables per octave, crossfaded), with SIMD
+  kernels: unison groups side by side (4 copies per SSE register, 8 per AVX2 register) and single
+  copies 4 or 8 samples at a time (docs/perf/avx2-plan.md, step 3). Filters: TPT SVF, the nonlinear ZDF ladder at 2× through
   half-band filters, matched biquads, and `VoiceFilterSimd` (voice filters side by side: 4 per SSE
   register, 8 per AVX2 register, two registers interleaved; docs/perf/avx2-plan.md, step 2).
   Envelopes render in blocks. Delay lines interpolate with Lagrange; `LevelDetector` for dynamics.

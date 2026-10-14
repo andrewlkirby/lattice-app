@@ -1,9 +1,11 @@
 // The SIMD level and its kernels (docs/perf/avx2-plan.md): devices pick their kernels from
 // dsp::simdLevel() when they prepare, and every faster path matches the SSE2 one.
 
+#include "devices/dsp/OscillatorKernels.h"
 #include "devices/dsp/Simd.h"
 #include "devices/dsp/SincBlock.h"
 #include "devices/dsp/VoiceFilterSimd.h"
+#include "devices/dsp/Wavetable.h"
 #include "devices/instruments/Sampler.h"
 #include "devices/instruments/Synth.h"
 #include "support/DeviceHarness.h"
@@ -233,5 +235,202 @@ TEST_CASE("SIMD paths: voice filter kernel timings", "[.][bench][simd]")
                 std::printf("%2d lanes  %-14s %-10s %.2f ns per lane-sample\n", lanes, dsp::simdLevelName(level),
                             kind == 0 ? "ladder" : kind == 1 ? "SVF 12 dB" : "SVF 24 dB",
                             1.0e9 * seconds / (static_cast<double>(blocks) * block * lanes));
+            }
+}
+
+namespace
+{
+/** A job for one copy of `wave` at `inc`, as the Synth builds them. */
+dsp::OscCopyJob oscJob(const dsp::MipmappedWave& wave, int level, float blend, std::uint32_t phase, std::uint32_t inc,
+                       std::int32_t step, std::uint32_t pulseOffset, float gl, float gr)
+{
+    const int next = std::min(level + 1, dsp::MipmappedWave::numLevels - 1);
+    return {wave.levelData(level) + dsp::MipmappedWave::guard - 1,
+            wave.levelData(next) + dsp::MipmappedWave::guard - 1,
+            wave.levelBits(level),
+            wave.levelBits(next),
+            next > level ? blend : 0.0f,
+            pulseOffset,
+            gl,
+            gr,
+            step,
+            phase,
+            inc};
+}
+
+/** The reference: MipmappedWave's own reads, one sample at a time. */
+void renderReference(const dsp::MipmappedWave& wave, int level, dsp::OscCopyJob& j, int n, float* outL, float* outR)
+{
+    const auto value = [&](std::uint32_t ph) {
+        const float a = wave.readLevel(level, ph);
+        return j.blend > 0.0f ? a + j.blend * (wave.readLevel(level + 1, ph) - a) : a;
+    };
+    std::uint32_t p = j.phase;
+    auto v = static_cast<std::int64_t>(j.inc);
+    for (int i = 0; i < n; ++i)
+    {
+        v += j.step;
+        float x = value(p);
+        if (j.pulseOffset != 0)
+            x -= value(p + j.pulseOffset);
+        p += static_cast<std::uint32_t>(v);
+        outL[i] += x * j.gainL;
+        outR[i] += x * j.gainR;
+    }
+    j.phase = p;
+    j.inc = static_cast<std::uint32_t>(v);
+}
+} // namespace
+
+TEST_CASE("SIMD paths: the oscillator kernels match MipmappedWave's reads at any group count and block size",
+          "[devices][dsp][synth][simd]")
+{
+    const auto& library = dsp::WaveformLibrary::get();
+    const dsp::MipmappedWave* waves[] = {&library.shape(dsp::WaveformLibrary::Shape::Saw),
+                                         &library.shape(dsp::WaveformLibrary::Shape::Sine),
+                                         &library.shape(dsp::WaveformLibrary::Shape::Triangle)};
+    std::mt19937 rng(5);
+    std::uniform_int_distribution<std::uint32_t> anyPhase;
+    std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+
+    for (const auto level : availableSimdLevels())
+    {
+        INFO("SIMD level " << dsp::simdLevelName(level));
+        const auto kernels = dsp::oscillatorKernelsFor(level);
+        for (const int groups : {1, 2, 3, 4})
+            for (const int n : {1, 3, 8, 13, 37, 64})
+            {
+                INFO(groups << " groups, " << n << " samples");
+                // Each group: its own shape, level (so table size), pulse or not; each copy its own
+                // pitch near the group's, blend, phase and gains.
+                std::vector<dsp::OscCopyJob> jobs, reference;
+                std::vector<int> levels;
+                for (int g = 0; g < groups; ++g)
+                {
+                    const auto& wave = *waves[g % 3];
+                    const int tableLevel = 4 + 5 * g;
+                    const std::uint32_t pulse = g % 2 == 1 ? anyPhase(rng) | 1u : 0u;
+                    for (int k = 0; k < 4; ++k)
+                    {
+                        const auto inc = static_cast<std::uint32_t>(std::ldexp(1.0, -14 + tableLevel / 2) * (1.0 + 0.1 * k));
+                        jobs.push_back(oscJob(wave, tableLevel, k == 0 ? 0.0f : unit(rng), anyPhase(rng), inc,
+                                              static_cast<std::int32_t>(inc / 3000) * (k % 2 == 0 ? 1 : -1), pulse,
+                                              unit(rng), k % 3 == 0 ? 0.0f : unit(rng)));
+                        levels.push_back(tableLevel);
+                    }
+                }
+                reference = jobs;
+                std::vector<float> l(64, 0.1f), r(64, -0.2f), lRef = l, rRef = r;
+                for (int pass = 0; pass < 3; ++pass) // phases carried across blocks
+                {
+                    kernels.groups(jobs.data(), static_cast<int>(jobs.size()), n, l.data(), r.data());
+                    for (std::size_t k = 0; k < reference.size(); ++k)
+                        renderReference(*waves[(k / 4) % 3], levels[k], reference[k], n, lRef.data(), rRef.data());
+                }
+                float worst = 0.0f;
+                for (std::size_t i = 0; i < l.size(); ++i)
+                    worst = std::max({worst, std::abs(l[i] - lRef[i]), std::abs(r[i] - rRef[i])});
+                CHECK(worst < 2.0e-5f);
+                for (std::size_t k = 0; k < jobs.size(); ++k)
+                {
+                    CHECK(jobs[k].phase == reference[k].phase);
+                    CHECK(jobs[k].inc == reference[k].inc);
+                }
+
+                // The same copies one at a time.
+                auto singles = reference;
+                auto singlesRef = reference;
+                std::vector<float> sl(64, 0.0f), sr(64, 0.0f), slRef = sl, srRef = sr;
+                for (std::size_t k = 0; k < singles.size(); ++k)
+                {
+                    kernels.copy(singles[k], n, sl.data(), sr.data());
+                    renderReference(*waves[(k / 4) % 3], levels[k], singlesRef[k], n, slRef.data(), srRef.data());
+                    CHECK(singles[k].phase == singlesRef[k].phase);
+                    CHECK(singles[k].inc == singlesRef[k].inc);
+                }
+                worst = 0.0f;
+                for (std::size_t i = 0; i < sl.size(); ++i)
+                    worst = std::max({worst, std::abs(sl[i] - slRef[i]), std::abs(sr[i] - srRef[i])});
+                CHECK(worst < 2.0e-5f);
+            }
+    }
+}
+
+TEST_CASE("SIMD paths: the Synth's oscillators sound the same at every level", "[devices][synth][simd]")
+{
+    static TrackTuning tuning(Tet12::make());
+    tuning.setSampleRate(DeviceHarness::sampleRate);
+    struct Case
+    {
+        int unison;
+        float shape1, shape2; // SynthDevice::Shape
+        float spread;
+    };
+    for (const auto c : {Case{1, 2.0f, 3.0f, 0.0f}, Case{3, 3.0f, 0.0f, 1.0f}, Case{4, 2.0f, 3.0f, 1.0f},
+                         Case{4, 1.0f, 2.0f, 0.0f}, Case{8, 2.0f, 2.0f, 0.7f}, Case{6, 3.0f, 1.0f, 1.0f}})
+    {
+        CAPTURE(c.unison, c.shape1, c.shape2, c.spread);
+        checkSimdPathsMatch([&] {
+            SynthDevice synth(tuning);
+            synth.findParameter("unison.voices")->setBase(static_cast<float>(c.unison));
+            synth.findParameter("unison.spread")->setBase(c.spread);
+            synth.findParameter("osc1.shape")->setBase(c.shape1);
+            synth.findParameter("osc2.shape")->setBase(c.shape2);
+            synth.findParameter("osc2.pw")->setBase(0.3f);
+            DeviceHarness h(synth);
+            for (int n = 0; n < 6; ++n) // low to very high, so the copies sit on many table levels
+                h.noteOn(0, 30 + 15 * n);
+            h.renderTo(9600, 37);
+            std::vector<float> out = h.audioLeft;
+            out.insert(out.end(), h.audioRight.begin(), h.audioRight.end());
+            return out;
+        });
+    }
+}
+
+TEST_CASE("SIMD paths: oscillator kernel timings", "[.][bench][simd]")
+{
+    // ns per copy per sample: lattice_tests "[bench][simd]". 16 voices x 8 copies of a saw (two
+    // oscillators x unison 4, a group each), as the Synth's unison-4 benchmark plays them: either all
+    // at 220 Hz (one small table, cached) or on the benchmark's notes (MIDI 36-81, so the low ones
+    // read the large tables).
+    const auto& saw = dsp::WaveformLibrary::get().shape(dsp::WaveformLibrary::Shape::Saw);
+    constexpr int block = 64;
+    constexpr int voices = 16;
+    for (const auto level : availableSimdLevels())
+        for (const bool spread : {false, true})
+            for (const int mode : {0, 1}) // groups, one copy at a time
+            {
+                const auto kernels = dsp::oscillatorKernelsFor(level);
+                std::vector<dsp::OscCopyJob> jobs;
+                for (int voice = 0; voice < voices; ++voice)
+                    for (int c = 0; c < 8; ++c)
+                    {
+                        const double hz = spread ? 440.0 * std::exp2((36 + 3 * voice - 69) / 12.0) : 220.0;
+                        const double ratio = (c < 4 ? 1.0 : 1.004) * (1.0 + 0.003 * (c % 4));
+                        const auto inc = static_cast<std::uint32_t>(4294967296.0 * hz * ratio / 48000.0);
+                        // Each group on its first copy's level, as the Synth does.
+                        const auto at = dsp::MipmappedWave::positionFor(
+                            static_cast<std::uint32_t>(4294967296.0 * hz * (c < 4 ? 1.0 : 1.004) / 48000.0));
+                        jobs.push_back(oscJob(saw, at.level, at.blend, static_cast<std::uint32_t>(c) * 0x1234567u, inc, 0,
+                                              0, 0.3f, 0.2f));
+                    }
+                std::vector<float> l(block), r(block);
+                constexpr int blocks = 12500;
+                const auto t0 = std::chrono::steady_clock::now();
+                for (int b = 0; b < blocks; ++b)
+                    for (int voice = 0; voice < voices; ++voice)
+                    {
+                        auto* group = jobs.data() + voice * 8;
+                        if (mode == 0)
+                            kernels.groups(group, 8, block, l.data(), r.data());
+                        else
+                            for (int c = 0; c < 8; ++c)
+                                kernels.copy(group[c], block, l.data(), r.data());
+                    }
+                const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+                std::printf("%-14s %-6s %-14s %.2f ns per copy-sample (%.3f)\n", dsp::simdLevelName(level),
+                            mode == 0 ? "groups" : "copy", spread ? "notes 36-81" : "all at 220 Hz",
+                            1.0e9 * seconds / (static_cast<double>(blocks) * voices * 8 * block), l[5]);
             }
 }

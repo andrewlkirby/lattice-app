@@ -3,6 +3,7 @@
 #include "devices/dsp/Envelope.h"
 #include "devices/dsp/Ladder.h"
 #include "devices/dsp/Lfo.h"
+#include "devices/dsp/OscillatorKernels.h"
 #include "devices/dsp/Svf.h"
 #include "devices/dsp/VoiceFilterSimd.h"
 #include "devices/dsp/Wavetable.h"
@@ -229,6 +230,7 @@ private:
     const dsp::WaveformLibrary& waves;
     std::array<Voice, voiceSlots> voices;
     dsp::VoiceFilterSimd voiceFilters; // kernels chosen in prepare() (dsp/Simd.h)
+    dsp::OscillatorKernels oscKernels = dsp::oscillatorKernelsGeneric(); // likewise
     std::uint64_t noteCounter = 0;
     float bend = 0.0f;
     float modWheel = 0.0f;
