@@ -452,7 +452,7 @@ first figure is at 64-sample blocks, the second at 256. Each device runs on one 
 | Synth, 16 voices × 2 osc, unison 1 | 1.8 / 1.75 | 2 | 2 |
 | Synth, 16 voices × 2 osc, unison 4 | 2.7 / 2.7 | 2 | 3 |
 | Synth, 16 voices, ladder | 2.55 / 2.5 | 2 | 3 |
-| Sampler, 32 voices, sinc | 2.5 / 2.3 | 1.5 | 3 |
+| Sampler, 32 voices, sinc | 2.5 / 2.3 (2.25 / 2.1 after the AVX2 plan, step 4) | 1.5 | 2.5 (agreed 2026-10-14) |
 | Sampler, 32 voices, Draft | 1.0 / 1.0 | 1.5 | 1.5 |
 | Reverb, High | 0.8 / 0.75 | 1 | 1 |
 | Reverb, Ultra | 2.7 / 2.5 | 2 | 3 |
@@ -476,7 +476,7 @@ rate.
 per period of the real clock on a real-time (MMCSS Pro Audio) thread with 7 workers: no block late;
 load 8% of the period at the median, 10% at the 99th percentile, 66% for the worst block.
 
-The `lattice_bench` budgets stay at their starting values until the new ones are agreed.
+The `lattice_bench` budgets stay at their starting values until the new ones are agreed (the Sampler's sinc budget is now 2.5).
 
 ## Interfaces kept for later milestones
 - **M4 UI:** custom device panels replace the generic editor and read the same `ParameterSpec`s and parameter groups. The EQ spectrum FIFO and the Drum Rack pad grid get finished visuals.

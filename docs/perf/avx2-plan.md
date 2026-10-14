@@ -173,11 +173,19 @@ pattern instead of hardware gathers. `vdivps` gains little from 256 bits, so div
     | AVX2 mono | 15.5 | 13.8 |
   - **Instructions** (callgrind, the Sampler benchmark): sinc 540M → 434M (−20%), Draft
     216M → 177M (−18%).
-  - **Result:** measured while another program was using the CPU heavily (the plan's 2.4% read
-    3.5% then), so the absolute figures wait for a quiet machine. Relative to the same conditions:
-    sinc unchanged within noise with AVX2 (3.45% / 3.1% at 64 / 256 samples), SSE2 6.1% → 4.5%,
-    Draft 1.3% → 1.2%. The 1.5% target is not met: the AVX2 sinc case moved too little to change
-    the quiet-machine 2.4% much.
+  - **Result** (quiet machine, the previous and this build run alternately, 10-second runs, 64 /
+    256-sample blocks):
+
+    | Sampler, 32 voices | Before | After |
+    |---|---|---|
+    | Sinc, AVX2 | 2.44 / 2.27% | 2.25 / 2.07% |
+    | Sinc, SSE2 | 4.28 / 4.06% | 3.02 / 2.79% |
+    | Draft | 0.99 / 0.95% | 0.90 / 0.86% |
+
+    The 1.5% target is not met. The Sampler's sinc budget is raised to 2.5% (agreed
+    2026-10-14); the options below stay open.
+  - **Stress test** (10 minutes, reference set, 64-sample blocks, after steps 1–4): no block late;
+    load 6% at the median, 8% at the 99th percentile, 48.5% for the worst block.
   - **What's left** (not done; they change memory use or the kernel):
     - smaller rows: the kernel is symmetric (phase f's row is phase 1 − f's reversed), so half the
       rows would do, at the cost of a permute per load for half the positions; or the differences

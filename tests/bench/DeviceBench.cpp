@@ -151,7 +151,7 @@ int main(int argc, char* argv[])
              setParam(d, "filter.type", 0.0f);
          },
          16},
-        {"Sampler 32 voices, sinc", 1.5, sampler,
+        {"Sampler 32 voices, sinc", 2.5, sampler,
          [](StudioDevice& d) { setParam(d, "sample.root", 261.6256f); }, 32},
         {"Sampler 32 voices, draft", 1.5, sampler,
          [](StudioDevice& d) { setParam(d, "sample.quality", 1.0f); }, 32},
