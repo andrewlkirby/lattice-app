@@ -326,7 +326,8 @@ All tests run in `OfflineRenderer` under `ScopedAudioThread` (from M2) at severa
       - Reverb High: under 1%
       - other effects: under 0.5% each
     - **Baselines** are stored in the repo. **A regression of more than 10% fails** when run on the reference machine. CI runners vary too much in speed, so CI flags a regression of more than 25% as a warning.
-    - Budgets are reviewed at the end of M3 and then fixed for later milestones.
+    - Budgets are reviewed at the end of M3 and then fixed for later milestones (fixed 2026-10-14:
+      the starting budgets, except the Sampler's sinc at 2.5%; see "Performance" below).
 
 ## Definition of done
 - [ ] Load a Synth on a Colundi track, play it from the computer keyboard, and hear correct Colundi pitches, including during glide.
@@ -446,39 +447,45 @@ Where the code differs from the plan above, and why. Each device's header descri
   `--workers`; the callgrind baseline was updated for the new set.
 
 ### Performance (end of M3; reference laptop, one core, % of real time at 48 kHz)
-`lattice_bench` (Release, Windows, the reference laptop), typical of several 10-second runs; the
-first figure is at 64-sample blocks, the second at 256. Each device runs on one core.
+`lattice_bench` (Release, Windows, the reference laptop); the first figure is at 64-sample blocks,
+the second at 256. Each device runs on one core. "Before" is the end of the M3 performance pass;
+"after" is the AVX2 plan (`docs/perf/avx2-plan.md`), the median of three 10-second runs on a quiet
+machine (2026-10-14).
 
-| Device | Load (% of one core) | Starting budget | Proposed budget |
-|--------|----------------------|-----------------|-----------------|
-| Synth, 16 voices × 2 osc, unison 1 | 1.8 / 1.75 | 2 | 2 |
-| Synth, 16 voices × 2 osc, unison 4 | 2.7 / 2.7 | 2 | 3 |
-| Synth, 16 voices, ladder | 2.55 / 2.5 | 2 | 3 |
-| Sampler, 32 voices, sinc | 2.5 / 2.3 (2.25 / 2.1 after the AVX2 plan, step 4) | 1.5 | 2.5 (agreed 2026-10-14) |
-| Sampler, 32 voices, Draft | 1.0 / 1.0 | 1.5 | 1.5 |
-| Reverb, High | 0.8 / 0.75 (0.34 / 0.32 after the AVX2 plan, step 5) | 1 | 1 |
-| Reverb, Ultra | 2.7 / 2.5 (0.99 / 0.96 after step 5) | 2 | 2 (met after step 5) |
-| Reverb, Eco | 0.54 / 0.49 (0.24 / 0.22 after step 5) | 0.5 | 0.5 (met after step 5) |
-| Saturator 4× | 0.27 / 0.26 | 0.5 | 0.5 |
-| EQ Eight, Compressor, Delay, Chorus, Auto Filter, Saturator 2×, Limiter, Utility | 0.003 – 0.33 | 0.5 | 0.5 |
+| Device | Before | After the AVX2 plan | Budget |
+|--------|--------|---------------------|--------|
+| Synth, 16 voices × 2 osc, unison 1 | 1.8 / 1.75 | 1.0 / 0.99 | 2 |
+| Synth, 16 voices × 2 osc, unison 4 | 2.7 / 2.7 | 1.94 / 1.92 | 2 |
+| Synth, 16 voices × 2 osc, unison 4, no spread | | 1.84 / 1.83 | 2 |
+| Synth, 16 voices × 1 osc, 12 dB | | 0.89 / 0.85 | 2 |
+| Synth, 16 voices, ladder | 2.55 / 2.5 | 1.26 / 1.25 | 2 |
+| Sampler, 32 voices, sinc | 2.5 / 2.3 | 2.24 / 2.06 | 2.5 (raised from 1.5, agreed 2026-10-14) |
+| Sampler, 32 voices, Draft | 1.0 / 1.0 | 0.89 / 0.86 | 1.5 |
+| Reverb, High | 0.8 / 0.75 | 0.34 / 0.32 | 1 |
+| Reverb, Ultra | 2.7 / 2.5 | 1.0 / 0.96 | 2 |
+| Reverb, Eco | 0.54 / 0.49 | 0.24 / 0.22 | 0.5 |
+| Saturator 4× | 0.27 / 0.26 | 0.26 / 0.24 | 0.5 |
+| EQ Eight, Compressor, Delay, Chorus, Auto Filter, Saturator 2×, Limiter, Utility | 0.003 – 0.33 | 0.001 – 0.31 | 0.5 |
+
+Every case is within its budget, and the budgets are fixed at these values. The Synth's unison 4 is
+the closest (3% under); below the budgets, the 10% benchmark gate and the 5% instruction-count gate
+(charter §3) catch regressions.
 
 What the performance pass did: the Sampler's sinc kernel in AVX2 + FMA over blocks of positions
 (6.4 → 2.4%) and its Draft path four positions at a time (1.9 → 1.0%); the Reverb's tail four lines
 per SSE register (High 1.06 → 0.8%); the half-band filters and the Saturator in blocks (4×: 0.95 →
 0.27%), with Ultra changing rate in blocks too (3.9 → 2.6%).
 
-Why the proposed budgets: the sinc kernel's 64 taps are what the −90 dB / 0.1 dB quality spec needs
-(a Kaiser design for that transition band needs about 57), and the profile shows the kernel's
-multiply-adds are three quarters of the cost. The Synth's oscillators and ladder are already
-vectorised across unison copies and voices; going further means AVX2 rewrites of both (or a cheaper
-ladder solver, which would change the sound). Ultra is the luxury setting: 32 lines at twice the
-rate.
+Why the Sampler's sinc budget is 2.5: the kernel's 64 taps are what the −90 dB / 0.1 dB quality
+spec needs (a Kaiser design for that transition band needs about 57), and the kernel's multiply-adds
+are most of the cost even after step 4 of the AVX2 plan.
 
 **The reference set** (32 tracks, `[stress][timing]` test): 10 minutes at 64-sample blocks, one block
 per period of the real clock on a real-time (MMCSS Pro Audio) thread with 7 workers: no block late;
-load 8% of the period at the median, 10% at the 99th percentile, 66% for the worst block.
-
-The `lattice_bench` budgets stay at their starting values until the new ones are agreed (the Sampler's sinc budget is now 2.5).
+load 8% of the period at the median, 10% at the 99th percentile, 66% for the worst block. After the
+AVX2 plan (quiet machine, 2026-10-14): no block late; 5.5% at the median, 7% at the 99th percentile,
+8.5% at the 99.9th, 17% (0.23 ms) for the worst block. Its callgrind count went from 3.82G to 2.97G
+instructions (−22%), the new baseline.
 
 ## Interfaces kept for later milestones
 - **M4 UI:** custom device panels replace the generic editor and read the same `ParameterSpec`s and parameter groups. The EQ spectrum FIFO and the Drum Rack pad grid get finished visuals.

@@ -2,4 +2,4 @@
 # --block 64: the reference set), GCC linux-release in docker/linux.Dockerfile.
 # Written by scripts/linux-test.sh --update-baseline; update it in the same commit as a
 # deliberate change, with the reason (charter §3).
-3819084092
+2969949813

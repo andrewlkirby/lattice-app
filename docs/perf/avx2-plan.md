@@ -250,6 +250,31 @@ pattern instead of hardware gathers. `vdivps` gains little from 256 bits, so div
     blocks and 512-sample blocks; `DelayLine`'s block writes and reads against `push()` and
     `tap()`; the Reverb's quality tests (RT60 per band, resonances, freeze, denormals) unchanged.
 
+## 6. Baselines, budgets and the final numbers (done, 2026-10-14)
+
+- **Instruction count** (`scripts/linux-test.sh --callgrind`: the engine benchmark on the reference
+  set, 2 s at 64-sample blocks): 3,819,084,092 → 2,969,949,813 (−22%), written as the new baseline
+  in `docs/perf/baselines/engine-callgrind.txt`. The old baseline was from M3 phase 3e, before the
+  M3 performance pass and this plan.
+- **`lattice_bench`** (quiet machine, three full 10-second runs; the medians, 64 / 256-sample
+  blocks):
+
+  | Device | Before the plan | After | Budget |
+  |---|---|---|---|
+  | Synth, 16 voices × 2 osc, unison 4 | 2.7 / 2.7% | 1.94 / 1.92% | 2% |
+  | Synth, 16 voices, ladder | 2.55 / 2.5% | 1.26 / 1.25% | 2% |
+  | Sampler, 32 voices, sinc | 2.4% | 2.24 / 2.06% | 2.5% (raised from 1.5%) |
+  | Reverb, Ultra | 2.6% | 1.0 / 0.96% | 2% |
+  | Reverb, Eco | 0.5% | 0.24 / 0.22% | 0.5% |
+
+  All 19 cases are within budget in every run (the full table is in `docs/04-m3-devices.md`).
+- **Budgets:** the M3 starting budgets stay as the fixed ones, with the Sampler's sinc at 2.5%. The
+  unison-4 case is within 2% (by 3%); it is left there rather than lowered or raised, since the 10%
+  benchmark and 5% instruction-count gates watch for regressions.
+- **The reference set** (10 minutes at 64-sample blocks, 7 workers): no block late; load 5.5% of
+  the period at the median, 7% at the 99th percentile, 8.5% at the 99.9th, 17% (0.23 ms) for the
+  worst block (before the plan: 8%, 10%, and 66% for the worst block).
+
 ## Order, checks and stopping rule
 
 1. Infrastructure (1).
