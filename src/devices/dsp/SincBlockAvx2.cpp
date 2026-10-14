@@ -4,88 +4,107 @@
 #include "devices/dsp/SincBlock.h"
 
 #if LATTICE_HAVE_AVX2_KERNELS
+#include <cstddef>
 #include <immintrin.h>
+
+// The helpers must inline (MSVC otherwise calls them per step with the registers in memory), and
+// the loops over the four positions must unroll (GCC doesn't at -O2) so the accumulators stay in
+// registers.
+#if defined(_MSC_VER) && !defined(__clang__)
+#define LATTICE_SINC_INLINE __forceinline
+#define LATTICE_SINC_UNROLL
+#elif defined(__clang__)
+#define LATTICE_SINC_INLINE inline __attribute__((always_inline))
+#define LATTICE_SINC_UNROLL _Pragma("unroll")
+#else
+#define LATTICE_SINC_INLINE inline __attribute__((always_inline))
+#define LATTICE_SINC_UNROLL _Pragma("GCC unroll 4")
+#endif
 
 namespace lattice::dsp
 {
 
 namespace
 {
-/** Sum of the 8 lanes. */
-inline float horizontalSum(__m256 v) noexcept
+constexpr int batch = 4; // positions per step: their sums reduce together
+
+/** The sums of each register's lanes, as four floats. */
+LATTICE_SINC_INLINE __m128 laneSums(__m256 a0, __m256 a1, __m256 a2, __m256 a3) noexcept
 {
-    const __m128 lo = _mm256_castps256_ps128(v);
-    const __m128 hi = _mm256_extractf128_ps(v, 1);
-    __m128 s = _mm_add_ps(lo, hi);
-    s = _mm_add_ps(s, _mm_movehl_ps(s, s));
-    s = _mm_add_ss(s, _mm_shuffle_ps(s, s, 0x55));
-    return _mm_cvtss_f32(s);
+    const __m256 h = _mm256_hadd_ps(_mm256_hadd_ps(a0, a1), _mm256_hadd_ps(a2, a3));
+    return _mm_add_ps(_mm256_castps256_ps128(h), _mm256_extractf128_ps(h, 1));
+}
+
+/** Four positions at once (one kernel level, so one length): each reads its own phase row, and
+    the sums reduce together. Positions past `count` repeat the first and are not stored. */
+template <bool Stereo>
+LATTICE_SINC_INLINE void fourPositions(const SincKernelView& k, const float* s0, const float* s1,
+                                       const std::int64_t* index, const float* fraction, int count, float* outL,
+                                       float* outR) noexcept
+{
+    const float phases = static_cast<float>(k.phases);
+    const std::ptrdiff_t stride = k.stride;
+    const std::ptrdiff_t toRight = s1 - s0; // the right channel, from the left
+    const float* row[batch];
+    const float* a[batch];
+    __m256 w[batch];
+    LATTICE_SINC_UNROLL
+    for (int q = 0; q < batch; ++q)
+    {
+        const int from = q < count ? q : 0;
+        const float scaled = fraction[from] * phases;
+        int phase = static_cast<int>(scaled);
+        if (phase > k.phases - 1)
+            phase = k.phases - 1;
+        w[q] = _mm256_set1_ps(scaled - static_cast<float>(phase));
+        row[q] = k.rows + static_cast<std::ptrdiff_t>(phase) * 2 * stride;
+        a[q] = s0 + (index[from] - k.taps / 2 + 1);
+    }
+
+    __m256 accL[batch], accR[batch];
+    LATTICE_SINC_UNROLL
+    for (int q = 0; q < batch; ++q)
+        accL[q] = accR[q] = _mm256_setzero_ps();
+    for (std::ptrdiff_t j = 0; j < stride; j += 8)
+    {
+        LATTICE_SINC_UNROLL
+        for (int q = 0; q < batch; ++q)
+        {
+            // The weights between this phase and the next: row + w x difference.
+            const __m256 c = _mm256_fmadd_ps(w[q], _mm256_load_ps(row[q] + j + stride), _mm256_load_ps(row[q] + j));
+            accL[q] = _mm256_fmadd_ps(c, _mm256_loadu_ps(a[q] + j), accL[q]);
+            if constexpr (Stereo)
+                accR[q] = _mm256_fmadd_ps(c, _mm256_loadu_ps(a[q] + j + toRight), accR[q]);
+        }
+    }
+
+    alignas(16) float left[batch], right[batch];
+    _mm_store_ps(left, laneSums(accL[0], accL[1], accL[2], accL[3]));
+    if constexpr (Stereo)
+        _mm_store_ps(right, laneSums(accR[0], accR[1], accR[2], accR[3]));
+    for (int q = 0; q < count; ++q)
+    {
+        outL[q] = left[q];
+        outR[q] = Stereo ? right[q] : left[q];
+    }
+}
+
+template <bool Stereo>
+void run(const SincKernelView& k, const float* s0, const float* s1, const std::int64_t* index,
+         const float* fraction, int n, float* outL, float* outR) noexcept
+{
+    for (int i = 0; i < n; i += batch)
+        fourPositions<Stereo>(k, s0, s1, index + i, fraction + i, n - i < batch ? n - i : batch, outL + i, outR + i);
 }
 } // namespace
 
 void sincBlockAvx2(const SincKernelView& k, const float* s0, const float* s1, const std::int64_t* index,
                    const float* fraction, int n, float* outL, float* outR) noexcept
 {
-    const bool stereo = s1 != s0;
-    const float phases = static_cast<float>(k.phases);
-    for (int i = 0; i < n; ++i)
-    {
-        const float scaled = fraction[i] * phases;
-        int phase = static_cast<int>(scaled);
-        if (phase > k.phases - 1)
-            phase = k.phases - 1;
-        const __m256 w = _mm256_set1_ps(scaled - static_cast<float>(phase));
-        const float* row0 = k.rows + static_cast<std::int64_t>(phase) * k.stride;
-        const float* row1 = row0 + k.stride;
-        const std::int64_t first = index[i] - k.taps / 2 + 1;
-        const float* a = s0 + first;
-        const float* b = s1 + first;
-        // Two accumulators per channel hide the FMA latency.
-        __m256 accA0 = _mm256_setzero_ps(), accA1 = _mm256_setzero_ps();
-        __m256 accB0 = _mm256_setzero_ps(), accB1 = _mm256_setzero_ps();
-        int j = 0;
-        if (stereo)
-        {
-            for (; j + 16 <= k.stride; j += 16)
-            {
-                const __m256 r0a = _mm256_loadu_ps(row0 + j), r1a = _mm256_loadu_ps(row1 + j);
-                const __m256 r0b = _mm256_loadu_ps(row0 + j + 8), r1b = _mm256_loadu_ps(row1 + j + 8);
-                const __m256 ca = _mm256_fmadd_ps(w, _mm256_sub_ps(r1a, r0a), r0a);
-                const __m256 cb = _mm256_fmadd_ps(w, _mm256_sub_ps(r1b, r0b), r0b);
-                accA0 = _mm256_fmadd_ps(ca, _mm256_loadu_ps(a + j), accA0);
-                accB0 = _mm256_fmadd_ps(ca, _mm256_loadu_ps(b + j), accB0);
-                accA1 = _mm256_fmadd_ps(cb, _mm256_loadu_ps(a + j + 8), accA1);
-                accB1 = _mm256_fmadd_ps(cb, _mm256_loadu_ps(b + j + 8), accB1);
-            }
-            for (; j < k.stride; j += 8)
-            {
-                const __m256 r0 = _mm256_loadu_ps(row0 + j);
-                const __m256 c = _mm256_fmadd_ps(w, _mm256_sub_ps(_mm256_loadu_ps(row1 + j), r0), r0);
-                accA0 = _mm256_fmadd_ps(c, _mm256_loadu_ps(a + j), accA0);
-                accB0 = _mm256_fmadd_ps(c, _mm256_loadu_ps(b + j), accB0);
-            }
-            outL[i] = horizontalSum(_mm256_add_ps(accA0, accA1));
-            outR[i] = horizontalSum(_mm256_add_ps(accB0, accB1));
-        }
-        else
-        {
-            for (; j + 16 <= k.stride; j += 16)
-            {
-                const __m256 r0a = _mm256_loadu_ps(row0 + j), r1a = _mm256_loadu_ps(row1 + j);
-                const __m256 r0b = _mm256_loadu_ps(row0 + j + 8), r1b = _mm256_loadu_ps(row1 + j + 8);
-                accA0 = _mm256_fmadd_ps(_mm256_fmadd_ps(w, _mm256_sub_ps(r1a, r0a), r0a), _mm256_loadu_ps(a + j), accA0);
-                accA1 = _mm256_fmadd_ps(_mm256_fmadd_ps(w, _mm256_sub_ps(r1b, r0b), r0b), _mm256_loadu_ps(a + j + 8),
-                                        accA1);
-            }
-            for (; j < k.stride; j += 8)
-            {
-                const __m256 r0 = _mm256_loadu_ps(row0 + j);
-                accA0 = _mm256_fmadd_ps(_mm256_fmadd_ps(w, _mm256_sub_ps(_mm256_loadu_ps(row1 + j), r0), r0),
-                                        _mm256_loadu_ps(a + j), accA0);
-            }
-            outL[i] = outR[i] = horizontalSum(_mm256_add_ps(accA0, accA1));
-        }
-    }
+    if (s1 != s0)
+        run<true>(k, s0, s1, index, fraction, n, outL, outR);
+    else
+        run<false>(k, s0, s1, index, fraction, n, outL, outR);
     _mm256_zeroupper();
 }
 

@@ -145,6 +145,48 @@ pattern instead of hardware gathers. `vdivps` gains little from 256 bits, so div
   copy, made when the sample loads, for voices pitched up more than an octave, so their kernels
   stay at 64–128 taps instead of growing to 176+. It costs 50% more sample memory, so it would be
   an option for long samples.
+- As built (2026-10-14):
+  - **Difference rows:** each phase row is stored with its difference to the next, 64-byte
+    aligned (`SincKernelBank`, `SincKernelView`), so a weight is one multiply-add. The table
+    is the same size as before.
+  - **Four positions per step** (AVX2 in `SincBlockAvx2.cpp`, SSE2 in `SincBlock.cpp`): all
+    four read their own phase rows in the same loop (one kernel level per block, so one length),
+    and their sums reduce together (an `hadd` tree, or a 4 × 4 transpose with SSE2). A partial
+    batch repeats the first position and doesn't store it. One position at a time per step, or
+    two with two sets of accumulators, measured slower.
+  - **Around the kernel** (`SamplerDevice::renderVoice`): the block's positions are computed in
+    closed form (x0 + i·rate + step·i(i + 1)/2, two at a time with SSE2; step by step only when the
+    loop's end falls in the block), and the voice mixes into the output four samples at a time.
+  - **What the profile showed:** the kernel is limited by memory, not arithmetic. The benchmark's
+    32 voices use 12 kernel levels, about 128 KB of rows each, about 1.5 MB in all (L2 is 512 KB),
+    and each output sample reads 2 × its taps × 4 bytes of rows. With every voice on one level the
+    same kernel runs 40% faster. Software prefetch didn't help (bandwidth, not latency), and
+    halving the rows read (a test only) saved 9%.
+  - **Kernel timings** (`lattice_tests "[bench][simd]"`, the benchmark's notes, ns per output
+    sample):
+
+    | Kernel | Before | After |
+    |---|---|---|
+    | SSE2 stereo | 36.6 | 24.7 |
+    | SSE2 mono | 31.4 | 19.4 |
+    | AVX2 stereo | 18.2 | 17.1 |
+    | AVX2 mono | 15.5 | 13.8 |
+  - **Instructions** (callgrind, the Sampler benchmark): sinc 540M → 434M (−20%), Draft
+    216M → 177M (−18%).
+  - **Result:** measured while another program was using the CPU heavily (the plan's 2.4% read
+    3.5% then), so the absolute figures wait for a quiet machine. Relative to the same conditions:
+    sinc unchanged within noise with AVX2 (3.45% / 3.1% at 64 / 256 samples), SSE2 6.1% → 4.5%,
+    Draft 1.3% → 1.2%. The 1.5% target is not met: the AVX2 sinc case moved too little to change
+    the quiet-machine 2.4% much.
+  - **What's left** (not done; they change memory use or the kernel):
+    - smaller rows: the kernel is symmetric (phase f's row is phase 1 − f's reversed), so half the
+      rows would do, at the cost of a permute per load for half the positions; or the differences
+      in half precision (F16C), 25% fewer bytes per sample with about −100 dB of added error;
+    - the octave copies above: the voices pitched up more than an octave read half the taps;
+    - or a shorter kernel, which changes the quality spec (−90 dB aliasing, 0.1 dB flatness).
+  - Tests: both block kernels against one position at a time (`sincInterpolate`) for every third
+    level, stereo and mono, every block length up to 9 and then every 13th up to 61; the Sampler
+    rendered at each level must match within 1e-5; the Sampler's quality tests unchanged.
 
 ## 5. Reverb (Ultra: 2.6% → about 1.9%; Eco: keep under 0.5%)
 

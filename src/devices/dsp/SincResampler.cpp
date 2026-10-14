@@ -1,6 +1,7 @@
 #include "devices/dsp/SincResampler.h"
 
 #include <cmath>
+#include <cstdint>
 
 namespace lattice::dsp
 {
@@ -43,14 +44,17 @@ SincKernelBank::SincKernelBank()
         level.stride = (level.taps + 7) / 8 * 8; // whole AVX vectors
         // Stretched kernels change more slowly per input sample, so need fewer phase rows.
         level.phases = std::max(64, static_cast<int>(std::lround(512.0 * level.bandwidth)));
-        level.rows.assign(static_cast<std::size_t>(level.phases + 1) * static_cast<std::size_t>(level.stride), 0.0f);
+        const auto stride = static_cast<std::size_t>(level.stride);
+        constexpr std::size_t alignBytes = 64; // the rows never split a cache line
+        level.storage.assign(static_cast<std::size_t>(level.phases) * 2 * stride + alignBytes / sizeof(float), 0.0f);
+        const auto address = reinterpret_cast<std::uintptr_t>(level.storage.data());
+        level.offset = (alignBytes - address % alignBytes) % alignBytes / sizeof(float);
+        float* rows = level.storage.data() + level.offset;
 
-        for (int p = 0; p <= level.phases; ++p)
-        {
+        // The weights at phase p of `phases` (the last, p = phases, is the next sample's phase 0).
+        const auto weightsAt = [&](int p, std::vector<double>& w) {
             const double f = static_cast<double>(p) / level.phases;
-            float* row = level.rows.data() + static_cast<std::size_t>(p) * static_cast<std::size_t>(level.stride);
             double sum = 0.0;
-            std::vector<double> w(static_cast<std::size_t>(level.taps));
             for (int j = 0; j < level.taps; ++j)
             {
                 const double t = static_cast<double>(j - level.taps / 2 + 1) - f; // offset from the position
@@ -59,8 +63,21 @@ SincKernelBank::SincKernelBank()
                 w[static_cast<std::size_t>(j)] = 2.0 * fc * sinc(2.0 * fc * t) * window;
                 sum += w[static_cast<std::size_t>(j)];
             }
-            for (int j = 0; j < level.taps; ++j)
-                row[j] = static_cast<float>(w[static_cast<std::size_t>(j)] / sum); // exactly unity gain at DC
+            for (auto& x : w)
+                x /= sum; // exactly unity gain at DC
+        };
+        std::vector<double> current(static_cast<std::size_t>(level.taps)), next(current.size());
+        weightsAt(0, current);
+        for (int p = 0; p < level.phases; ++p)
+        {
+            weightsAt(p + 1, next);
+            float* row = rows + static_cast<std::size_t>(p) * 2 * stride;
+            for (std::size_t j = 0; j < current.size(); ++j)
+            {
+                row[j] = static_cast<float>(current[j]);
+                row[stride + j] = static_cast<float>(next[j] - current[j]);
+            }
+            std::swap(current, next);
         }
     }
 }

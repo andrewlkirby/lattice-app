@@ -5,6 +5,7 @@
 #include "devices/dsp/Envelope.h"
 #include "devices/dsp/FirHalfBand.h"
 #include "devices/dsp/HalfBand.h"
+#include "devices/dsp/Simd.h"
 #include "devices/dsp/SincBlock.h"
 #include "devices/dsp/SincResampler.h"
 #include "devices/dsp/Ladder.h"
@@ -506,26 +507,42 @@ TEST_CASE("Block interpolators: the SIMD versions match the reference ones", "[d
     const int n = static_cast<int>(index.size());
     std::vector<float> a0(index.size()), a1(index.size()), b0(index.size()), b1(index.size());
 
-    // Every kernel level, stereo and mono: the chosen implementation (AVX2 where the CPU has it)
-    // against the SSE one, within float rounding.
+    // Every kernel level, stereo and mono, every block length up to 61 (the block versions take
+    // four positions at a time): each SIMD level's block version against one position at a time,
+    // within float rounding.
     const auto& bank = dsp::SincKernelBank::get();
-    for (int level = 0; level < dsp::SincKernelBank::numLevels; level += 3)
-        for (const bool stereo : {true, false})
-        {
-            CAPTURE(level, stereo);
-            const auto view = bank.level(level).view();
-            dsp::sincBlockGeneric(view, s0, stereo ? s1 : s0, index.data(), fraction.data(), n, a0.data(), a1.data());
-            dsp::sincBlock()(view, s0, stereo ? s1 : s0, index.data(), fraction.data(), n, b0.data(), b1.data());
-            for (std::size_t i = 0; i < index.size(); ++i)
+    const float* const data[2] = {s0, s1};
+    for (const auto simd : {dsp::SimdLevel::Sse2, dsp::SimdLevel::Avx2})
+        for (int level = 0; level < dsp::SincKernelBank::numLevels; level += 3)
+            for (const bool stereo : {true, false})
             {
-                CHECK(std::abs(a0[i] - b0[i]) < 1e-5f);
-                CHECK(std::abs(a1[i] - b1[i]) < 1e-5f);
+                CAPTURE(dsp::simdLevelName(simd), level, stereo);
+                const auto view = bank.level(level).view();
+                const auto block = dsp::sincBlockFor(std::min(simd, dsp::cpuSimdLevel()));
+                for (std::size_t i = 0; i < index.size(); ++i)
+                {
+                    float out[2];
+                    dsp::sincInterpolate(view, data, stereo ? 2 : 1, index[i], fraction[i], out);
+                    a0[i] = out[0];
+                    a1[i] = stereo ? out[1] : out[0];
+                }
+                for (int length = 1; length <= n; length += length < 9 ? 1 : 13)
+                {
+                    std::fill(b0.begin(), b0.end(), 9.0f);
+                    std::fill(b1.begin(), b1.end(), 9.0f);
+                    block(view, s0, stereo ? s1 : s0, index.data(), fraction.data(), length, b0.data(), b1.data());
+                    for (std::size_t i = 0; i < index.size(); ++i)
+                    {
+                        CAPTURE(length, i);
+                        const bool written = static_cast<int>(i) < length;
+                        CHECK(std::abs((written ? a0[i] : 9.0f) - b0[i]) < 1e-5f);
+                        CHECK(std::abs((written ? a1[i] : 9.0f) - b1[i]) < 1e-5f);
+                    }
+                }
             }
-        }
 
     // Hermite, four at a time, against the one-at-a-time version.
     dsp::hermiteBlock(s0, s1, index.data(), fraction.data(), n, b0.data(), b1.data());
-    const float* data[2] = {s0, s1};
     for (std::size_t i = 0; i < index.size(); ++i)
     {
         float out[2];

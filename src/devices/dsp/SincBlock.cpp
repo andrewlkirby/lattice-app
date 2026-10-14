@@ -4,6 +4,7 @@
 #include "devices/dsp/SincResampler.h"
 
 #include <algorithm>
+#include <cstddef>
 
 #include <juce_core/juce_core.h>
 
@@ -14,9 +15,76 @@
 namespace lattice::dsp
 {
 
+namespace
+{
+#if LATTICE_SINC_SSE
+/** Four positions at once, as in SincBlockAvx2.cpp: each reads its own phase row, and the sums
+    reduce together with one transpose. Positions past `count` repeat the first and are not
+    stored. */
+template <bool Stereo>
+void fourPositions(const SincKernelView& k, const float* s0, const float* s1, const std::int64_t* index,
+                   const float* fraction, int count, float* outL, float* outR) noexcept
+{
+    const float phases = static_cast<float>(k.phases);
+    const std::ptrdiff_t stride = k.stride;
+    const std::ptrdiff_t toRight = s1 - s0;
+    const float* row[4];
+    const float* a[4];
+    __m128 w[4];
+    for (int q = 0; q < 4; ++q)
+    {
+        const int from = q < count ? q : 0;
+        const float scaled = fraction[from] * phases;
+        const int phase = std::min(static_cast<int>(scaled), k.phases - 1);
+        w[q] = _mm_set1_ps(scaled - static_cast<float>(phase));
+        row[q] = k.rows + static_cast<std::ptrdiff_t>(phase) * 2 * stride;
+        a[q] = s0 + (index[from] - k.taps / 2 + 1);
+    }
+    __m128 accL[4], accR[4];
+    for (int q = 0; q < 4; ++q)
+        accL[q] = accR[q] = _mm_setzero_ps();
+    for (std::ptrdiff_t j = 0; j < stride; j += 4)
+        for (int q = 0; q < 4; ++q)
+        {
+            const __m128 c = _mm_add_ps(_mm_load_ps(row[q] + j), _mm_mul_ps(w[q], _mm_load_ps(row[q] + j + stride)));
+            accL[q] = _mm_add_ps(accL[q], _mm_mul_ps(c, _mm_loadu_ps(a[q] + j)));
+            if constexpr (Stereo)
+                accR[q] = _mm_add_ps(accR[q], _mm_mul_ps(c, _mm_loadu_ps(a[q] + j + toRight)));
+        }
+    const auto sums = [](__m128* acc) {
+        _MM_TRANSPOSE4_PS(acc[0], acc[1], acc[2], acc[3]);
+        return _mm_add_ps(_mm_add_ps(acc[0], acc[1]), _mm_add_ps(acc[2], acc[3]));
+    };
+    alignas(16) float left[4], right[4];
+    _mm_store_ps(left, sums(accL));
+    if constexpr (Stereo)
+        _mm_store_ps(right, sums(accR));
+    for (int q = 0; q < count; ++q)
+    {
+        outL[q] = left[q];
+        outR[q] = Stereo ? right[q] : left[q];
+    }
+}
+
+template <bool Stereo>
+void runSse(const SincKernelView& k, const float* s0, const float* s1, const std::int64_t* index,
+            const float* fraction, int n, float* outL, float* outR) noexcept
+{
+    for (int i = 0; i < n; i += 4)
+        fourPositions<Stereo>(k, s0, s1, index + i, fraction + i, std::min(n - i, 4), outL + i, outR + i);
+}
+#endif
+} // namespace
+
 void sincBlockGeneric(const SincKernelView& k, const float* s0, const float* s1, const std::int64_t* index,
                       const float* fraction, int n, float* outL, float* outR) noexcept
 {
+#if LATTICE_SINC_SSE
+    if (s1 != s0)
+        runSse<true>(k, s0, s1, index, fraction, n, outL, outR);
+    else
+        runSse<false>(k, s0, s1, index, fraction, n, outL, outR);
+#else
     const float* data[2] = {s0, s1};
     for (int i = 0; i < n; ++i)
     {
@@ -25,6 +93,7 @@ void sincBlockGeneric(const SincKernelView& k, const float* s0, const float* s1,
         outL[i] = out[0];
         outR[i] = out[1];
     }
+#endif
 }
 
 namespace

@@ -6,6 +6,13 @@
 #include <algorithm>
 #include <cmath>
 
+#if defined(__SSE2__) || defined(_M_X64) || defined(_M_AMD64)
+#define LATTICE_SAMPLER_SSE 1
+#include <emmintrin.h>
+#else
+#define LATTICE_SAMPLER_SSE 0
+#endif
+
 namespace lattice
 {
 namespace
@@ -697,21 +704,66 @@ void SamplerDevice::renderVoice(Voice& v, float* left, float* right, int numSamp
             // across positions for Draft; AVX2 for sinc where the CPU has it).
             std::int64_t indices[controlBlock];
             float fractions[controlBlock];
-            double x = v.position;
-            double rate = v.rate;
-            const double loopLength = v.loopEnd - v.loopStart;
-            for (int i = 0; i < m; ++i)
+            const double x0 = v.position;
+            const double rate0 = v.rate;
+            const auto blockLength = static_cast<double>(m);
+            const double end = x0 + blockLength * rate0 + rateStep * (0.5 * blockLength * (blockLength + 1.0));
+            if (!v.loop || end < v.loopEnd)
             {
-                rate += rateStep;
-                const auto index = static_cast<std::int64_t>(x);
-                indices[i] = index;
-                fractions[i] = static_cast<float>(x - static_cast<double>(index));
-                x += rate;
-                if (v.loop && x >= v.loopEnd)
-                    x -= loopLength;
+                // In closed form, x0 + i rate0 + step i (i + 1) / 2, so the positions don't wait on
+                // each other (the rate ramps by `rateStep` before each sample).
+                const auto base = static_cast<std::int64_t>(x0);
+                const double from = x0 - static_cast<double>(base);
+                int i = 0;
+#if LATTICE_SAMPLER_SSE
+                // Two at a time: the offsets from `base` are small, so they convert through int32.
+                const __m128d fromV = _mm_set1_pd(from), rateV = _mm_set1_pd(rate0), stepV = _mm_set1_pd(rateStep);
+                const __m128d half = _mm_set1_pd(0.5), one = _mm_set1_pd(1.0), two = _mm_set1_pd(2.0);
+                const __m128i baseV = _mm_set1_epi64x(base);
+                __m128d at = _mm_set_pd(1.0, 0.0);
+                for (; i + 2 <= m; i += 2)
+                {
+                    const __m128d triangle = _mm_mul_pd(half, _mm_mul_pd(at, _mm_add_pd(at, one)));
+                    const __m128d offset =
+                        _mm_add_pd(_mm_add_pd(fromV, _mm_mul_pd(at, rateV)), _mm_mul_pd(stepV, triangle));
+                    const __m128i whole = _mm_cvttpd_epi32(offset); // offsets are >= 0: truncation is floor
+                    const __m128 fraction = _mm_cvtpd_ps(_mm_sub_pd(offset, _mm_cvtepi32_pd(whole)));
+                    _mm_storel_pi(reinterpret_cast<__m64*>(fractions + i), fraction);
+                    _mm_storeu_si128(reinterpret_cast<__m128i*>(indices + i),
+                                     _mm_add_epi64(baseV, _mm_unpacklo_epi32(whole, _mm_setzero_si128())));
+                    at = _mm_add_pd(at, two);
+                }
+#endif
+                for (; i < m; ++i)
+                {
+                    const auto d = static_cast<double>(i);
+                    const double offset = from + d * rate0 + rateStep * (0.5 * d * (d + 1.0));
+                    const auto whole = static_cast<std::int64_t>(offset);
+                    indices[i] = base + whole;
+                    fractions[i] = static_cast<float>(offset - static_cast<double>(whole));
+                }
+                v.position = end;
+                v.rate = rate0 + blockLength * rateStep;
             }
-            v.position = x;
-            v.rate = rate;
+            else
+            {
+                // The loop's end falls in this block: step by step, wrapping.
+                double x = x0;
+                double rate = rate0;
+                const double loopLength = v.loopEnd - v.loopStart;
+                for (int i = 0; i < m; ++i)
+                {
+                    rate += rateStep;
+                    const auto index = static_cast<std::int64_t>(x);
+                    indices[i] = index;
+                    fractions[i] = static_cast<float>(x - static_cast<double>(index));
+                    x += rate;
+                    if (x >= v.loopEnd)
+                        x -= loopLength;
+                }
+                v.position = x;
+                v.rate = rate;
+            }
             v.played += m;
             const float* second = channels > 1 ? data[1] : data[0];
             if (draft)
@@ -758,7 +810,19 @@ void SamplerDevice::renderVoice(Voice& v, float* left, float* right, int numSamp
         const float gainR = velocityGain * v.panR * 1.41421356f;
         float* outL = left + start;
         float* outR = right + start;
-        for (int i = 0; i < rendered; ++i)
+        int i = 0;
+#if LATTICE_SAMPLER_SSE
+        const __m128 gl = _mm_set1_ps(gainL), gr = _mm_set1_ps(gainR);
+        for (; i + 4 <= rendered; i += 4)
+        {
+            const __m128 e = _mm_loadu_ps(env + i);
+            const __m128 l = _mm_mul_ps(_mm_mul_ps(_mm_loadu_ps(block[0] + i), e), gl);
+            const __m128 r = _mm_mul_ps(_mm_mul_ps(_mm_loadu_ps(block[1] + i), e), gr);
+            _mm_storeu_ps(outL + i, _mm_add_ps(_mm_loadu_ps(outL + i), l));
+            _mm_storeu_ps(outR + i, _mm_add_ps(_mm_loadu_ps(outR + i), r));
+        }
+#endif
+        for (; i < rendered; ++i)
         {
             outL[i] += block[0][i] * env[i] * gainL;
             outR[i] += block[1][i] * env[i] * gainR;

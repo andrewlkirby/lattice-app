@@ -369,7 +369,8 @@ Where the code differs from the plan above, and why. Each device's header descri
 - **Sample interpolation (deviation):** the windowed-sinc kernel has 64 taps at unity, not 32.
   32 taps can't give both −90 dB aliasing and 0.1 dB flatness to 0.9 × Nyquist; 64 do (measured).
   Kernels are stored for 33 bandwidths (1/8 octave apart, down to 4 octaves up), polyphase with
-  linear interpolation between phases.
+  linear interpolation between phases (each row stored with its difference to the next). The
+  block interpolators take four positions per step (docs/perf/avx2-plan.md, step 4).
 - **CPU dispatch:** AVX2 + FMA kernels live in `*Avx2.cpp` files, compiled alone with the AVX2 flags
   and outside link-time optimisation, and are chosen at run time (`SincBlock.h`). Only the
   Sampler's sinc path uses one so far.

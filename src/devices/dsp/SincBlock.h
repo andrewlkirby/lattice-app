@@ -14,7 +14,9 @@ enum class SimdLevel : std::uint8_t; // devices/dsp/Simd.h (not included: see ab
 /** One kernel level, as the block interpolator needs it. */
 struct SincKernelView
 {
-    const float* rows = nullptr; // (phases + 1) rows of `stride` weights
+    /** `phases` rows of 2 x `stride` floats, 64-byte aligned: a phase's weights, then their
+        differences to the next phase's (so interpolating between phases is one multiply-add). */
+    const float* rows = nullptr;
     int taps = 0;
     int stride = 0; // a multiple of 8
     int phases = 0;

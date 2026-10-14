@@ -434,3 +434,67 @@ TEST_CASE("SIMD paths: oscillator kernel timings", "[.][bench][simd]")
                             1.0e9 * seconds / (static_cast<double>(blocks) * voices * 8 * block), l[5]);
             }
 }
+
+TEST_CASE("SIMD paths: sinc kernel timings", "[.][bench][simd]")
+{
+    // ns per output sample: lattice_tests "[bench][simd]". 32 voices, 64 positions per block,
+    // either on the Sampler benchmark's notes (MIDI 48-79 from a root at 60, a 44.1 kHz sample at
+    // 48 kHz: 12 kernel levels, whose tables don't fit in L2) or all on the unity level (one table).
+    const auto& bank = dsp::SincKernelBank::get();
+    const int pad = bank.maxTaps() / 2 + 8;
+    const std::size_t length = 1 << 16;
+    std::vector<float> left(length + 2 * static_cast<std::size_t>(pad)), right(left.size());
+    std::mt19937 rng(5);
+    std::uniform_real_distribution<float> noise(-1.0f, 1.0f);
+    for (std::size_t i = 0; i < length; ++i)
+    {
+        left[i + static_cast<std::size_t>(pad)] = noise(rng);
+        right[i + static_cast<std::size_t>(pad)] = noise(rng);
+    }
+    const float* s0 = left.data() + pad;
+    const float* s1 = right.data() + pad;
+    constexpr int voices = 32;
+    constexpr int block = 64;
+    for (const bool spread : {true, false})
+        for (const auto level : availableSimdLevels())
+            for (const bool stereo : {true, false})
+            {
+                double rates[voices];
+                double positions[voices];
+                double taps = 0.0;
+                for (int v = 0; v < voices; ++v)
+                {
+                    rates[v] = spread ? std::exp2((48 + v - 60) / 12.0) * 44100.0 / 48000.0 : 0.9 + 0.001 * v;
+                    positions[v] = 1000.0 + 37.3 * v;
+                    taps += bank.levelFor(rates[v]).taps;
+                }
+                const auto kernel = dsp::sincBlockFor(level);
+                std::int64_t index[block];
+                float fraction[block];
+                float outL[block], outR[block];
+                float check = 0.0f;
+                constexpr int blocks = 4000;
+                double busy = 0.0;
+                for (int b = 0; b < blocks; ++b)
+                    for (int v = 0; v < voices; ++v)
+                    {
+                        double x = positions[v];
+                        for (int i = 0; i < block; ++i)
+                        {
+                            index[i] = static_cast<std::int64_t>(x);
+                            fraction[i] = static_cast<float>(x - std::floor(x));
+                            x += rates[v];
+                        }
+                        positions[v] = x >= static_cast<double>(length - 2000) ? 1000.0 : x;
+                        const auto view = bank.levelFor(rates[v]).view();
+                        const auto t0 = std::chrono::steady_clock::now();
+                        kernel(view, s0, stereo ? s1 : s0, index, fraction, block, outL, outR);
+                        busy += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+                        check += outL[3] + outR[7];
+                    }
+                const double samples = static_cast<double>(blocks) * voices * block;
+                std::printf("%-14s %-6s %-14s %.2f ns per sample, %.3f ns per tap (%.3f)\n", dsp::simdLevelName(level),
+                            stereo ? "stereo" : "mono", spread ? "notes 48-79" : "unity level", 1.0e9 * busy / samples,
+                            1.0e9 * busy / samples / (taps / voices), check);
+            }
+}
