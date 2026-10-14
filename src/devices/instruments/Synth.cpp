@@ -1,8 +1,8 @@
 #include "devices/instruments/Synth.h"
 
 #include "devices/dsp/OscillatorSimd.h"
+#include "devices/dsp/Simd.h"
 #include "devices/dsp/SyncRates.h"
-#include "devices/dsp/VoiceFilterSimd.h"
 
 #include <algorithm>
 #include <cmath>
@@ -197,6 +197,7 @@ void SynthDevice::prepare(double sr, int)
         v.env2.setSampleRate(sr);
     }
     gainStep = static_cast<float>(1.0 / (0.02 * sr));
+    voiceFilters.prepare(dsp::simdLevel()); // the CPU's best
     reset();
 }
 
@@ -658,7 +659,7 @@ void SynthDevice::renderSegment(float* left, float* right, int numSamples, const
         svfMode = dsp::SvfMode::Notch;
 
     // Each control block in three stages: every voice's oscillators, then all the voice filters
-    // side by side (four per SIMD register), then every voice's amplitude and pan.
+    // side by side (several per SIMD register), then every voice's amplitude and pan.
     for (int start = 0; start < numSamples; start += controlBlock)
     {
         const int m = std::min(controlBlock, numSamples - start);
@@ -689,9 +690,9 @@ void SynthDevice::renderSegment(float* left, float* right, int numSamples, const
         }
 
         if (ladder)
-            dsp::VoiceFilterSimd::ladder(lanes.data(), numLanes, m, patch.drive);
+            voiceFilters.ladder(lanes.data(), numLanes, m, patch.drive);
         else
-            dsp::VoiceFilterSimd::svf(lanes.data(), numLanes, m, steep, svfMode, patch.drive);
+            voiceFilters.svf(lanes.data(), numLanes, m, steep, svfMode, patch.drive);
 
         for (int i = 0; i < numActive; ++i)
             finishVoiceBlock(*active[static_cast<std::size_t>(i)], left + start, right + start, m);

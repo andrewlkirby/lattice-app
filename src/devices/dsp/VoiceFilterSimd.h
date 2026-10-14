@@ -3,6 +3,7 @@
 #include "core/RealtimeCheck.h"
 #include "devices/dsp/Ladder.h"
 #include "devices/dsp/Svf.h"
+#include "devices/dsp/VoiceFilterKernels.h"
 
 namespace lattice::dsp
 {
@@ -19,26 +20,37 @@ struct FilterLane
     float resonance = 0.0f;
 };
 
-/** Runs the voice filters of several voices side by side, four per SSE register
-    (docs/04-m3-devices.md, "Filters", and the performance charter: SIMD across voices). A filter's
-    feedback makes each one a serial chain; four independent chains in the lanes of one register
-    run in about the time of one.
+/** Runs the voice filters of several voices side by side, as many per register as the
+    instruction set holds (4 with SSE2, 8 with AVX2), and two registers at a time where there are
+    enough voices (docs/04-m3-devices.md, "Filters"; docs/perf/avx2-plan.md, step 2). A filter's
+    feedback makes each one a serial chain; independent chains in the lanes of a register run in
+    about the time of one.
 
     Coefficients follow each lane's g in steps of coefficientStep samples, as the scalar path does,
-    and the results match the scalar filters (to float rounding). Falls back to the scalar filters
-    where SSE2 isn't available. */
-struct VoiceFilterSimd
+    and the results match the scalar filters to float rounding (the kernels use a refined
+    reciprocal estimate where the scalar filters divide). The kernels are chosen in prepare(). */
+class VoiceFilterSimd
 {
-    static constexpr int coefficientStep = 8;
+public:
+    static constexpr int coefficientStep = voiceFilterCoefficientStep;
 
-    static void svf(FilterLane* lanes, int count, int numSamples, bool steep, SvfMode mode,
-                    float inputGain) noexcept LATTICE_NONBLOCKING;
-    static void ladder(FilterLane* lanes, int count, int numSamples, float drive) noexcept LATTICE_NONBLOCKING;
+    /** The generic kernels (SSE2 on x86-64) until prepare() picks others. */
+    VoiceFilterSimd() noexcept;
 
-    /** The scalar versions (one lane), also used for the lanes left over. */
+    /** Picks the kernels for `level` (dsp/Simd.h). Not on the audio thread. */
+    void prepare(SimdLevel level) noexcept;
+
+    void svf(FilterLane* lanes, int count, int numSamples, bool steep, SvfMode mode,
+             float inputGain) const noexcept LATTICE_NONBLOCKING;
+    void ladder(FilterLane* lanes, int count, int numSamples, float drive) const noexcept LATTICE_NONBLOCKING;
+
+    /** One lane on the filter objects themselves: the reference the kernels are tested against. */
     static void svfScalar(FilterLane& lane, int numSamples, bool steep, SvfMode mode,
                           float inputGain) noexcept LATTICE_NONBLOCKING;
     static void ladderScalar(FilterLane& lane, int numSamples, float drive) noexcept LATTICE_NONBLOCKING;
+
+private:
+    VoiceFilterKernels kernels;
 };
 
 } // namespace lattice::dsp

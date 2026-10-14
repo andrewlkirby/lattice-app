@@ -52,6 +52,33 @@ pattern instead of hardware gathers. `vdivps` gains little from 256 bits, so div
   rest.
 - The SVF voice filters (the Synth's other filter types, within budget today) get the same 8-lane
   treatment since the pattern is identical.
+- As built (2026-10-13): the kernels are written once (`VoiceFilterKernels.inl`, over a small
+  SIMD traits type) and compiled for SSE2 in `VoiceFilterSimd.cpp` and for AVX2 + FMA in
+  `VoiceFilterSimdAvx2.cpp`. The state is plain data (`VoiceFilterKernels.h`: `LadderState`,
+  `HalfBandState`, `AllpassState`, `SvfStageState`), owned by `LadderFilter`, `HalfBand2x` and
+  `Svf`. The Synth picks the kernels in `prepare()`.
+  - **What the profile showed:** one register of lanes is limited by the length of the filter's
+    feedback chain, not by the divisions (on Zen 3, `divps` has about the latency of `rcp` plus a
+    Newton step). So besides removing the divisions:
+    - two registers run interleaved whenever there are more lanes than one register holds
+      (SSE2: 11.2 → 8.8 ns per lane-sample);
+    - samples move in and out with 4 × 4 or 8 × 8 transposes instead of per-sample gathers;
+    - the voice design's all-pass branches (three sections each) are unrolled, which saves
+      another 10%.
+  - **Kernel timings** (`lattice_tests "[bench][simd]"`, 16 lanes, ns per lane-sample):
+
+    | Filter | SSE2 | AVX2 |
+    |---|---|---|
+    | Ladder | 8.0 | 4.7 |
+    | SVF 24 dB | 1.5 | 1.0 |
+    | SVF 12 dB | 1.1 | 0.75 |
+  - **Result:** the Synth's 16-voice ladder case goes from 2.55% to 2.0% with AVX2 (2.25% with
+    SSE2). The ladder itself now takes about 0.36% of a core. The rest of that case is the
+    oscillators and other per-voice work, so the 1.6% target moves to step 3.
+  - **Tests:**
+    - every kernel against the scalar filters at each level, for 1–33 lanes and 1–64-sample
+      blocks, with state carried across blocks;
+    - the Synth rendered at each level must match within 1e-5.
 
 ## 3. Oscillators (Synth unison 4: 2.7% → about 1.8%)
 

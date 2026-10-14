@@ -9,8 +9,6 @@
 namespace lattice::dsp
 {
 
-struct VoiceFilterSimd;
-
 /** A fast tanh: a rational approximation, exact at 0, within 0.2% everywhere, saturating at +-1. */
 inline float fastTanh(float x) noexcept
 {
@@ -30,12 +28,9 @@ inline float fastTanh(float x) noexcept
 class LadderFilter
 {
 public:
-    friend struct VoiceFilterSimd; // processes four filters at once, on their state
-
     void reset() noexcept
     {
-        s1 = s2 = s3 = s4 = 0.0f;
-        lastArgument = 0.0f;
+        st = LadderState{};
         oversampler.reset();
     }
 
@@ -67,10 +62,15 @@ public:
         return oversampler.downsample(ya, yb) * outputGain;
     }
 
+    /** The plain state the voice filter kernels run on (VoiceFilterKernels.h). */
+    LadderState& state() noexcept { return st; }
+    HalfBandState& oversamplerState() noexcept { return oversampler.state(); }
+
 private:
     float tick(float u) noexcept LATTICE_NONBLOCKING
     {
         // Linearise the input saturation around the previous sample: tanh(a) = t a.
+        auto& [s1, s2, s3, s4, lastArgument] = st;
         const float t = std::abs(lastArgument) < 1.0e-4f ? 1.0f : fastTanh(lastArgument) / lastArgument;
         const float G2 = G * G;
         const float G4 = G2 * G2;
@@ -96,10 +96,9 @@ private:
     }
 
     HalfBand2x oversampler;
-    float s1 = 0.0f, s2 = 0.0f, s3 = 0.0f, s4 = 0.0f;
+    LadderState st{};
     float G = 0.0f, beta = 1.0f, k = 0.0f;
     float inputGain = 1.0f, outputGain = 1.0f;
-    float lastArgument = 0.0f;
 };
 
 } // namespace lattice::dsp

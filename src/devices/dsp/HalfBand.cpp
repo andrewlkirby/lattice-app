@@ -89,11 +89,11 @@ HalfBand2x::HalfBand2x(const HalfBandDesign& design)
     count = std::min(static_cast<int>(design.coefficients.size()), maxCoefficients);
     for (int i = 0; i < count; ++i)
     {
-        auto& chainUp = (i % 2 == 0) ? upA : upB;
-        auto& chainDown = (i % 2 == 0) ? downA : downB;
+        auto& chainUp = (i % 2 == 0) ? s.upA : s.upB;
+        auto& chainDown = (i % 2 == 0) ? s.downA : s.downB;
         const auto c = static_cast<float>(design.coefficients[static_cast<std::size_t>(i)]);
-        chainUp.c[static_cast<std::size_t>(chainUp.n++)] = c;
-        chainDown.c[static_cast<std::size_t>(chainDown.n++)] = c;
+        chainUp.c[chainUp.n++] = c;
+        chainDown.c[chainDown.n++] = c;
     }
 }
 
@@ -106,24 +106,23 @@ HalfBand2x::HalfBand2x() : HalfBand2x([] {
 
 void HalfBand2x::reset() noexcept
 {
-    upA.reset();
-    upB.reset();
-    downA.reset();
-    downB.reset();
-    downDelay = 0.0f;
+    for (auto* chain : {&s.upA, &s.upB, &s.downA, &s.downB})
+        for (int i = 0; i < allpassMaxSections; ++i)
+            chain->x[i] = chain->y[i] = 0.0f;
+    s.downDelay = 0.0f;
 }
 
 void HalfBand2x::upsample(float in, float& out0, float& out1) noexcept
 {
-    out0 = upA.process(in);
-    out1 = upB.process(in);
+    out0 = process(s.upA, in);
+    out1 = process(s.upB, in);
 }
 
 float HalfBand2x::downsample(float in0, float in1) noexcept
 {
-    const float a = downA.process(in0);
-    const float b = downB.process(downDelay);
-    downDelay = in1;
+    const float a = process(s.downA, in0);
+    const float b = process(s.downB, s.downDelay);
+    s.downDelay = in1;
     return 0.5f * (a + b);
 }
 

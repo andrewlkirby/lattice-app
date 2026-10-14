@@ -4,6 +4,7 @@
 #include "devices/dsp/Ladder.h"
 #include "devices/dsp/Lfo.h"
 #include "devices/dsp/Svf.h"
+#include "devices/dsp/VoiceFilterSimd.h"
 #include "devices/dsp/Wavetable.h"
 #include "devices/framework/StudioDevice.h"
 #include "tuning/TrackTuning.h"
@@ -227,6 +228,7 @@ private:
     const TrackTuning& tuning;
     const dsp::WaveformLibrary& waves;
     std::array<Voice, voiceSlots> voices;
+    dsp::VoiceFilterSimd voiceFilters; // kernels chosen in prepare() (dsp/Simd.h)
     std::uint64_t noteCounter = 0;
     float bend = 0.0f;
     float modWheel = 0.0f;

@@ -168,6 +168,7 @@ add_library(lattice_core STATIC
     src/devices/dsp/SincBlockAvx2.cpp
     src/devices/dsp/SincResampler.cpp
     src/devices/dsp/VoiceFilterSimd.cpp
+    src/devices/dsp/VoiceFilterSimdAvx2.cpp
     src/devices/dsp/Wavetable.cpp
     src/devices/effects/AutoFilter.cpp
     src/devices/effects/Chorus.cpp

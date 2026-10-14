@@ -2,13 +2,12 @@
 
 #include "core/RealtimeCheck.h"
 
-#include <array>
+#include "devices/dsp/VoiceFilterKernels.h"
+
 #include <vector>
 
 namespace lattice::dsp
 {
-
-struct VoiceFilterSimd;
 
 /** Coefficients of a polyphase IIR half-band filter: two parallel chains of first-order all-pass
     sections (elliptic design, after Laurent de Soras' HIIR). Cheap and steep, with a small
@@ -23,13 +22,12 @@ struct HalfBandDesign
 };
 
 /** 2x up- and down-sampling with a half-band design of up to maxCoefficients sections. Fixed
-    size, no allocation after construction. One channel. */
+    size, no allocation after construction. One channel. Its state is plain data (HalfBandState),
+    which the voice filter kernels run on directly. */
 class HalfBand2x
 {
 public:
-    friend struct VoiceFilterSimd; // processes four filters at once, on their state
-
-    static constexpr int maxCoefficients = 16;
+    static constexpr int maxCoefficients = allpassMaxSections;
 
     explicit HalfBand2x(const HalfBandDesign& design);
     /** The design every voice filter uses: 80 dB down, transition 0.08 of the oversampled rate
@@ -45,35 +43,22 @@ public:
 
     int numCoefficients() const noexcept { return count; }
 
+    HalfBandState& state() noexcept { return s; }
+
 private:
-    struct Chain
+    static float process(AllpassState& chain, float in) noexcept LATTICE_NONBLOCKING
     {
-        std::array<float, maxCoefficients> c{};
-        std::array<float, maxCoefficients> x{}; // previous input of each section
-        std::array<float, maxCoefficients> y{}; // previous output of each section
-        int n = 0;
-
-        float process(float in) noexcept LATTICE_NONBLOCKING
+        for (int i = 0; i < chain.n; ++i)
         {
-            for (int i = 0; i < n; ++i)
-            {
-                const float out = c[static_cast<std::size_t>(i)] * (in - y[static_cast<std::size_t>(i)]) +
-                                  x[static_cast<std::size_t>(i)];
-                x[static_cast<std::size_t>(i)] = in;
-                y[static_cast<std::size_t>(i)] = out;
-                in = out;
-            }
-            return in;
+            const float out = chain.c[i] * (in - chain.y[i]) + chain.x[i];
+            chain.x[i] = in;
+            chain.y[i] = out;
+            in = out;
         }
-        void reset() noexcept
-        {
-            x.fill(0.0f);
-            y.fill(0.0f);
-        }
-    };
+        return in;
+    }
 
-    Chain upA, upB, downA, downB;
-    float downDelay = 0.0f;
+    HalfBandState s{};
     int count = 0;
 };
 

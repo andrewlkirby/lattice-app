@@ -362,7 +362,8 @@ Where the code differs from the plan above, and why. Each device's header descri
 ### DSP building blocks (`src/devices/dsp/`)
 - Oscillators: mipmapped band-limited wavetables (2 tables per octave, crossfaded), SSE paths that
   run 4 unison copies or voices at once. Filters: TPT SVF, the nonlinear ZDF ladder at 2× through
-  half-band filters, matched biquads, and `VoiceFilterSimd` (4 voice filters per SSE register).
+  half-band filters, matched biquads, and `VoiceFilterSimd` (voice filters side by side: 4 per SSE
+  register, 8 per AVX2 register, two registers interleaved; docs/perf/avx2-plan.md, step 2).
   Envelopes render in blocks. Delay lines interpolate with Lagrange; `LevelDetector` for dynamics.
 - **Sample interpolation (deviation):** the windowed-sinc kernel has 64 taps at unity, not 32.
   32 taps can't give both −90 dB aliasing and 0.1 dB flatness to 0.9 × Nyquist; 64 do (measured).

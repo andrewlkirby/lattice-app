@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/RealtimeCheck.h"
+#include "devices/dsp/VoiceFilterKernels.h"
 
 #include <algorithm>
 #include <cmath>
@@ -8,16 +9,6 @@
 
 namespace lattice::dsp
 {
-
-struct VoiceFilterSimd;
-
-enum class SvfMode : std::uint8_t
-{
-    LowPass,
-    HighPass,
-    BandPass,
-    Notch
-};
 
 /** Coefficients of a topology-preserving-transform state-variable filter (Zavalishin, "The Art of
     VA Filter Design"; the form used by Simper). Cutoff is prewarped, so the analog response is hit
@@ -52,11 +43,11 @@ struct SvfCoefficients
     }
 };
 
-/** One 12 dB/octave TPT SVF stage. */
-struct SvfStage
+/** One 12 dB/octave TPT SVF stage (its state is plain data, which the voice filter kernels run
+    on: VoiceFilterKernels.h). */
+struct SvfStage : SvfStageState
 {
-    float ic1 = 0.0f;
-    float ic2 = 0.0f;
+    SvfStage() noexcept : SvfStageState{0.0f, 0.0f} {}
 
     void reset() noexcept
     {
@@ -91,8 +82,6 @@ struct SvfStage
 class Svf
 {
 public:
-    friend struct VoiceFilterSimd; // processes four filters at once, on their state
-
     void reset() noexcept
     {
         first.reset();

@@ -424,9 +424,9 @@ TEST_CASE("Delay line: integer delays are exact, fractional ones accurate", "[de
     CHECK(worst < 1e-3);
 }
 
-TEST_CASE("Voice filters: four at once give the same output as one at a time", "[devices][dsp][filter]")
+TEST_CASE("Voice filters: side by side they give the same output as one at a time", "[devices][dsp][filter]")
 {
-    constexpr int lanesCount = 6; // one SIMD group of four, then two scalar lanes
+    constexpr int lanesCount = 6; // more than one register, and padding
     constexpr int n = 64;
     for (const bool useLadder : {false, true})
     {
@@ -462,13 +462,13 @@ TEST_CASE("Voice filters: four at once give the same output as one at a time", "
             }
             if (useLadder)
             {
-                dsp::VoiceFilterSimd::ladder(lanesA.data(), lanesCount, n, 2.0f);
+                dsp::VoiceFilterSimd{}.ladder(lanesA.data(), lanesCount, n, 2.0f);
                 for (auto& lane : lanesB)
                     dsp::VoiceFilterSimd::ladderScalar(lane, n, 2.0f);
             }
             else
             {
-                dsp::VoiceFilterSimd::svf(lanesA.data(), lanesCount, n, true, dsp::SvfMode::LowPass, 1.5f);
+                dsp::VoiceFilterSimd{}.svf(lanesA.data(), lanesCount, n, true, dsp::SvfMode::LowPass, 1.5f);
                 for (auto& lane : lanesB)
                     dsp::VoiceFilterSimd::svfScalar(lane, n, true, dsp::SvfMode::LowPass, 1.5f);
             }
