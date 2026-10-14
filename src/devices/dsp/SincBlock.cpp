@@ -1,5 +1,6 @@
 #include "devices/dsp/SincBlock.h"
 
+#include "devices/dsp/Simd.h"
 #include "devices/dsp/SincResampler.h"
 
 #include <algorithm>
@@ -74,16 +75,19 @@ void hermiteBlock(const float* s0, const float* s1, const std::int64_t* index, c
         std::copy_n(outL, n, outR);
 }
 
-SincBlockFunction sincBlock() noexcept
+SincBlockFunction sincBlockFor(SimdLevel level) noexcept
 {
 #if LATTICE_HAVE_AVX2_KERNELS
-    static const SincBlockFunction best = juce::SystemStats::hasAVX2() && juce::SystemStats::hasFMA3()
-                                              ? &sincBlockAvx2
-                                              : &sincBlockGeneric;
-    return best;
-#else
-    return &sincBlockGeneric;
+    if (level == SimdLevel::Avx2)
+        return &sincBlockAvx2;
 #endif
+    juce::ignoreUnused(level);
+    return &sincBlockGeneric;
+}
+
+SincBlockFunction sincBlock() noexcept
+{
+    return sincBlockFor(simdLevel());
 }
 
 } // namespace lattice::dsp

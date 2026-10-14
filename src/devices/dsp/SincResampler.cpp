@@ -68,7 +68,6 @@ SincKernelBank::SincKernelBank()
 const SincKernelBank& SincKernelBank::get()
 {
     static const SincKernelBank bank;
-    (void)sincBlock(); // the CPU check, made here on the message thread rather than in playback
     return bank;
 }
 

@@ -163,6 +163,7 @@ add_library(lattice_core STATIC
     src/devices/dsp/Biquad.cpp
     src/devices/dsp/FirHalfBand.cpp
     src/devices/dsp/HalfBand.cpp
+    src/devices/dsp/Simd.cpp
     src/devices/dsp/SincBlock.cpp
     src/devices/dsp/SincBlockAvx2.cpp
     src/devices/dsp/SincResampler.cpp
@@ -236,11 +237,13 @@ add_library(lattice_alloc_hooks OBJECT src/core/AllocationHooks.cpp)
 target_link_libraries(lattice_alloc_hooks PRIVATE lattice_core)
 lattice_set_warnings(lattice_alloc_hooks)
 
-# AVX2 + FMA kernels (*Avx2.cpp), chosen at run time on CPUs that have them. Only these files get
-# the flags; they include nothing but intrinsics and plain interfaces (see SincBlock.h), and they
-# stay out of link-time optimisation, so their code is never inlined into code for any CPU.
+# AVX2 + FMA kernels: every *Avx2.cpp in lattice_core, chosen at run time on CPUs that have them
+# (devices/dsp/Simd.h, docs/perf/avx2-plan.md). Only these files get the flags; they include
+# nothing but intrinsics and plain interfaces (see SincBlock.h), and they stay out of link-time
+# optimisation, so their code is never inlined into code for any CPU.
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|x86_64|amd64)$")
-    set(LATTICE_AVX2_SOURCES src/devices/dsp/SincBlockAvx2.cpp)
+    get_target_property(LATTICE_AVX2_SOURCES lattice_core SOURCES)
+    list(FILTER LATTICE_AVX2_SOURCES INCLUDE REGEX "Avx2[.]cpp$")
     if(MSVC)
         set_source_files_properties(${LATTICE_AVX2_SOURCES} PROPERTIES COMPILE_OPTIONS "/arch:AVX2;/GL-")
     else()

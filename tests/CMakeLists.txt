@@ -23,6 +23,7 @@ add_executable(lattice_tests
     devices/PresetTests.cpp
     devices/RackTests.cpp
     devices/SamplerTests.cpp
+    devices/SimdTests.cpp
     devices/SynthTests.cpp
     devices/TuningTestSynthTests.cpp
     engine/AudioEngineTests.cpp
@@ -50,6 +51,15 @@ catch_discover_tests(lattice_tests
     ADD_TAGS_AS_LABELS
     DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 120)
+
+# The device tests again on the SSE2 kernels (docs/perf/avx2-plan.md, "Testing"): on an AVX2
+# machine the run above takes the AVX2 paths, this one the SSE2 ones.
+add_test(NAME "Device tests on the SSE2 kernels"
+         COMMAND lattice_tests "[devices]~[heavy]~[slow]~[bench]~[timing]~[stress]")
+set_tests_properties("Device tests on the SSE2 kernels" PROPERTIES
+    ENVIRONMENT "LATTICE_SIMD=sse2"
+    LABELS "devices;simd"
+    TIMEOUT 900)
 
 # Engine benchmark: renders the performance reference set offline (docs/09-performance-charter.md).
 # scripts/linux-test.sh --callgrind counts its instructions against docs/perf/baselines/.

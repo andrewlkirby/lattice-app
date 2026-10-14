@@ -1,5 +1,7 @@
 #include "app/MainWindow.h"
 
+#include "devices/dsp/Simd.h"
+
 namespace lattice
 {
 namespace
@@ -157,7 +159,7 @@ void AudioPanel::timerCallback()
              << "Overruns: " << juce::String(static_cast<juce::int64>(s.overruns))
              << " callbacks longer than one buffer;  device xruns: " << dm.getXRunCount() << "\n"
              << "Calls:    " << juce::String(static_cast<juce::int64>(s.callbacks)) << ";  worker threads: "
-             << engine.workerThreads() << "\n"
+             << engine.workerThreads() << ";  SIMD: " << dsp::simdLevelName(dsp::simdLevel()) << "\n"
              << "Input:    MIDI in -> block handed to the driver: ";
         if (latency.count == 0)
             text << "no notes yet";

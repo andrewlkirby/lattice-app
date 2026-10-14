@@ -173,6 +173,7 @@ private:
     float outGainLeft = 0.5f;
     float outGainRight = 0.5f;
     float gainStep = 0.001f;
+    dsp::SincBlockFunction interpolateBlock = &dsp::sincBlockGeneric; // chosen in prepare()
 };
 
 } // namespace lattice

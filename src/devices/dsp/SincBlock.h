@@ -9,6 +9,8 @@
 namespace lattice::dsp
 {
 
+enum class SimdLevel : std::uint8_t; // devices/dsp/Simd.h (not included: see above)
+
 /** One kernel level, as the block interpolator needs it. */
 struct SincKernelView
 {
@@ -30,14 +32,16 @@ void sincBlockGeneric(const SincKernelView& k, const float* s0, const float* s1,
                       const float* fraction, int n, float* outL, float* outR) noexcept;
 #if defined(_M_X64) || defined(_M_AMD64) || defined(__x86_64__)
 #define LATTICE_HAVE_AVX2_KERNELS 1
-/** AVX2 + FMA: only call it when the CPU has both (sincBlock() checks). */
+/** AVX2 + FMA: only where the CPU has both (sincBlockFor(SimdLevel::Avx2) gives it). */
 void sincBlockAvx2(const SincKernelView& k, const float* s0, const float* s1, const std::int64_t* index,
                    const float* fraction, int n, float* outL, float* outR) noexcept;
 #else
 #define LATTICE_HAVE_AVX2_KERNELS 0
 #endif
 
-/** The best implementation for this CPU, chosen once. */
+/** The implementation for a SIMD level (devices choose in prepare(): dsp/Simd.h). */
+SincBlockFunction sincBlockFor(SimdLevel level) noexcept;
+/** The implementation for the current simdLevel(). */
 SincBlockFunction sincBlock() noexcept;
 
 /** Cubic Hermite (Catmull-Rom) over a block of positions, the Sampler's "Draft" quality: four

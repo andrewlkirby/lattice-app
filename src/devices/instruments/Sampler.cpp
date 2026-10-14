@@ -1,5 +1,6 @@
 #include "devices/instruments/Sampler.h"
 
+#include "devices/dsp/Simd.h"
 #include "devices/dsp/SyncRates.h"
 
 #include <algorithm>
@@ -128,6 +129,7 @@ void SamplerDevice::prepare(double sr, int)
     for (auto& v : voices)
         v.amp.setSampleRate(sr);
     gainStep = static_cast<float>(1.0 / (0.02 * sr));
+    interpolateBlock = dsp::sincBlockFor(dsp::simdLevel()); // the CPU's best (dsp/Simd.h)
     sources.resetReader();
     active = nullptr;
     switching = false;
@@ -573,7 +575,6 @@ void SamplerDevice::renderVoice(Voice& v, float* left, float* right, int numSamp
     const int channels = sample.numChannels;
     const bool draft = juce::roundToInt(value(P::quality)) == static_cast<int>(Quality::Draft);
     const auto& bank = dsp::SincKernelBank::get();
-    const auto interpolateBlock = dsp::sincBlock();
     const double sr = sampleRate();
     const float velocityGain = (1.0f - value(P::ampVelocity)) + value(P::ampVelocity) * v.velocity * v.velocity;
     const bool filterOn = value(P::filterOn) >= 0.5f;

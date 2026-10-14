@@ -1,8 +1,11 @@
 // Device benchmarks (docs/04-m3-devices.md, "Tests" 11): each device at 48 kHz with 64- and
 // 256-sample blocks, reported as the share of one core it needs in real time.
 //
-//   lattice_bench [--seconds N] [--filter name]
+//   lattice_bench [--seconds N] [--filter name] [--simd sse2|avx2]
+//
+// --simd runs the kernels of that SIMD level (at most the CPU's; devices/dsp/Simd.h).
 
+#include "devices/dsp/Simd.h"
 #include "devices/effects/AutoFilter.h"
 #include "devices/effects/Chorus.h"
 #include "devices/effects/Compressor.h"
@@ -102,6 +105,11 @@ int main(int argc, char* argv[])
             seconds = std::atof(argv[++i]);
         else if (std::strcmp(argv[i], "--filter") == 0 && i + 1 < argc)
             filter = argv[++i];
+        else if (std::strcmp(argv[i], "--simd") == 0 && i + 1 < argc)
+        {
+            const std::string level = argv[++i];
+            dsp::setSimdLevel(level == "sse2" ? dsp::SimdLevel::Sse2 : dsp::SimdLevel::Avx2);
+        }
     }
 
     static TrackTuning tuning(Tet12::make());
@@ -179,6 +187,7 @@ int main(int argc, char* argv[])
          16},
     };
 
+    std::printf("SIMD: %s (CPU: %s)\n", dsp::simdLevelName(dsp::simdLevel()), dsp::simdLevelName(dsp::cpuSimdLevel()));
     std::printf("%-40s %10s %10s %8s\n", "device", "64 smp %", "256 smp %", "budget");
     bool allWithin = true;
     for (const auto& c : cases)
