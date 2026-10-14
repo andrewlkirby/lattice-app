@@ -39,6 +39,34 @@ public:
             buffer[static_cast<std::size_t>(mask + 1 + writePos)] = x;
     }
 
+    /** n samples, oldest first: as n calls of push(). */
+    void pushBlock(const float* x, int n) noexcept LATTICE_NONBLOCKING
+    {
+        for (int done = 0; done < n;)
+        {
+            const int at = (writePos + 1) & mask;
+            const int run = std::min(n - done, mask + 1 - at);
+            std::copy(x + done, x + done + run, buffer.begin() + at);
+            for (int i = at; i < std::min(at + run, guard); ++i)
+                buffer[static_cast<std::size_t>(mask + 1 + i)] = buffer[static_cast<std::size_t>(i)];
+            writePos = (at + run - 1) & mask;
+            done += run;
+        }
+    }
+
+    /** The n samples from delay `newest + n - 1` down to delay `newest`, oldest first, in at most
+        two runs of memory: f(samples, count, index of the first among the n). newest + n - 1 must
+        be at most capacity(). */
+    template <typename F>
+    void forEachRun(int newest, int n, F&& f) const noexcept LATTICE_NONBLOCKING
+    {
+        const int start = (writePos - newest - (n - 1)) & mask;
+        const int first = std::min(n, mask + 1 - start);
+        f(buffer.data() + start, first, 0);
+        if (first < n)
+            f(buffer.data(), n - first, first);
+    }
+
     /** The four points around delay `whole` in memory order: delays whole + 2, whole + 1, whole and
         whole - 1 (what read() interpolates between). */
     const float* window(int whole) const noexcept LATTICE_NONBLOCKING

@@ -203,6 +203,52 @@ pattern instead of hardware gathers. `vdivps` gains little from 256 bits, so div
   fixed between parameter changes), so the per-sample loop is plain loads and FMAs. The last
   attempt computed slot indices per sample and doubled the instruction count; this one computes
   them in `configure()`.
+- As built (2026-10-14):
+  - **What the profile showed:** the tail was 82% of Ultra and half of Eco, and most of it was
+    per-line bookkeeping, not arithmetic: each line's read position in double, a clamp, a
+    masked index per `DelayLine`, a scalar write. The input stage was most of the rest of Eco.
+  - **The tail kernel** (`dsp/ReverbTail.h`; AVX2 in `ReverbTailAvx2.cpp`, eight lines per
+    register; SSE2 in `ReverbTail.cpp`, four): the lines' memory and per-sample state are
+    structures of arrays in one allocation, written together at one shared position. Between
+    modulation updates (every 16 samples) each read position moves in a straight line, so the
+    device hands the kernel a whole-sample part and a small float part with its step; the kernel
+    needs only a truncation and a masked offset per line. Reads are four loads and a transpose,
+    then Lagrange interpolation, the three-band decay filters, the Householder feedback and the
+    stereo sums, as before. The read positions are now more exact than the old float delays.
+  - **Around the kernel:** the modulation's sine is a phasor turned each update (no `sin` per line
+    per update); the band gains are recomputed only when the decay settings, the modulation or a
+    gliding line length change (no `pow` per line per block); a glide that has arrived snaps to its
+    target.
+  - **The input stage in blocks** (all levels): the pre-delay, the 24 early-reflection taps and
+    the six diffusers each take the whole block. A delay line is written for the block and then
+    read along its memory in at most two runs (`DelayLine::pushBlock`, `forEachRun`), so each tap
+    is a multiply-add over contiguous samples; the diffusers go in runs no longer than their delay.
+    This gives the same samples as going one at a time.
+  - **Instructions** (callgrind, the benchmark): Ultra 571M → 222M (−61%), Eco 135M → 78M (−42%).
+  - **Result** (quiet machine, the previous and this build run alternately, three 10-second runs
+    each, 64 / 256-sample blocks):
+
+    | Reverb | Before | After, AVX2 | After, SSE2 |
+    |---|---|---|---|
+    | Ultra | 2.40 / 2.29% | 0.99 / 0.96% | 1.35 / 1.33% |
+    | High | 0.75 / 0.70% | 0.34 / 0.32% | 0.42 / 0.40% |
+    | Eco | 0.49 / 0.46% | 0.24 / 0.22% | 0.28 / 0.26% |
+
+    Every target is met with room: Ultra is under half its 2% budget, Eco under half of 0.5%.
+    With this step every device in `lattice_bench` is within its budget.
+  - **Stress test** (10 minutes, reference set, 64-sample blocks, after steps 1-5): no block late;
+    load 5.5% at the median, 7% at the 99th percentile; the worst single block took 88% of its
+    period (48.5% after step 4: one outlier, while the median and 99th percentile both fell).
+  - **Sound:** the new build's output matches the previous one's within 2.4e-5 of the peak (Eco,
+    High and Ultra, with early reflections, modulation and pre-delay). AVX2 and SSE2 differ by
+    about 5e-5 of the level: the tail recirculates for seconds, so each sample's rounding stays in
+    it. The difference is the same without FMA (only the order of the sums differs), steady from
+    the first trips round the lines to the end, so the device comparison allows 2e-4.
+  - Tests: both tail kernels against one line at a time in double (8, 16 and 32 lines, still,
+    modulated and gliding reads, runs of 1–7 samples, memory wrapping and its guard copies); the
+    Reverb rendered at each level; the Reverb's output the same at one sample per block, random
+    blocks and 512-sample blocks; `DelayLine`'s block writes and reads against `push()` and
+    `tap()`; the Reverb's quality tests (RT60 per band, resonances, freeze, denormals) unchanged.
 
 ## Order, checks and stopping rule
 

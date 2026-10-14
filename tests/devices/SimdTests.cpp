@@ -2,10 +2,12 @@
 // dsp::simdLevel() when they prepare, and every faster path matches the SSE2 one.
 
 #include "devices/dsp/OscillatorKernels.h"
+#include "devices/dsp/ReverbTail.h"
 #include "devices/dsp/Simd.h"
 #include "devices/dsp/SincBlock.h"
 #include "devices/dsp/VoiceFilterSimd.h"
 #include "devices/dsp/Wavetable.h"
+#include "devices/effects/Reverb.h"
 #include "devices/instruments/Sampler.h"
 #include "devices/instruments/Synth.h"
 #include "support/DeviceHarness.h"
@@ -497,4 +499,180 @@ TEST_CASE("SIMD paths: sinc kernel timings", "[.][bench][simd]")
                             stereo ? "stereo" : "mono", spread ? "notes 48-79" : "unity level", 1.0e9 * busy / samples,
                             1.0e9 * busy / samples / (taps / voices), check);
             }
+}
+
+namespace
+{
+/** The Reverb's tail one line and one sample at a time, in double: what the kernels must match. */
+void reverbTailReference(dsp::ReverbTailState& s, const float* in, int n, float* outL, float* outR)
+{
+    const int lines = s.count;
+    std::vector<double> outputs(static_cast<std::size_t>(lines));
+    for (int i = 0; i < n; ++i)
+    {
+        double sum = 0.0;
+        for (int l = 0; l < lines; ++l)
+        {
+            s.x[l] += s.step[l];
+            const auto t = static_cast<std::int32_t>(s.x[l]);
+            const double x = static_cast<double>(s.x[l]) - t;
+            const float* p = s.memory + s.start[l] +
+                             ((static_cast<std::int32_t>(s.writePos) - 2 - (s.whole[l] + t)) & s.mask[l]);
+            const double y2 = p[0], y1 = p[1], y0 = p[2], ym1 = p[3];
+            const double c1 = y1 - ym1 / 3.0 - 0.5 * y0 - y2 / 6.0;
+            const double c2 = 0.5 * (ym1 + y1) - y0;
+            const double c3 = (y2 - ym1) / 6.0 + 0.5 * (y0 - y1);
+            const double raw = ((c3 * x + c2) * x + c1) * x + y0;
+            const double low = s.low[l] + s.lowCoef * (raw - s.low[l]);
+            const double rest = raw - low;
+            const double high = s.high[l] + s.highCoef * (rest - s.high[l]);
+            s.low[l] = static_cast<float>(low);
+            s.high[l] = static_cast<float>(high);
+            outputs[static_cast<std::size_t>(l)] = s.lowGain[l] * low + s.midGain[l] * high + s.highGain[l] * (rest - high);
+            sum += outputs[static_cast<std::size_t>(l)];
+        }
+        double left = 0.0, right = 0.0;
+        const std::uint32_t next = s.writePos + 1;
+        for (int l = 0; l < lines; ++l)
+        {
+            const double out = outputs[static_cast<std::size_t>(l)];
+            const double sign = (l & 2) != 0 ? -1.0 : 1.0;
+            const auto feed = static_cast<float>(out - 2.0 / lines * sum + in[i] * sign);
+            const auto at = static_cast<std::int32_t>(next) & s.mask[l];
+            s.memory[s.start[l] + at] = feed;
+            if (at < dsp::reverbTailGuard)
+                s.memory[s.start[l] + s.mask[l] + 1 + at] = feed;
+            ((l & 1) == 0 ? left : right) += sign * out;
+        }
+        s.writePos = next;
+        outL[i] = static_cast<float>(left * s.outputNorm);
+        outR[i] = static_cast<float>(right * s.outputNorm);
+    }
+}
+
+/** A tail with short lines (128 to 512 samples, so runs cross the ends of their memory), noise in
+    them, and read positions that move by up to `drift` samples per sample. */
+struct TailFixture
+{
+    std::vector<float> memory;
+    dsp::ReverbTailState state{};
+
+    TailFixture(int count, std::uint32_t seed, float drift)
+    {
+        std::mt19937 rng(seed);
+        std::uniform_real_distribution<float> noise(-1.0f, 1.0f);
+        std::int32_t offset = 0;
+        for (int l = 0; l < count; ++l)
+        {
+            const std::int32_t size = 128 << (rng() % 3);
+            state.start[l] = offset;
+            state.mask[l] = size - 1;
+            offset += size + dsp::reverbTailGuard + 5; // starts unaligned
+        }
+        memory.resize(static_cast<std::size_t>(offset));
+        for (auto& v : memory)
+            v = noise(rng);
+        for (int l = 0; l < count; ++l)
+            for (int j = 0; j < dsp::reverbTailGuard; ++j)
+                memory[static_cast<std::size_t>(state.start[l] + state.mask[l] + 1 + j)] =
+                    memory[static_cast<std::size_t>(state.start[l] + j)];
+        state.memory = memory.data();
+        state.count = count;
+        state.writePos = rng(); // anywhere, including just before the counter wraps
+        state.lowCoef = 0.05f;
+        state.highCoef = 0.5f;
+        state.outputNorm = 0.3f;
+        for (int l = 0; l < count; ++l)
+        {
+            // Delays stay within 2 .. mask - 4 over 32 samples.
+            const int margin = 2 + static_cast<int>(32.0f * drift);
+            const int room = state.mask[l] - 6 - 2 * margin;
+            state.whole[l] = margin + static_cast<int>(rng() % static_cast<std::uint32_t>(room));
+            state.x[l] = 0.5f * (noise(rng) + 1.0f);
+            state.step[l] = drift * noise(rng);
+            state.low[l] = 0.1f * noise(rng);
+            state.high[l] = 0.1f * noise(rng);
+            state.lowGain[l] = 0.9f + 0.05f * noise(rng);
+            state.midGain[l] = 0.8f + 0.05f * noise(rng);
+            state.highGain[l] = 0.6f + 0.05f * noise(rng);
+        }
+    }
+};
+} // namespace
+
+TEST_CASE("SIMD paths: the Reverb's tail kernels match one line at a time", "[devices][dsp][effects][reverb][simd]")
+{
+    std::vector<float> input(32);
+    std::mt19937 rng(11);
+    std::uniform_real_distribution<float> noise(-1.0f, 1.0f);
+    for (auto& v : input)
+        v = noise(rng);
+
+    for (const auto level : availableSimdLevels())
+    {
+        INFO("SIMD level " << dsp::simdLevelName(level));
+        const auto kernel = dsp::reverbTailKernelFor(level);
+        for (const int count : {8, 16, 32})
+            for (const float drift : {0.0f, 0.3f, 1.5f}) // still, modulated, a size glide
+                for (std::uint32_t seed = 1; seed <= 4; ++seed)
+                {
+                    CAPTURE(count, drift, seed);
+                    TailFixture a(count, seed, drift);
+                    TailFixture b(count, seed, drift);
+                    std::vector<float> aL(32), aR(32), bL(32), bR(32);
+                    // Runs of 1, 2, 3 ... samples, as between modulation updates and block ends.
+                    for (int done = 0, run = 1; done < 32; done += run, ++run)
+                    {
+                        const int n = std::min(run, 32 - done);
+                        kernel(a.state, input.data() + done, n, aL.data() + done, aR.data() + done);
+                        reverbTailReference(b.state, input.data() + done, n, bL.data() + done, bR.data() + done);
+                    }
+                    float worst = 0.0f;
+                    for (std::size_t i = 0; i < 32; ++i)
+                        worst = std::max({worst, std::abs(aL[i] - bL[i]), std::abs(aR[i] - bR[i])});
+                    for (std::size_t i = 0; i < a.memory.size(); ++i)
+                        worst = std::max(worst, std::abs(a.memory[i] - b.memory[i]));
+                    CHECK(worst < 2.0e-5f);
+                    CHECK(a.state.writePos == b.state.writePos);
+                    bool guardsMatch = true; // the guard repeats each line's first samples exactly
+                    for (int l = 0; l < count; ++l)
+                        for (int j = 0; j < dsp::reverbTailGuard; ++j)
+                            guardsMatch = guardsMatch &&
+                                          a.memory[static_cast<std::size_t>(a.state.start[l] + a.state.mask[l] + 1 + j)] ==
+                                              a.memory[static_cast<std::size_t>(a.state.start[l] + j)];
+                    CHECK(guardsMatch);
+                }
+    }
+}
+
+TEST_CASE("SIMD paths: the Reverb sounds the same at every level", "[devices][effects][reverb][simd]")
+{
+    // The tail recirculates for seconds, so each sample's rounding stays in it: a different order
+    // of the same sums (even without FMA) leaves the paths about 5e-5 of the level apart, steady
+    // from the first trips round the lines to the end (docs/perf/avx2-plan.md, step 5).
+    constexpr float tolerance = 2.0e-4f;
+    for (const float quality : {0.0f, 1.0f, 2.0f}) // Eco, High, Ultra
+    {
+        CAPTURE(quality);
+        checkSimdPathsMatch([&] {
+            ReverbDevice reverb;
+            setParam(reverb, "reverb.quality", quality);
+            setParam(reverb, "reverb.mix", 1.0f);
+            setParam(reverb, "reverb.modulation", 1.0f);
+            setParam(reverb, "reverb.size", 0.3f);
+            DeviceHarness h(reverb);
+            std::uint32_t seed = 3;
+            h.inputSignal = [&seed](std::int64_t i) {
+                seed = seed * 1664525u + 1013904223u;
+                const float v = i < 6000 ? 0.5f * (static_cast<float>(seed >> 8) / 8388608.0f - 1.0f) : 0.0f;
+                return std::pair<float, float>{v, -0.5f * v};
+            };
+            h.renderTo(12000, 37);
+            setParam(reverb, "reverb.size", 0.8f); // the lines glide longer
+            h.renderTo(24000, 37);
+            std::vector<float> out = h.audioLeft;
+            out.insert(out.end(), h.audioRight.begin(), h.audioRight.end());
+            return out;
+        }, tolerance);
+    }
 }

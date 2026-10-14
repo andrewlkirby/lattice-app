@@ -1,22 +1,17 @@
 #include "devices/effects/Reverb.h"
 
+#include "devices/dsp/Simd.h"
 #include "devices/dsp/SyncRates.h"
 
 #include <algorithm>
 #include <cmath>
-
-#if defined(__SSE2__) || defined(_M_X64) || defined(_M_AMD64)
-#define LATTICE_REVERB_SSE 1
-#include <xmmintrin.h>
-#else
-#define LATTICE_REVERB_SSE 0
-#endif
 
 namespace lattice
 {
 namespace
 {
 using P = ReverbDevice::Param;
+static_assert(ReverbDevice::maxLines == dsp::reverbTailMaxLines);
 
 constexpr double minScale = 0.25; // line lengths relative to the base set, at size 0 and 1
 constexpr double maxScale = 2.0;
@@ -114,20 +109,34 @@ void ReverbDevice::prepare(double sr, int maxBlock)
 {
     // Sized for the largest room at the tail's highest rate (Ultra: twice the sample rate).
     const double maxTailRate = 2.0 * sr;
+    // Each line's memory: a power of two that holds its longest delay (and the four points of a
+    // read), plus the guard; one allocation for all of them, each start 64-byte aligned.
     const auto& base = baseLengths();
+    std::int32_t offset = 0;
     for (int i = 0; i < maxLines; ++i)
     {
         const double longest = base[static_cast<std::size_t>(i)] / 48000.0 * maxScale * maxTailRate;
-        lines[static_cast<std::size_t>(i)].delay.prepare(static_cast<int>(longest + maxModulation * maxTailRate) + 16);
+        const int maxDelay = static_cast<int>(longest + maxModulation * maxTailRate) + 16;
+        std::int32_t size = 4;
+        while (size < maxDelay + 4)
+            size <<= 1;
+        tail.start[i] = offset;
+        tail.mask[i] = size - 1;
+        lines[static_cast<std::size_t>(i)].capacity = static_cast<double>(size - 4);
+        offset += (size + dsp::reverbTailGuard + 15) & ~15;
     }
+    tailMemory.assign(static_cast<std::size_t>(offset), 0.0f);
+    tail.memory = tailMemory.data();
+    tailKernel = dsp::reverbTailKernelFor(dsp::simdLevel());
     for (int d = 0; d < numDiffusers; ++d)
     {
         auto& diffuser = diffusers[static_cast<std::size_t>(d)];
         diffuser.length = std::max(1, static_cast<int>(diffuserSeconds[d] * sr));
         diffuser.delay.prepare(diffuser.length + 4);
     }
-    predelayLine.prepare(static_cast<int>(maxPredelay * sr) + 4);
-    earlyLine.prepare(static_cast<int>(0.2 * sr * maxScale) + 4);
+    // These are read a block at a time, after the block is written: room for one more block.
+    predelayLine.prepare(static_cast<int>(maxPredelay * sr) + maxBlock + 4);
+    earlyLine.prepare(static_cast<int>(0.2 * sr * maxScale) + maxBlock + 4);
     upsampler = std::make_unique<dsp::FirHalfBand>(47, 90.0);
     downsamplerL = std::make_unique<dsp::FirHalfBand>(47, 90.0);
     downsamplerR = std::make_unique<dsp::FirHalfBand>(47, 90.0);
@@ -135,8 +144,10 @@ void ReverbDevice::prepare(double sr, int maxBlock)
     downsamplerL->prepareBlocks(maxBlock);
     downsamplerR->prepareBlocks(maxBlock);
     // Per block: the tail's input, early reflections, and the tail's output (at up to 2x).
-    for (auto* v : {&tailIn, &earlyOutL, &earlyOutR, &lateOutL, &lateOutR})
+    for (auto* v : {&delayed, &scratch, &tailIn, &earlyOutL, &earlyOutR, &lateOutL, &lateOutR})
         v->assign(static_cast<std::size_t>(maxBlock), 0.0f);
+    for (auto* v : {&groupL, &groupR})
+        v->assign(static_cast<std::size_t>(earlyGroups * maxBlock), 0.0f);
     for (auto* v : {&tailIn2x, &tailOut2xL, &tailOut2xR})
         v->assign(static_cast<std::size_t>(2 * maxBlock), 0.0f);
     lastSize = -1.0f;
@@ -146,12 +157,16 @@ void ReverbDevice::prepare(double sr, int maxBlock)
     configure(true);
 }
 
+void ReverbDevice::clearTail() noexcept
+{
+    std::fill(tailMemory.begin(), tailMemory.end(), 0.0f);
+    std::fill(std::begin(tail.low), std::end(tail.low), 0.0f);
+    std::fill(std::begin(tail.high), std::end(tail.high), 0.0f);
+}
+
 void ReverbDevice::reset() noexcept
 {
-    for (auto& l : lines)
-        l.delay.reset();
-    std::fill(std::begin(lowState), std::end(lowState), 0.0f);
-    std::fill(std::begin(highState), std::end(highState), 0.0f);
+    clearTail();
     for (auto& d : diffusers)
         d.delay.reset();
     predelayLine.reset();
@@ -178,12 +193,10 @@ void ReverbDevice::configure(bool snap) noexcept
     {
         currentQuality = quality;
         snap = true;
-        for (auto& l : lines) // a different rate and line count: start the tail afresh
-            l.delay.reset();
-        std::fill(std::begin(lowState), std::end(lowState), 0.0f);
-        std::fill(std::begin(highState), std::end(highState), 0.0f);
+        clearTail(); // a different rate and line count: start the tail afresh
     }
     numLines = quality == Quality::Eco ? 8 : (quality == Quality::Ultra ? 32 : 16);
+    tail.count = numLines;
     tailRate = quality == Quality::Ultra ? 2.0 * sampleRate() : sampleRate();
 
     const double scale = minScale + (maxScale - minScale) * static_cast<double>(value(P::size)) * value(P::size);
@@ -199,33 +212,46 @@ void ReverbDevice::configure(bool snap) noexcept
         {
             l.length = l.targetLength;
             l.modOffset = l.length;
-            l.modStep = 0.0;
+            modulationCountdown = 0; // read positions from these at the next sample
         }
         // Each line's own slow, irregular modulation.
         random = random * 1664525u + 1013904223u;
         if (snap)
         {
             l.modRate = 0.1 + 0.8 * static_cast<double>(random >> 8) / 16777216.0;
-            l.modPhase = static_cast<double>((random * 69069u) >> 8) / 16777216.0;
+            const double phase = 6.283185307179586 * static_cast<double>((random * 69069u) >> 8) / 16777216.0;
+            l.modSin = std::sin(phase);
+            l.modCos = std::cos(phase);
+            const double turn = 6.283185307179586 * l.modRate * modulationBlock / tailRate;
+            l.turnSin = std::sin(turn);
+            l.turnCos = std::cos(turn);
         }
     }
 
-    // Per-band gains per trip round each line, from its current length.
+    // Per-band gains per trip round each line, from its current length: again only when those or
+    // the decay settings have moved.
     const bool frozen = value(P::freeze) >= 0.5f;
     const double averageModulation = static_cast<double>(value(P::modulation)) * maxModulation * tailRate;
+    bool gliding = false;
     for (int i = 0; i < numLines; ++i)
+        gliding = gliding || lines[static_cast<std::size_t>(i)].length != lines[static_cast<std::size_t>(i)].targetLength;
+    const std::array<double, 6> inputs{bandDecay(0), bandDecay(1), bandDecay(2), averageModulation, frozen ? 1.0 : 0.0,
+                                       static_cast<double>(numLines)};
+    const bool update = snap || gliding || inputs != gainInputs;
+    for (int i = 0; update && i < numLines; ++i)
     {
         // A trip round the line takes its length plus the modulation's average.
         const double length = lines[static_cast<std::size_t>(i)].length + averageModulation;
         const auto gainFor = [&](double rt60) {
             return frozen ? 1.0f : static_cast<float>(std::pow(10.0, -3.0 * length / (std::max(0.05, rt60) * tailRate)));
         };
-        lowGain[static_cast<std::size_t>(i)] = gainFor(bandDecay(0));
-        lineGain[static_cast<std::size_t>(i)] = gainFor(bandDecay(1));
-        highGain[static_cast<std::size_t>(i)] = gainFor(bandDecay(2));
+        tail.lowGain[i] = gainFor(bandDecay(0));
+        tail.midGain[i] = gainFor(bandDecay(1));
+        tail.highGain[i] = gainFor(bandDecay(2));
     }
-    lowCoef = static_cast<float>(1.0 - std::exp(-2.0 * 3.141592653589793 * value(P::lowCrossover) / tailRate));
-    highCoef = static_cast<float>(1.0 - std::exp(-2.0 * 3.141592653589793 * value(P::highCrossover) / tailRate));
+    gainInputs = inputs;
+    tail.lowCoef = static_cast<float>(1.0 - std::exp(-2.0 * 3.141592653589793 * value(P::lowCrossover) / tailRate));
+    tail.highCoef = static_cast<float>(1.0 - std::exp(-2.0 * 3.141592653589793 * value(P::highCrossover) / tailRate));
 
     // Early reflections: taps from the room's shape and size (deterministic per shape).
     const int shapeIndex = juce::roundToInt(value(P::shape));
@@ -268,127 +294,56 @@ void ReverbDevice::configure(bool snap) noexcept
     }
 }
 
-void ReverbDevice::tailTick(float in, float& outL, float& outR) noexcept
+void ReverbDevice::updateModulation() noexcept
 {
-    const int n = numLines;
-    if (--modulationCountdown <= 0)
-    {
-        // The modulation and the length glides move at control rate, interpolated in between.
-        modulationCountdown = modulationBlock;
-        const double depth = value(P::freeze) >= 0.5f ? 0.0 : static_cast<double>(value(P::modulation)) * maxModulation * tailRate;
-        const double glide = 1.0 - std::exp(-static_cast<double>(modulationBlock) / (0.3 * tailRate));
-        for (int i = 0; i < n; ++i)
-        {
-            auto& l = lines[static_cast<std::size_t>(i)];
-            if (l.length != l.targetLength)
-                l.length += (l.targetLength - l.length) * glide;
-            l.modPhase += l.modRate * modulationBlock / tailRate;
-            if (l.modPhase >= 1.0)
-                l.modPhase -= 1.0;
-            const double next = l.length + depth * (1.0 + std::sin(6.283185307179586 * l.modPhase));
-            l.modStep = (next - l.modOffset) / modulationBlock;
-        }
-    }
-    // Four lines at a time: their interpolated reads, band filters, the Householder feedback and
-    // the stereo sums (n is a multiple of 4).
-    alignas(16) float outputs[maxLines];
-#if LATTICE_REVERB_SSE
-    const __m128 third = _mm_set1_ps(1.0f / 3.0f), sixth = _mm_set1_ps(1.0f / 6.0f), half = _mm_set1_ps(0.5f);
-    const __m128 lowC = _mm_set1_ps(lowCoef), highC = _mm_set1_ps(highCoef);
-    __m128 sumV = _mm_setzero_ps();
-    for (int g = 0; g < n; g += 4)
-    {
-        alignas(16) float frac[4];
-        __m128 p[4];
-        for (int j = 0; j < 4; ++j)
-        {
-            auto& l = lines[static_cast<std::size_t>(g + j)];
-            l.modOffset += l.modStep;
-            const float delay = std::clamp(static_cast<float>(l.modOffset - 1.0), 1.0f, static_cast<float>(l.delay.capacity()));
-            const int whole = static_cast<int>(delay);
-            frac[j] = delay - static_cast<float>(whole);
-            p[j] = _mm_loadu_ps(l.delay.window(whole)); // y2, y1, y0, ym1
-        }
-        _MM_TRANSPOSE4_PS(p[0], p[1], p[2], p[3]); // p[0] = y2 of each line, ... p[3] = ym1
-        const __m128 y2 = p[0], y1 = p[1], y0 = p[2], ym1 = p[3];
-        const __m128 x = _mm_load_ps(frac);
-        // Third-order Lagrange through x = -1, 0, 1, 2 (as DelayLine::read).
-        const __m128 c1 = _mm_sub_ps(_mm_sub_ps(_mm_sub_ps(y1, _mm_mul_ps(ym1, third)), _mm_mul_ps(half, y0)),
-                                     _mm_mul_ps(y2, sixth));
-        const __m128 c2 = _mm_sub_ps(_mm_mul_ps(half, _mm_add_ps(ym1, y1)), y0);
-        const __m128 c3 = _mm_add_ps(_mm_mul_ps(_mm_sub_ps(y2, ym1), sixth), _mm_mul_ps(half, _mm_sub_ps(y0, y1)));
-        const __m128 raw = _mm_add_ps(_mm_mul_ps(_mm_add_ps(_mm_mul_ps(_mm_add_ps(_mm_mul_ps(c3, x), c2), x), c1), x), y0);
-
-        // Three bands (below the low crossover, between, above the high one), each with its own
-        // gain per trip.
-        __m128 low = _mm_load_ps(lowState + g);
-        low = _mm_add_ps(low, _mm_mul_ps(lowC, _mm_sub_ps(raw, low)));
-        _mm_store_ps(lowState + g, low);
-        const __m128 rest = _mm_sub_ps(raw, low);
-        __m128 high = _mm_load_ps(highState + g);
-        high = _mm_add_ps(high, _mm_mul_ps(highC, _mm_sub_ps(rest, high)));
-        _mm_store_ps(highState + g, high);
-        const __m128 out = _mm_add_ps(_mm_add_ps(_mm_mul_ps(_mm_loadu_ps(lowGain.data() + g), low),
-                                                 _mm_mul_ps(_mm_loadu_ps(lineGain.data() + g), high)),
-                                      _mm_mul_ps(_mm_loadu_ps(highGain.data() + g), _mm_sub_ps(rest, high)));
-        _mm_store_ps(outputs + g, out);
-        sumV = _mm_add_ps(sumV, out);
-    }
-    // Householder feedback: each line gets its own output minus 2/N of them all. Lines alternate
-    // left and right, with signs + + - - in each group of four.
-    sumV = _mm_add_ps(sumV, _mm_movehl_ps(sumV, sumV));
-    const float sum = _mm_cvtss_f32(_mm_add_ss(sumV, _mm_shuffle_ps(sumV, sumV, 0x55)));
-    const __m128 feedbackSum = _mm_set1_ps(2.0f / static_cast<float>(n) * sum);
-    const __m128 input = _mm_mul_ps(_mm_set1_ps(in), _mm_setr_ps(1.0f, 1.0f, -1.0f, -1.0f));
-    const __m128 leftWeights = _mm_setr_ps(1.0f, 0.0f, -1.0f, 0.0f);
-    const __m128 rightWeights = _mm_setr_ps(0.0f, 1.0f, 0.0f, -1.0f);
-    __m128 leftV = _mm_setzero_ps(), rightV = _mm_setzero_ps();
-    for (int g = 0; g < n; g += 4)
-    {
-        const __m128 out = _mm_load_ps(outputs + g);
-        leftV = _mm_add_ps(leftV, _mm_mul_ps(out, leftWeights));
-        rightV = _mm_add_ps(rightV, _mm_mul_ps(out, rightWeights));
-        alignas(16) float feed[4];
-        _mm_store_ps(feed, _mm_add_ps(_mm_sub_ps(out, feedbackSum), input));
-        for (int j = 0; j < 4; ++j)
-            lines[static_cast<std::size_t>(g + j)].delay.push(feed[j]);
-    }
-    const __m128 lr = _mm_add_ps(_mm_unpacklo_ps(leftV, rightV), _mm_unpackhi_ps(leftV, rightV)); // l01 r01 l23 r23
-    alignas(16) float sums[4];
-    _mm_store_ps(sums, _mm_add_ps(lr, _mm_movehl_ps(lr, lr)));
-    outL = sums[0] * outputNorm;
-    outR = sums[1] * outputNorm;
-#else
-    for (int i = 0; i < n; ++i)
+    // The modulation and the length glides move at control rate; each line's read position moves
+    // in a straight line between updates (dsp::ReverbTailState).
+    const double depth = value(P::freeze) >= 0.5f ? 0.0 : static_cast<double>(value(P::modulation)) * maxModulation * tailRate;
+    const double glide = 1.0 - std::exp(-static_cast<double>(modulationBlock) / (0.3 * tailRate));
+    for (int i = 0; i < numLines; ++i)
     {
         auto& l = lines[static_cast<std::size_t>(i)];
-        l.modOffset += l.modStep;
-        const float raw = l.delay.read(static_cast<float>(l.modOffset - 1.0));
-        lowState[i] += lowCoef * (raw - lowState[i]);
-        const float rest = raw - lowState[i];
-        highState[i] += highCoef * (rest - highState[i]);
-        outputs[i] = lowGain[static_cast<std::size_t>(i)] * lowState[i] + lineGain[static_cast<std::size_t>(i)] * highState[i] +
-                     highGain[static_cast<std::size_t>(i)] * (rest - highState[i]);
+        if (l.length != l.targetLength)
+        {
+            l.length += (l.targetLength - l.length) * glide;
+            if (std::abs(l.targetLength - l.length) < 1.0e-3) // arrived (a glide never quite does)
+                l.length = l.targetLength;
+        }
+        // The modulation's phase turns by one step, kept on the unit circle (rounding would
+        // otherwise change its size over hours).
+        const double s = l.modSin * l.turnCos + l.modCos * l.turnSin;
+        const double c = l.modCos * l.turnCos - l.modSin * l.turnSin;
+        const double size = 1.5 - 0.5 * (s * s + c * c);
+        l.modSin = s * size;
+        l.modCos = c * size;
+        // Read positions are delays plus one (the write comes after the read), from 2 (a delay
+        // of 1 keeps the interpolator causal) to what the memory holds.
+        const double next = std::clamp(l.length + depth * (1.0 + l.modSin), 2.0,
+                                       l.capacity + 1.0);
+        // Delays from l.modOffset - 1 to next - 1 over the run: whole + x, with x >= 0 throughout.
+        const double from = l.modOffset - 1.0;
+        const double whole = std::floor(std::min(from, next - 1.0));
+        tail.whole[i] = static_cast<std::int32_t>(whole);
+        tail.x[i] = static_cast<float>(from - whole);
+        tail.step[i] = static_cast<float>((next - l.modOffset) / modulationBlock);
+        l.modOffset = next;
     }
-    float sum = 0.0f;
-    for (int i = 0; i < n; ++i)
-        sum += outputs[i];
-    // Householder feedback: each line gets its own output minus 2/N of them all.
-    const float k = 2.0f / static_cast<float>(n);
-    float left = 0.0f;
-    float right = 0.0f;
-    for (int i = 0; i < n; ++i)
+}
+
+void ReverbDevice::runTail(const float* in, int n, float* outL, float* outR) noexcept
+{
+    for (int done = 0; done < n;)
     {
-        const float sign = (i & 2) != 0 ? -1.0f : 1.0f;
-        lines[static_cast<std::size_t>(i)].delay.push(outputs[i] - k * sum + in * sign);
-        if ((i & 1) == 0)
-            left += sign * outputs[i];
-        else
-            right += sign * outputs[i];
+        if (modulationCountdown <= 0)
+        {
+            updateModulation();
+            modulationCountdown = modulationBlock;
+        }
+        const int run = std::min(modulationCountdown, n - done);
+        tailKernel(tail, in + done, run, outL + done, outR + done);
+        modulationCountdown -= run;
+        done += run;
     }
-    outL = left * outputNorm;
-    outR = right * outputNorm;
-#endif
 }
 
 void ReverbDevice::process(DeviceBuffers& io, const DeviceTimeInfo& time) noexcept
@@ -411,76 +366,102 @@ void ReverbDevice::process(DeviceBuffers& io, const DeviceTimeInfo& time) noexce
     const float mixStep = (targetMix - mixValue) / static_cast<float>(n);
     const bool ultra = currentQuality == Quality::Ultra;
     const float inputScale = 1.0f / std::sqrt(static_cast<float>(numLines));
-    outputNorm = 1.0f / std::sqrt(static_cast<float>(numLines / 2));
+    tail.outputNorm = 1.0f / std::sqrt(static_cast<float>(numLines / 2));
     // A whole number of samples: nothing to interpolate, and no dulling of the input.
     const int predelayTap = static_cast<int>(std::lround(predelaySamples));
 
-    // 1. The input: pre-delay, early reflections, input diffusion.
+    // 1. The input: pre-delay, early reflections, input diffusion. Each stage takes the whole
+    // block (each delay line is written for the block, then read along contiguous memory), which
+    // gives the same samples as going one sample at a time.
     for (int i = 0; i < n; ++i)
-    {
-        const float dryL = l[i];
-        const float dryR = r[i];
-        const float mono = frozen ? 0.0f : 0.5f * (dryL + dryR);
-        predelayLine.push(mono);
-        const float delayed = predelayLine.tap(predelayTap); // pushed just now: tap 0
+        scratch[static_cast<std::size_t>(i)] = frozen ? 0.0f : 0.5f * (l[i] + r[i]);
+    predelayLine.pushBlock(scratch.data(), n);
+    predelayLine.forEachRun(predelayTap, n, [&](const float* x, int count, int at) {
+        std::copy(x, x + count, delayed.begin() + at);
+    });
 
-        // Early reflections from the pre-delayed input.
-        earlyLine.push(delayed);
-        float earlyL = 0.0f;
-        float earlyR = 0.0f;
-        if (early > 0.0f)
+    // Early reflections from the pre-delayed input. Taps are summed per distance group, and each
+    // group darkened by one filter pair: far reflections duller than near ones, for 8 filters
+    // instead of one per tap.
+    earlyLine.pushBlock(delayed.data(), n);
+    if (early > 0.0f)
+    {
+        constexpr int perGroup = numTaps / earlyGroups;
+        std::fill(groupL.begin(), groupL.begin() + earlyGroups * n, 0.0f);
+        std::fill(groupR.begin(), groupR.begin() + earlyGroups * n, 0.0f);
+        for (int k = 0; k < numTaps; ++k)
         {
-            // Taps are summed per distance group, and each group darkened by one filter pair: far
-            // reflections duller than near ones, for 8 filters instead of one per tap.
-            constexpr int perGroup = numTaps / earlyGroups;
+            const auto& tap = taps[static_cast<std::size_t>(k)];
+            float* sumL = groupL.data() + (k / perGroup) * n;
+            float* sumR = groupR.data() + (k / perGroup) * n;
+            earlyLine.forEachRun(tap.delay, n, [&](const float* x, int count, int at) {
+                for (int j = 0; j < count; ++j)
+                {
+                    sumL[at + j] += tap.gainL * x[j];
+                    sumR[at + j] += tap.gainR * x[j];
+                }
+            });
+        }
+        float c[earlyGroups];
+        for (int group = 0; group < earlyGroups; ++group)
+            c[group] = 1.0f - taps[static_cast<std::size_t>(group * perGroup + perGroup / 2)].damping;
+        for (int i = 0; i < n; ++i)
+        {
+            float earlyL = 0.0f;
+            float earlyR = 0.0f;
             for (int group = 0; group < earlyGroups; ++group)
             {
-                float sumL = 0.0f;
-                float sumR = 0.0f;
-                for (int k = group * perGroup; k < (group + 1) * perGroup; ++k)
-                {
-                    const auto& tap = taps[static_cast<std::size_t>(k)];
-                    const float x = earlyLine.tap(tap.delay);
-                    sumL += tap.gainL * x;
-                    sumR += tap.gainR * x;
-                }
-                const float c = 1.0f - taps[static_cast<std::size_t>(group * perGroup + perGroup / 2)].damping;
-                tapDampState[2 * group] += c * (sumL - tapDampState[2 * group]);
-                tapDampState[2 * group + 1] += c * (sumR - tapDampState[2 * group + 1]);
+                const auto at = static_cast<std::size_t>(group * n + i);
+                tapDampState[2 * group] += c[group] * (groupL[at] - tapDampState[2 * group]);
+                tapDampState[2 * group + 1] += c[group] * (groupR[at] - tapDampState[2 * group + 1]);
                 earlyL += tapDampState[2 * group];
                 earlyR += tapDampState[2 * group + 1];
             }
+            earlyOutL[static_cast<std::size_t>(i)] = earlyL;
+            earlyOutR[static_cast<std::size_t>(i)] = earlyR;
         }
-
-        // Input diffusion: all-passes in series.
-        float x = delayed;
-        for (auto& d : diffusers)
-        {
-            const float w = x + g * d.delay.tap(d.length - 1);
-            const float y = -g * w + d.delay.tap(d.length - 1);
-            d.delay.push(w);
-            x = y;
-        }
-        tailIn[static_cast<std::size_t>(i)] = x * inputScale;
-        earlyOutL[static_cast<std::size_t>(i)] = earlyL;
-        earlyOutR[static_cast<std::size_t>(i)] = earlyR;
     }
+    else
+    {
+        std::fill(earlyOutL.begin(), earlyOutL.begin() + n, 0.0f);
+        std::fill(earlyOutR.begin(), earlyOutR.begin() + n, 0.0f);
+    }
+
+    // Input diffusion: all-passes in series, each over the block in runs no longer than its
+    // delay (so a run reads only what was written before it).
+    std::copy(delayed.begin(), delayed.begin() + n, tailIn.begin());
+    for (auto& d : diffusers)
+    {
+        for (int done = 0; done < n;)
+        {
+            const int run = std::min(n - done, d.length);
+            float* x = tailIn.data() + done;
+            float* w = scratch.data();
+            d.delay.forEachRun(d.length - run, run, [&](const float* old, int count, int at) {
+                for (int j = at; j < at + count; ++j)
+                {
+                    w[j] = x[j] + g * old[j - at];
+                    x[j] = -g * w[j] + old[j - at];
+                }
+            });
+            d.delay.pushBlock(w, run);
+            done += run;
+        }
+    }
+    for (int i = 0; i < n; ++i)
+        tailIn[static_cast<std::size_t>(i)] *= inputScale;
 
     // 2. The tail: at the sample rate, or (Ultra) at twice it, with the rate changes done in blocks.
     if (ultra)
     {
         upsampler->upsampleBlock(tailIn.data(), n, tailIn2x.data());
-        for (int k = 0; k < 2 * n; ++k)
-            tailTick(tailIn2x[static_cast<std::size_t>(k)], tailOut2xL[static_cast<std::size_t>(k)],
-                     tailOut2xR[static_cast<std::size_t>(k)]);
+        runTail(tailIn2x.data(), 2 * n, tailOut2xL.data(), tailOut2xR.data());
         downsamplerL->downsampleBlock(tailOut2xL.data(), n, lateOutL.data());
         downsamplerR->downsampleBlock(tailOut2xR.data(), n, lateOutR.data());
     }
     else
     {
-        for (int i = 0; i < n; ++i)
-            tailTick(tailIn[static_cast<std::size_t>(i)], lateOutL[static_cast<std::size_t>(i)],
-                     lateOutR[static_cast<std::size_t>(i)]);
+        runTail(tailIn.data(), n, lateOutL.data(), lateOutR.data());
     }
 
     // 3. Early and late together, width, the wet signal's filters, and the mix.

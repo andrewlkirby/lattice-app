@@ -425,6 +425,47 @@ TEST_CASE("Delay line: integer delays are exact, fractional ones accurate", "[de
     CHECK(worst < 1e-3);
 }
 
+TEST_CASE("Delay line: block writes and reads are push() and tap() a sample at a time", "[devices][dsp]")
+{
+    // Blocks of every length up to past the buffer's size (32), so writes and reads wrap round
+    // its end, its first samples' copies past the end (the window() reads) included.
+    dsp::DelayLine blocks;
+    dsp::DelayLine samples;
+    blocks.prepare(20);
+    samples.prepare(20);
+    REQUIRE(blocks.capacity() == 28);
+    float next = 1.0f;
+    for (int n = 1; n <= 40; ++n)
+    {
+        CAPTURE(n);
+        std::vector<float> x(static_cast<std::size_t>(n));
+        for (auto& v : x)
+            v = next++;
+        blocks.pushBlock(x.data(), n);
+        for (const float v : x)
+            samples.push(v);
+        for (int whole = 1; whole <= 26; ++whole)
+            for (int j = 0; j < 4; ++j)
+                CHECK(blocks.window(whole)[j] == samples.window(whole)[j]);
+
+        // The last min(n, 20) samples, read in runs from a delay of 0, 1 and 5.
+        const int count = std::min(n, 20);
+        for (const int newest : {0, 1, 5})
+        {
+            std::vector<float> read(static_cast<std::size_t>(count), 0.0f);
+            int runs = 0;
+            blocks.forEachRun(newest, count, [&](const float* p, int c, int at) {
+                ++runs;
+                for (int i = 0; i < c; ++i)
+                    read[static_cast<std::size_t>(at + i)] = p[i];
+            });
+            CHECK(runs <= 2);
+            for (int i = 0; i < count; ++i)
+                CHECK(read[static_cast<std::size_t>(i)] == samples.tap(newest + count - 1 - i));
+        }
+    }
+}
+
 TEST_CASE("Voice filters: side by side they give the same output as one at a time", "[devices][dsp][filter]")
 {
     constexpr int lanesCount = 6; // more than one register, and padding

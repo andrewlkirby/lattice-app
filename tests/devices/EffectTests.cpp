@@ -422,6 +422,47 @@ TEST_CASE("Reverb: freeze holds the level", "[devices][effects][reverb][heavy]")
     CHECK(std::abs(toDb(late / early)) < 1.0);
 }
 
+TEST_CASE("Reverb: the block size changes nothing", "[devices][effects][reverb]")
+{
+    // The input stage goes a block at a time (each delay written for the block, then read along
+    // its memory) and the tail in runs between modulation updates: one sample at a time, random
+    // blocks and full blocks must all give the same samples.
+    for (const float quality : {0.0f, 2.0f})
+    {
+        CAPTURE(quality);
+        std::vector<float> outputs[3];
+        int k = 0;
+        for (const int blockSize : {1, 0, 512}) // 0: random sizes up to 512
+        {
+            ReverbDevice reverb;
+            setParam(reverb, "reverb.quality", quality);
+            setParam(reverb, "reverb.mix", 0.3f); // where the dry/wet starts: no ramp, whose length is a block
+            setParam(reverb, "reverb.early", 0.0f);
+            setParam(reverb, "reverb.predelay", 23.0f);
+            setParam(reverb, "reverb.size", 0.2f); // short diffusers and taps: runs cross them
+            DeviceHarness h(reverb);
+            std::uint32_t seed = 5;
+            h.inputSignal = [&seed](std::int64_t i) {
+                seed = seed * 1664525u + 1013904223u;
+                const float v = i < 4000 ? 0.5f * (static_cast<float>(seed >> 8) / 8388608.0f - 1.0f) : 0.0f;
+                return std::pair<float, float>{v, 0.25f * v};
+            };
+            h.renderTo(16000, blockSize);
+            outputs[k] = h.audioLeft;
+            outputs[k].insert(outputs[k].end(), h.audioRight.begin(), h.audioRight.end());
+            ++k;
+        }
+        REQUIRE(peakOf(outputs[0]) > 0.01f);
+        for (int b = 1; b < 3; ++b)
+        {
+            float worst = 0.0f;
+            for (std::size_t i = 0; i < outputs[0].size(); ++i)
+                worst = std::max(worst, std::abs(outputs[b][i] - outputs[0][i]));
+            CHECK(worst < 1.0e-6f);
+        }
+    }
+}
+
 TEST_CASE("Reverb: a long silent tail costs no more than sound (no denormals)", "[devices][effects][reverb][timing]")
 {
     ReverbDevice reverb;

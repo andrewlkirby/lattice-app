@@ -388,7 +388,9 @@ Where the code differs from the plan above, and why. Each device's header descri
 ### Audio effects
 - All nine are built as planned. The Reverb's tail has 8 (Eco), 16 (High) or 32 (Ultra, at 2× the
   sample rate) lines; freeze turns off the line modulation and rounds the line lengths to whole
-  samples, so a frozen tail holds without drifting. The Saturator oversamples with linear-phase FIR
+  samples, so a frozen tail holds without drifting. The tail runs as a kernel over all its lines
+  (eight per register with AVX2), and the input stage (pre-delay, early taps, diffusers) a block at
+  a time (docs/perf/avx2-plan.md, step 5). The Saturator oversamples with linear-phase FIR
   half-bands.
 
 ### Racks (`src/devices/racks/`)
@@ -454,9 +456,9 @@ first figure is at 64-sample blocks, the second at 256. Each device runs on one 
 | Synth, 16 voices, ladder | 2.55 / 2.5 | 2 | 3 |
 | Sampler, 32 voices, sinc | 2.5 / 2.3 (2.25 / 2.1 after the AVX2 plan, step 4) | 1.5 | 2.5 (agreed 2026-10-14) |
 | Sampler, 32 voices, Draft | 1.0 / 1.0 | 1.5 | 1.5 |
-| Reverb, High | 0.8 / 0.75 | 1 | 1 |
-| Reverb, Ultra | 2.7 / 2.5 | 2 | 3 |
-| Reverb, Eco | 0.54 / 0.49 | 0.5 | 0.6 |
+| Reverb, High | 0.8 / 0.75 (0.34 / 0.32 after the AVX2 plan, step 5) | 1 | 1 |
+| Reverb, Ultra | 2.7 / 2.5 (0.99 / 0.96 after step 5) | 2 | 2 (met after step 5) |
+| Reverb, Eco | 0.54 / 0.49 (0.24 / 0.22 after step 5) | 0.5 | 0.5 (met after step 5) |
 | Saturator 4× | 0.27 / 0.26 | 0.5 | 0.5 |
 | EQ Eight, Compressor, Delay, Chorus, Auto Filter, Saturator 2×, Limiter, Utility | 0.003 – 0.33 | 0.5 | 0.5 |
 

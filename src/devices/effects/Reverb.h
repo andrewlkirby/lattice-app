@@ -3,6 +3,7 @@
 #include "devices/dsp/Biquad.h"
 #include "devices/dsp/DelayLine.h"
 #include "devices/dsp/FirHalfBand.h"
+#include "devices/dsp/ReverbTail.h"
 #include "devices/framework/StudioDevice.h"
 
 #include <array>
@@ -78,15 +79,18 @@ protected:
     void reset() noexcept override;
 
 private:
+    /** A line's control state; its memory and the per-sample state are in `tail`. */
     struct Line
     {
-        dsp::DelayLine delay;
         double length = 1000.0;     // samples (at the tail's rate), gliding
         double targetLength = 1000.0;
-        double modPhase = 0.0;
         double modRate = 0.3;       // Hz
-        double modOffset = 0.0;     // the modulation now, in samples (stepped at control rate)
-        double modStep = 0.0;
+        double modSin = 0.0;        // the modulation's phase, as a point on the unit circle...
+        double modCos = 1.0;
+        double turnSin = 0.0;       // ...turned by this much at each update
+        double turnCos = 1.0;
+        double modOffset = 0.0;     // the read position (length plus modulation) at the run's end
+        double capacity = 0.0;      // the longest delay its memory holds
     };
 
     struct Diffuser
@@ -104,8 +108,13 @@ private:
     };
 
     void configure(bool snap) noexcept LATTICE_NONBLOCKING;
-    /** One sample through the late tail at its own rate: in -> two outputs. */
-    void tailTick(float in, float& outL, float& outR) noexcept LATTICE_NONBLOCKING;
+    /** Clears the tail's memory and filters. */
+    void clearTail() noexcept LATTICE_NONBLOCKING;
+    /** The late tail at its own rate, n samples: in -> two outputs. */
+    void runTail(const float* in, int n, float* outL, float* outR) noexcept LATTICE_NONBLOCKING;
+    /** Every modulationBlock samples: the length glides and the modulation, as the next run's
+        read positions. */
+    void updateModulation() noexcept LATTICE_NONBLOCKING;
 
     static constexpr int modulationBlock = 16;
 
@@ -114,27 +123,25 @@ private:
     int numLines = 16;
     Quality currentQuality = Quality::High;
     std::array<Line, maxLines> lines;
+    std::vector<float> tailMemory;   // every line's (sized in prepare)
+    dsp::ReverbTailState tail{};
+    dsp::ReverbTailKernel tailKernel = nullptr;
     std::array<Diffuser, numDiffusers> diffusers;
     dsp::DelayLine predelayLine;
     dsp::DelayLine earlyLine;
     std::array<Tap, numTaps> taps{};
-    float tapDampState[numTaps]{};
-    float outputNorm = 0.25f;                // 1 / sqrt(lines / 2): the tail's level
-    alignas(16) float lowState[maxLines]{};  // crossover one-poles of each line
-    alignas(16) float highState[maxLines]{};
-    std::array<float, maxLines> lineGain{}; // per band: computed in configure
-    std::array<float, maxLines> lowGain{};
-    std::array<float, maxLines> highGain{};
-    float lowCoef = 0.05f;
-    float highCoef = 0.5f;
+    float tapDampState[2 * earlyGroups]{};
+    std::array<double, 6> gainInputs{}; // what the band gains were computed from
     float lastSize = -1.0f;
     int lastShape = -1;
     dsp::Biquad lowCutFilter[2];
     dsp::Biquad highCutFilter[2];
     float lastLowCut = -1.0f, lastHighCut = -1.0f;
     std::unique_ptr<dsp::FirHalfBand> upsampler, downsamplerL, downsamplerR;
-    // Block buffers (sized in prepare): the tail's input, the early reflections, the tail's output.
-    std::vector<float> tailIn, earlyOutL, earlyOutR, lateOutL, lateOutR;
+    // Block buffers (sized in prepare): the pre-delayed input, the tail's input, the early
+    // reflections (per distance group, then summed), the tail's output.
+    std::vector<float> delayed, scratch, tailIn, earlyOutL, earlyOutR, lateOutL, lateOutR;
+    std::vector<float> groupL, groupR; // earlyGroups x the block size
     std::vector<float> tailIn2x, tailOut2xL, tailOut2xR; // Ultra
     std::uint32_t random = 0x9e3779b9u;
     float mixValue = 0.3f;
