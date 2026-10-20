@@ -26,9 +26,9 @@ public:
         mute
     };
 
-    explicit Toggle(const juce::String& text, Role role = Role::accent);
-    /** text: what it shows (an empty string: the parameter's name). */
-    Toggle(std::unique_ptr<ValueBinding> binding, Role role = Role::accent, const juce::String& text = {});
+    explicit Toggle(const juce::String& caption, Role role = Role::accent);
+    /** caption: what it shows (an empty string: the parameter's name). */
+    Toggle(std::unique_ptr<ValueBinding> binding, Role role = Role::accent, const juce::String& caption = {});
     ~Toggle() override;
 
     bool isOn() const noexcept { return getToggleState(); }

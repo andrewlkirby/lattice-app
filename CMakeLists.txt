@@ -272,6 +272,8 @@ lattice_set_warnings(lattice_debug_ui)
 
 # --- UI (M4, docs/05-m4-ui.md): a library, so the tests can drive the views headless ---------------
 add_library(lattice_ui STATIC
+    src/ui/commands/CommandRegistry.cpp
+    src/ui/commands/SessionCommands.cpp
     src/ui/theme/LatticeLookAndFeel.cpp
     src/ui/theme/Theme.cpp
     src/ui/widgets/BoundControl.cpp

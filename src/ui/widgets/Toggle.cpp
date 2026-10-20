@@ -10,14 +10,14 @@ juce::Colour textOn(juce::Colour fill, const Theme& theme)
     return contrastRatio(fill, theme.text) >= contrastRatio(fill, theme.background) ? theme.text : theme.background;
 }
 
-Toggle::Toggle(const juce::String& text, Role role) : juce::Button(text), colourRole(role)
+Toggle::Toggle(const juce::String& caption, Role role) : juce::Button(caption), colourRole(role)
 {
     setClickingTogglesState(true);
     setWantsKeyboardFocus(true);
 }
 
-Toggle::Toggle(std::unique_ptr<ValueBinding> b, Role role, const juce::String& text)
-    : juce::Button(text.isNotEmpty() ? text : b->spec().name), bound(std::move(b)), colourRole(role)
+Toggle::Toggle(std::unique_ptr<ValueBinding> b, Role role, const juce::String& caption)
+    : juce::Button(caption.isNotEmpty() ? caption : b->spec().name), bound(std::move(b)), colourRole(role)
 {
     setClickingTogglesState(false);
     setWantsKeyboardFocus(true);
@@ -67,8 +67,7 @@ juce::Colour Toggle::onColour(const Theme& t) const
 juce::Rectangle<int> Toggle::preferredSize() const
 {
     const auto& t = themeOf(*this);
-    const auto text = getButtonText();
-    const float textWidth = juce::GlyphArrangement::getStringWidth(juce::Font(t.font(t.fontNormal)), text);
+    const float textWidth = juce::GlyphArrangement::getStringWidth(juce::Font(t.font(t.fontNormal)), getButtonText());
     return {0, 0, juce::roundToInt(juce::jmax(t.controlHeight, textWidth + t.padding * 2.0f)), juce::roundToInt(t.controlHeight)};
 }
 
