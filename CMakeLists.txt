@@ -276,6 +276,7 @@ add_library(lattice_ui STATIC
     src/ui/commands/CommandRegistry.cpp
     src/ui/commands/SessionCommands.cpp
     src/ui/feed/EngineStateFeed.cpp
+    src/ui/shell/CommandMenus.cpp
     src/ui/shell/ControlBar.cpp
     src/ui/shell/InfoView.cpp
     src/ui/shell/MainShell.cpp

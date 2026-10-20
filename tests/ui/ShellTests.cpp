@@ -305,3 +305,25 @@ TEST_CASE("Shell: the control registry knows every bound control in the window",
     f.shell->removeChildComponent(&holder);
     CHECK(controls.find(&knob) == nullptr);
 }
+
+TEST_CASE("Shell: the menu bar has every command, once, by category", "[ui][shell]")
+{
+    Fixture f;
+    auto& menus = f.shell->menus();
+    const auto names = menus.getMenuBarNames();
+    CHECK(names == juce::StringArray{"File", "Edit", "Create", "Session", "Transport", "View"});
+    int items = 0;
+    for (int i = 0; i < names.size(); ++i)
+    {
+        const auto menu = menus.getMenuForIndex(i, names[i]);
+        juce::PopupMenu::MenuItemIterator it(menu);
+        while (it.next())
+        {
+            ++items;
+            const auto* command = f.shell->commands().find(it.getItem().itemID);
+            REQUIRE(command != nullptr);
+            CHECK(command->category == names[i]);
+        }
+    }
+    CHECK(items == static_cast<int>(f.shell->commands().all().size()));
+}

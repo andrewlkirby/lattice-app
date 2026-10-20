@@ -3,6 +3,7 @@
 #include "core/JobPool.h"
 #include "ui/commands/SessionCommands.h"
 #include "ui/feed/EngineStateFeed.h"
+#include "ui/shell/CommandMenus.h"
 #include "ui/shell/ControlBar.h"
 #include "ui/shell/InfoView.h"
 #include "ui/shell/StatusBar.h"
@@ -37,6 +38,8 @@ public:
     CommandRegistry& commands() noexcept { return registry; }
     /** Every control in the window, for Find, MIDI Map and Key Map. */
     ControlRegistry& controlRegistry() override { return controls; }
+    /** The menu bar's model (the window shows it): every command, by category. */
+    CommandMenus& menus() noexcept { return *menuModel; }
     EngineStateFeed& feed() noexcept { return stateFeed; }
     JobPool& jobs() noexcept { return jobPool; }
     ControlBar& controlBar() noexcept { return *bar; }
@@ -97,6 +100,7 @@ private:
     EngineStateFeed stateFeed;
     JobPool jobPool;
 
+    std::unique_ptr<CommandMenus> menuModel;
     std::unique_ptr<ControlBar> bar;
     std::unique_ptr<Placeholder> browser, detail, sessionPlaceholder, arrangementPlaceholder;
     juce::TabbedComponent tabs{juce::TabbedButtonBar::TabsAtTop};

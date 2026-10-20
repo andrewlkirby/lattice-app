@@ -126,6 +126,8 @@ public:
                TuningRegistry& tunings, SessionController& session, std::function<void()> onFirstPaint,
                const std::function<void(const char*)>& markStage);
 
+    ~MainWindow() override;
+
     MainComponent& content() noexcept { return *component; }
     void closeButtonPressed() override;
     void activeWindowStatusChanged() override;

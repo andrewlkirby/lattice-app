@@ -323,12 +323,18 @@ MainWindow::MainWindow(const juce::String& name, AudioEngine& engine, juce::Prop
     component = new MainComponent(engine, settings, tunings, session, std::move(onFirstPaint));
     markStage("content created");
     setContentOwned(component, true);
+    setMenuBar(&component->shell().menus());
     setResizable(true, true);
     centreWithSize(getWidth(), getHeight());
     markStage("window laid out");
     setVisible(true);
     markStage("window visible");
     component->grabKeyboardFocus();
+}
+
+MainWindow::~MainWindow()
+{
+    setMenuBar(nullptr); // its model belongs to the content, which goes first
 }
 
 void MainWindow::closeButtonPressed()

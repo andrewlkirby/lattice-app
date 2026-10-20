@@ -41,6 +41,7 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
     addSessionCommands(registry, session, std::move(selection), std::move(actions));
     addViewCommands();
     addKeyListener(&registry.keyMappings());
+    menuModel = std::make_unique<CommandMenus>(registry);
 
     bar = std::make_unique<ControlBar>(session, registry, stateFeed, engine.workerThreads());
     bar->frameSummary = [this] { return frames.summary(); };
@@ -92,6 +93,7 @@ MainShell::~MainShell()
     removeKeyListener(&registry.keyMappings());
     tabs.clearTabs();
     bar.reset();
+    menuModel.reset();
     setLookAndFeel(nullptr);
 }
 
