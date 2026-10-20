@@ -8,6 +8,7 @@
 #endif
 #include <windows.h>
 #include <objbase.h>
+#include <avrt.h>
 
 namespace lattice::platform
 {
@@ -42,6 +43,12 @@ juce::StringArray preferredAudioDeviceTypes()
     // WASAPI exclusive is the default on the reference laptop (docs/perf/reference-machine.md).
     // If ASIO (e.g. ASIO4ALL) wins the M0 comparison, it moves to the front of this list.
     return {"Windows Audio (Exclusive Mode)", "Windows Audio (Low Latency Mode)", "Windows Audio"};
+}
+
+bool joinProAudioClass()
+{
+    DWORD taskIndex = 0;
+    return AvSetMmThreadCharacteristicsW(L"Pro Audio", &taskIndex) != nullptr;
 }
 
 ScopedAudioDeviceThread::ScopedAudioDeviceThread()

@@ -85,4 +85,16 @@ inline void askForText(const juce::String& title, const juce::String& prompt, co
                             true);
 }
 
+/** askForText for a callback that uses `owner`: it isn't called if owner has gone meanwhile (a
+    panel rebuilt while the dialog was open). */
+inline void askForText(juce::Component& owner, const juce::String& title, const juce::String& prompt,
+                       const juce::String& initial, std::function<void(const juce::String&)> onOk)
+{
+    askForText(title, prompt, initial,
+               [safe = juce::Component::SafePointer<juce::Component>(&owner), onOk = std::move(onOk)](const juce::String& text) {
+                   if (safe != nullptr && onOk)
+                       onOk(text);
+               });
+}
+
 } // namespace lattice::debugui

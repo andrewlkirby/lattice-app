@@ -26,6 +26,18 @@ inline const juce::Identifier note{"NOTE"};
 inline const juce::Identifier scenes{"SCENES"};
 inline const juce::Identifier scene{"SCENE"};
 inline const juce::Identifier master{"MASTER"};
+inline const juce::Identifier returns{"RETURNS"};
+inline const juce::Identifier returnTrack{"RETURN"};
+inline const juce::Identifier sends{"SENDS"};
+inline const juce::Identifier send{"SEND"};
+inline const juce::Identifier devices{"DEVICES"};
+inline const juce::Identifier device{"DEVICE"};
+inline const juce::Identifier params{"PARAMS"};
+inline const juce::Identifier deviceState{"STATE"};
+inline const juce::Identifier rackChains{"CHAINS"};
+inline const juce::Identifier rackChain{"CHAIN"};
+inline const juce::Identifier mappings{"MAPPINGS"};
+inline const juce::Identifier mapping{"MAPPING"};
 
 // Set
 inline const juce::Identifier formatVersion{"formatVersion"};
@@ -38,6 +50,7 @@ inline const juce::Identifier metronomeOn{"metronomeOn"};
 inline const juce::Identifier metronomeVolumeDb{"metronomeVolumeDb"};
 inline const juce::Identifier selectNextSceneOnLaunch{"selectNextSceneOnLaunch"};
 inline const juce::Identifier fixedRecordBars{"fixedRecordBars"};
+inline const juce::Identifier reducedLatencyWhenMonitoring{"reducedLatencyWhenMonitoring"};
 
 // Shared
 inline const juce::Identifier id{"id"};
@@ -53,6 +66,15 @@ inline const juce::Identifier arm{"arm"};
 inline const juce::Identifier tuningId{"tuningId"};
 inline const juce::Identifier noteOffset{"noteOffset"};
 inline const juce::Identifier highNotePolicy{"highNotePolicy"};
+
+// Return track (also id, name, colour, volumeDb, pan, mute, solo) and send
+inline const juce::Identifier preFader{"preFader"};
+inline const juce::Identifier returnId{"returnId"};
+inline const juce::Identifier levelDb{"levelDb"};
+
+// Device sidechain (in a device's STATE)
+inline const juce::Identifier sidechainTrack{"sidechainTrack"}; // a track ID, 0 = none
+inline const juce::Identifier sidechainPreFx{"sidechainPreFx"};
 
 // Slot
 inline const juce::Identifier hasStopButton{"hasStopButton"};
@@ -77,6 +99,31 @@ inline const juce::Identifier length{"length"};
 inline const juce::Identifier velocity{"velocity"};
 inline const juce::Identifier muted{"muted"};
 
+// Device
+inline const juce::Identifier deviceType{"type"};
+inline const juce::Identifier enabled{"enabled"};
+
+// Rack chain (also volumeDb, pan, mute, solo, name)
+inline const juce::Identifier keyLow{"keyLow"};
+inline const juce::Identifier keyHigh{"keyHigh"};
+inline const juce::Identifier keyFadeLow{"keyFadeLow"};
+inline const juce::Identifier keyFadeHigh{"keyFadeHigh"};
+inline const juce::Identifier velocityLow{"velocityLow"};
+inline const juce::Identifier velocityHigh{"velocityHigh"};
+inline const juce::Identifier velocityFadeLow{"velocityFadeLow"};
+inline const juce::Identifier velocityFadeHigh{"velocityFadeHigh"};
+inline const juce::Identifier receiveNote{"receiveNote"};
+inline const juce::Identifier playNote{"playNote"};
+inline const juce::Identifier chokeGroup{"chokeGroup"};
+
+// Macro mapping
+inline const juce::Identifier macro{"macro"};
+inline const juce::Identifier targetDevice{"targetDevice"};
+inline const juce::Identifier parameter{"parameter"};
+inline const juce::Identifier minimum{"minimum"};
+inline const juce::Identifier maximum{"maximum"};
+inline const juce::Identifier curve{"curve"};
+
 // Scene
 inline const juce::Identifier sceneTempo{"sceneTempo"};           // 0 = none
 inline const juce::Identifier sceneTimeSigNum{"sceneTimeSigNum"}; // 0 = none
@@ -100,11 +147,16 @@ struct NoteData
 
         LIVESET  tempo, time signature, global quantization, metronome, ...
          ├─ TRACKS / TRACK  id, name, colour, mixer values, tuning
-         │     └─ SLOTS / SLOT (one per scene)  hasStopButton, optional CLIP
-         │                       └─ CLIP  loop, launch settings, follow actions
-         │                             └─ NOTES / NOTE  pitch, start, length, velocity, muted
+         │     ├─ SLOTS / SLOT (one per scene)  hasStopButton, optional CLIP
+         │     │                 └─ CLIP  loop, launch settings, follow actions
+         │     │                       └─ NOTES / NOTE  pitch, start, length, velocity, muted
+         │     ├─ DEVICES / DEVICE  id, type, enabled   (the device chain, in order)
+         │     │              ├─ PARAMS  one property per parameter ID: its plain value
+         │     │              └─ STATE   the device's own state (sample files, pads, ...)
+         │     └─ SENDS / SEND  returnId, levelDb
+         ├─ RETURNS / RETURN  id, name, colour, mixer values, preFader; DEVICES
          ├─ SCENES / SCENE  id, name, colour, optional tempo and time signature
-         └─ MASTER  volumeDb, pan
+         └─ MASTER  volumeDb, pan; DEVICES
 
     Message thread only. Every operation goes through the UndoManager given at construction
     (when there is one), except where a method says otherwise; callers group edits into
@@ -113,7 +165,11 @@ struct NoteData
 class LiveSet
 {
 public:
-    static constexpr int currentFormatVersion = 1;
+    /** 1: M2. 2: device chains (M3); tracks of older sets get the default instrument.
+        3: return tracks, sends and the master's chain (older sets get none of the first two). */
+    static constexpr int currentFormatVersion = 3;
+    static constexpr int defaultReturns = 2;
+    static constexpr int maxReturns = 12;
     static constexpr double minTempo = 20.0;
     static constexpr double maxTempo = 999.0;
     static constexpr double minVolumeDb = -70.0; // the fader's bottom: silence
@@ -121,6 +177,10 @@ public:
     static constexpr double minLoopLength = 1.0 / 16.0; // beats
     static constexpr int defaultTracks = 4;
     static constexpr int defaultScenes = 8;
+
+    /** The instrument new tracks get. Set once at startup (before any LiveSet is created) by
+        whoever knows the devices; the model itself does not. */
+    static juce::String& defaultInstrumentType();
 
     explicit LiveSet(juce::UndoManager* undoManager = nullptr);
 
@@ -185,6 +245,26 @@ public:
     void setMasterVolumeDb(double db);
     void setMasterPan(double pan);
 
+    // --- Return tracks and sends ---------------------------------------------------------------------
+    int numReturns() const;
+    juce::ValueTree returnTrack(int index) const;
+    std::int64_t returnId(int index) const;
+    int returnIndexForId(std::int64_t id) const; // -1 if none
+    /** Adds a return track at the end (at most maxReturns). Returns its index, or -1. */
+    int addReturn();
+    /** Deletes a return and every track's send to it. */
+    void deleteReturn(int index);
+    void setReturnName(int index, const juce::String& name);
+    void setReturnVolumeDb(int index, double db);
+    void setReturnPan(int index, double pan);
+    void setReturnMute(int index, bool mute);
+    void setReturnSolo(int index, bool solo);
+    /** Sends to this return are taken before the tracks' faders (true) or after them (false). */
+    void setReturnPreFader(int index, bool pre);
+    /** A track's send to a return, in dB (minVolumeDb = off). */
+    double sendLevel(int trackIndex, int returnIndex) const;
+    void setSendLevel(int trackIndex, int returnIndex, double db);
+
     // --- Scenes --------------------------------------------------------------------------------
     int numScenes() const;
     juce::ValueTree scene(int index) const;
@@ -232,6 +312,28 @@ public:
     static NoteData noteData(const juce::ValueTree& note);
     static std::vector<NoteData> notesOf(const juce::ValueTree& clip);
 
+    // --- Devices ----------------------------------------------------------------------------------
+    /** The device chain (DEVICES node) of a track (later also returns and the master). */
+    static juce::ValueTree chainOf(const juce::ValueTree& owner);
+    /** Inserts a new device of the given type at index (the end when out of range). The caller
+        decides where it may go (see devices/ChainEditing.h). */
+    juce::ValueTree insertDevice(juce::ValueTree chain, int index, const juce::String& typeId);
+    /** Inserts a copy of a device tree (a preset, a pasted device) with new IDs. */
+    juce::ValueTree insertDeviceCopy(juce::ValueTree chain, int index, const juce::ValueTree& device);
+    void removeDevice(const juce::ValueTree& device);
+    void moveDevice(const juce::ValueTree& device, juce::ValueTree toChain, int toIndex);
+    void setDeviceEnabled(juce::ValueTree device, bool on);
+    /** Sets a parameter's plain value. Consecutive changes of one parameter within one transaction
+        become one undo step (dragging a knob). */
+    void setDeviceParameter(juce::ValueTree device, const juce::String& parameterId, double value);
+    /** The saved value, or `fallback` (the parameter's default) when none is saved. */
+    static double deviceParameter(const juce::ValueTree& device, const juce::String& parameterId, double fallback);
+    juce::ValueTree deviceById(std::int64_t id) const;
+    /** The TRACK (or other chain owner) a device belongs to, or an invalid tree. */
+    static juce::ValueTree chainOwnerOf(const juce::ValueTree& node);
+    /** A new DEVICE node (not yet in the document). */
+    juce::ValueTree makeDevice(const juce::String& typeId);
+
     /** A new ID, unique within this set. Not undoable (IDs are never reused). */
     std::int64_t allocateId();
 
@@ -239,11 +341,13 @@ private:
     juce::UndoManager* um(bool undoable) const noexcept { return undoable ? undo : nullptr; }
     juce::ValueTree tracksNode() const;
     juce::ValueTree scenesNode() const;
+    juce::ValueTree returnsNode() const;
+    juce::ValueTree makeReturn(int number);
     juce::ValueTree makeTrack(int number);
     juce::ValueTree makeScene();
     juce::ValueTree makeSlot() const;
     /** Gives every TRACK, CLIP and SCENE in tree a new ID. */
-    void reassignIds(juce::ValueTree tree);
+    void reassignIds(const juce::ValueTree& tree);
     void setExclusiveFlag(int index, const juce::Identifier& flag, bool on, bool additive);
 
     juce::ValueTree root;

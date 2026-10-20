@@ -11,6 +11,16 @@ namespace lattice
 
 AudioEngine::AudioEngine() = default;
 
+void AudioEngine::setWorkerThreads(int count)
+{
+    RT_ASSERT_NOT_AUDIO_THREAD();
+    count = std::max(0, count);
+    if (count == workerCount && workers.published() != nullptr)
+        return;
+    workerCount = count;
+    workers.publish(count > 0 ? std::make_shared<const WorkerPool>(count) : nullptr);
+}
+
 AudioEngine::~AudioEngine()
 {
     alive->store(false);
@@ -175,6 +185,20 @@ std::shared_ptr<TrackProcessor> AudioEngine::createTrackProcessor(std::int64_t t
     return processor;
 }
 
+void AudioEngine::installChain(TrackProcessor& track, const std::vector<DevicePtr>& newDevices,
+                               const std::vector<std::shared_ptr<RackChainState>>& newRackChains,
+                               std::shared_ptr<DeviceChainLayout> chain)
+{
+    RT_ASSERT_NOT_AUDIO_THREAD();
+    const std::scoped_lock lock(processorsMutex);
+    for (const auto& device : newDevices)
+        device->prepareDevice(preparedSampleRate, preparedBlockSize);
+    for (const auto& state : newRackChains)
+        state->prepare(preparedBlockSize);
+    chain->finalise();
+    track.setChain(std::move(chain));
+}
+
 void AudioEngine::publishSnapshot(std::shared_ptr<const EngineSnapshot> snapshot)
 {
     snapshots.publish(std::move(snapshot));
@@ -182,6 +206,8 @@ void AudioEngine::publishSnapshot(std::shared_ptr<const EngineSnapshot> snapshot
 
 void AudioEngine::process(float* const* outputs, int numOutputs, int numSamples) noexcept
 {
+    // Denormals flush to zero on this thread (FTZ/DAZ), so decaying tails never slow processing.
+    const juce::ScopedNoDenormals noDenormals;
     const int chunkSize = static_cast<int>(left.size());
     if (sampleRate <= 0.0 || chunkSize == 0)
     {
@@ -205,8 +231,9 @@ void AudioEngine::process(float* const* outputs, int numOutputs, int numSamples)
         const int n = std::min(chunkSize, numSamples - offset);
         {
             const RtShared<EngineSnapshot>::ReadScope scope(snapshots);
+            const RtShared<WorkerPool>::ReadScope pool(workers);
             sessionProcessor.process(scope.get(), commandScratch.data(), numCommands, liveEvents.data(), numLive, n,
-                                     left.data(), right.data());
+                                     left.data(), right.data(), pool.get());
         }
         numCommands = 0; // commands and live input belong to the first chunk
         numLive = 0;

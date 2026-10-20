@@ -39,6 +39,11 @@ juce::StringArray preferredAudioDeviceTypes()
 ScopedAudioDeviceThread::ScopedAudioDeviceThread() = default;
 ScopedAudioDeviceThread::~ScopedAudioDeviceThread() = default;
 
+bool joinProAudioClass()
+{
+    return true; // juce::Thread::startRealtimeThread already asks for real-time scheduling
+}
+
 bool audioDeviceTypeNeedsMessageThread(const juce::String&)
 {
     return false;

@@ -57,7 +57,32 @@ public:
         Returns 0 when the note must not sound (unmapped, out of range, or muted). */
     double hzFor(int note, float bend = 0.0f) const noexcept LATTICE_NONBLOCKING;
 
+    /** Frequency at a fractional note (a note number plus glide, vibrato and other modulation, in
+        table steps, interpolated along the table) with a further offset in cents. Applies the note
+        offset and the high-note policy like hzFor(). Returns 0 when it must not sound. This is
+        what every M3 instrument uses (docs/04-m3-devices.md, "Tuning hookup"). */
+    double hzAt(double fractionalNote, double cents = 0.0) const noexcept LATTICE_NONBLOCKING;
+
+    /** A pitch-bend value (-1..1) as an offset for hzAt(), following the current bend mode: in
+        table steps (TableSteps) or in cents (Cents); the other is 0. */
+    void bendOffsets(float bend, double& steps, double& cents) const noexcept LATTICE_NONBLOCKING
+    {
+        if (bendMode.load(std::memory_order_relaxed) == BendMode::Cents)
+        {
+            steps = 0.0;
+            cents = static_cast<double>(bend) * bendRangeCents.load(std::memory_order_relaxed);
+        }
+        else
+        {
+            steps = static_cast<double>(bend) * bendRangeSteps.load(std::memory_order_relaxed);
+            cents = 0.0;
+        }
+    }
+
 private:
+    /** The high-note policy applied to a frequency (0 = mute). */
+    double applyHighNotePolicy(double hz, const TuningTable& t) const noexcept LATTICE_NONBLOCKING;
+
     RtShared<TuningTable> table;
     std::atomic<int> noteOffset{0};
     std::atomic<BendMode> bendMode{BendMode::Cents};

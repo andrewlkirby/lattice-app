@@ -8,7 +8,9 @@
 #include "engine/EngineCommands.h"
 #include "engine/EngineSnapshot.h"
 #include "engine/MidiInputQueue.h"
+#include "engine/WorkerPool.h"
 #include "engine/TestToneSource.h"
+#include "devices/racks/RackLayout.h"
 #include "engine/session/SessionProcessor.h"
 
 #include <juce_audio_devices/juce_audio_devices.h>
@@ -55,7 +57,11 @@ public:
     /** Message thread. The snapshot published last. */
     const std::shared_ptr<const EngineSnapshot>& currentSnapshot() const noexcept { return snapshots.published(); }
     /** Message thread. Frees snapshots the audio thread has finished with. */
-    void collectGarbage() { snapshots.collect(); }
+    void collectGarbage()
+    {
+        snapshots.collect();
+        workers.collect();
+    }
 
     /** Any thread except the audio thread. Returns false if the queue was full. */
     bool sendCommand(const EngineCommand& command) { return commands.push(command); }
@@ -64,9 +70,23 @@ public:
     /** Transport state and master peaks (any thread, see SessionProcessor). */
     SessionProcessor& session() noexcept { return sessionProcessor; }
 
+    /** Message thread. Parallel track processing: 0 workers processes everything on the audio
+        thread (the default, and what tests use unless they ask); WorkerPool::defaultWorkers() uses
+        every physical core. Safe while audio runs: the old pool goes once the audio thread is done
+        with it. */
+    void setWorkerThreads(int count);
+    int workerThreads() const noexcept { return workerCount; }
+
     /** Message thread. A new track processor, already prepared for the current device settings,
         and re-prepared whenever they change. */
     std::shared_ptr<TrackProcessor> createTrackProcessor(std::int64_t trackId);
+
+    /** Message thread. Prepares the new devices for the current device settings and publishes the
+        chain to the track, both under the prepare lock, so a device restart on another thread can
+        never see a half-prepared device. Fills in the chain's latency once its devices are prepared. */
+    void installChain(TrackProcessor& track, const std::vector<DevicePtr>& newDevices,
+                      const std::vector<std::shared_ptr<RackChainState>>& newRackChains,
+                      std::shared_ptr<DeviceChainLayout> chain);
 
     /** Message thread. Opens the saved device setup if there is one, otherwise the first device
         type in platform::preferredAudioDeviceTypes() that opens. Returns an error message, or an
@@ -119,6 +139,8 @@ private:
     MpscQueue<EngineCommand> commands{commandQueueSize};
     SpscFifo<EngineEvent> events{eventQueueSize};
     RtShared<EngineSnapshot> snapshots;
+    RtShared<WorkerPool> workers;
+    int workerCount = 0;
     SessionProcessor sessionProcessor{events};
 
     // Track processors to re-prepare when the device settings change.

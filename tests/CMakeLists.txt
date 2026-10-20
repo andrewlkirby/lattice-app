@@ -8,14 +8,27 @@ include(Catch)
 
 add_executable(lattice_tests
     test_main.cpp
+    app/DeviceEditorTests.cpp
     control/ComputerKeyboardTests.cpp
     core/AudioCallbackStatsTests.cpp
     core/LiveSetTests.cpp
     core/RealtimeCheckTests.cpp
     core/RtSharedTests.cpp
     core/StartupTimelineTests.cpp
+    devices/ChainEditingTests.cpp
+    devices/DspTests.cpp
+    devices/EffectTests.cpp
+    devices/FrameworkTests.cpp
+    devices/MidiEffectTests.cpp
+    devices/PresetTests.cpp
+    devices/RackTests.cpp
+    devices/SamplerTests.cpp
+    devices/SimdTests.cpp
+    devices/SynthTests.cpp
     devices/TuningTestSynthTests.cpp
     engine/AudioEngineTests.cpp
+    engine/MixerRoutingTests.cpp
+    engine/ParallelProcessingTests.cpp
     engine/SessionEngineTests.cpp
     engine/SnapshotStressTests.cpp
     engine/TestToneTests.cpp
@@ -25,7 +38,7 @@ add_executable(lattice_tests
     tuning/ScalaAndRegistryTests.cpp
     tuning/TrackTuningTests.cpp)
 target_include_directories(lattice_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(lattice_tests PRIVATE lattice_core Catch2::Catch2)
+target_link_libraries(lattice_tests PRIVATE lattice_core lattice_debug_ui Catch2::Catch2)
 if(NOT LATTICE_TSAN) # ThreadSanitizer's runtime defines operator new/delete itself
     target_link_libraries(lattice_tests PRIVATE lattice_alloc_hooks)
 endif()
@@ -39,9 +52,24 @@ catch_discover_tests(lattice_tests
     DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 120)
 
+# The device tests again on the SSE2 kernels (docs/perf/avx2-plan.md, "Testing"): on an AVX2
+# machine the run above takes the AVX2 paths, this one the SSE2 ones.
+add_test(NAME "Device tests on the SSE2 kernels"
+         COMMAND lattice_tests "[devices]~[heavy]~[slow]~[bench]~[timing]~[stress]")
+set_tests_properties("Device tests on the SSE2 kernels" PROPERTIES
+    ENVIRONMENT "LATTICE_SIMD=sse2"
+    LABELS "devices;simd"
+    TIMEOUT 900)
+
 # Engine benchmark: renders the performance reference set offline (docs/09-performance-charter.md).
 # scripts/linux-test.sh --callgrind counts its instructions against docs/perf/baselines/.
 add_executable(lattice_engine_bench bench/EngineBench.cpp)
 target_include_directories(lattice_engine_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(lattice_engine_bench PRIVATE lattice_core)
 lattice_set_warnings(lattice_engine_bench)
+
+# Device benchmarks (docs/04-m3-devices.md, "Tests" 11): each device's share of one core.
+add_executable(lattice_bench bench/DeviceBench.cpp)
+target_include_directories(lattice_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(lattice_bench PRIVATE lattice_core)
+lattice_set_warnings(lattice_bench)

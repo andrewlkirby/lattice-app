@@ -96,7 +96,11 @@ cmake --build "$build_dir" --parallel 4
 echo "== Test"
 ctest_args=(--test-dir "$build_dir" --output-on-failure --no-tests=error)
 if [[ $all_tests -eq 0 ]]; then
-    ctest_args+=(-LE "slow|bench|stress|hardware|timing")
+    if [[ $preset == linux-debug ]]; then
+        ctest_args+=(-LE "slow|bench|stress|hardware|timing|heavy") # unoptimised DSP measurements: Release runs them
+    else
+        ctest_args+=(-LE "slow|bench|stress|hardware|timing")
+    fi
 fi
 xvfb-run -a ctest "${ctest_args[@]}"
 
@@ -121,7 +125,7 @@ if [[ $callgrind -eq 1 ]]; then
     if [[ $update_baseline -eq 1 ]]; then
         {
             echo "# Instructions in the engine benchmark's render loop (lattice_engine_bench --seconds 2"
-            echo "# --block 64: the M2 reference set), GCC linux-release in docker/linux.Dockerfile."
+            echo "# --block 64: the reference set), GCC linux-release in docker/linux.Dockerfile."
             echo "# Written by scripts/linux-test.sh --update-baseline; update it in the same commit as a"
             echo "# deliberate change, with the reason (charter §3)."
             echo "$count"

@@ -5,13 +5,14 @@ namespace lattice::debugui
 namespace
 {
 constexpr int transportHeight = 68;
-constexpr int stripHeight = 230;
 constexpr int trackColumnWidth = 120;
+constexpr int dividerHeight = 6;
 constexpr auto lastSetFolderKey = "lastSetFolder";
+constexpr auto detailHeightKey = "detailViewHeight";
 } // namespace
 
 /** Everything inside the scrolling viewport: the grid, with the mixer strips lined up under its
-    columns and the master strip under the scene column. */
+    columns, the master strip under the scene column and the return strips after it. */
 class SessionView::Content final : public juce::Component
 {
 public:
@@ -23,23 +24,51 @@ public:
         rebuildStrips();
     }
 
+    /** Called when a strip is clicked: show its chain. */
+    std::function<void(ChainOwner)> onSelectChain;
+
     void rebuildStrips()
     {
         strips.clear();
+        returns.clear();
+        auto add = [this](MixerStrip::Kind kind, int index, ChainOwner owner) {
+            auto strip = std::make_unique<MixerStrip>(session, registry, kind, index);
+            strip->onSelect = [this, owner] {
+                if (onSelectChain)
+                    onSelectChain(owner);
+            };
+            addAndMakeVisible(*strip);
+            return strip;
+        };
         for (int t = 0; t < session.set().numTracks(); ++t)
-        {
-            strips.push_back(std::make_unique<MixerStrip>(session, registry, t));
-            addAndMakeVisible(*strips.back());
-        }
-        master = std::make_unique<MixerStrip>(session, registry, -1);
-        addAndMakeVisible(*master);
-        setSize(grid.preferredWidth(), grid.preferredHeight() + stripHeight);
+            strips.push_back(add(MixerStrip::Kind::Track, t, {ChainOwner::Kind::Track, t}));
+        master = add(MixerStrip::Kind::Master, -1, {ChainOwner::Kind::Master, 0});
+        for (int r = 0; r < session.set().numReturns(); ++r)
+            returns.push_back(add(MixerStrip::Kind::Return, r, {ChainOwner::Kind::Return, r}));
+        stripHeight = MixerStrip::heightFor(session.set().numReturns());
+        setSize(grid.preferredWidth() + static_cast<int>(returns.size()) * trackColumnWidth,
+                grid.preferredHeight() + stripHeight);
         resized();
+        highlight(shown);
+    }
+
+    /** Marks the strip whose chain the detail view shows. */
+    void highlight(ChainOwner owner)
+    {
+        shown = owner;
+        for (std::size_t t = 0; t < strips.size(); ++t)
+            strips[t]->setHighlighted(owner.kind == ChainOwner::Kind::Track && owner.index == static_cast<int>(t));
+        for (std::size_t r = 0; r < returns.size(); ++r)
+            returns[r]->setHighlighted(owner.kind == ChainOwner::Kind::Return && owner.index == static_cast<int>(r));
+        if (master != nullptr)
+            master->setHighlighted(owner.kind == ChainOwner::Kind::Master);
     }
 
     void refresh()
     {
         for (auto& s : strips)
+            s->refresh();
+        for (auto& s : returns)
             s->refresh();
         master->refresh();
         grid.repaint();
@@ -56,6 +85,8 @@ public:
         grid.poll();
         for (auto& s : strips)
             s->updateMeter();
+        for (auto& s : returns)
+            s->updateMeter();
         master->updateMeter();
     }
 
@@ -68,6 +99,9 @@ public:
         if (master != nullptr)
             master->setBounds(static_cast<int>(strips.size()) * trackColumnWidth, y,
                               SessionGrid::sceneColumnWidth, stripHeight);
+        const int returnsX = static_cast<int>(strips.size()) * trackColumnWidth + SessionGrid::sceneColumnWidth;
+        for (std::size_t r = 0; r < returns.size(); ++r)
+            returns[r]->setBounds(returnsX + static_cast<int>(r) * trackColumnWidth, y, trackColumnWidth, stripHeight);
     }
 
     SessionGrid& sessionGrid() noexcept { return grid; }
@@ -77,11 +111,15 @@ private:
     TuningRegistry& registry;
     SessionGrid grid;
     std::vector<std::unique_ptr<MixerStrip>> strips;
+    std::vector<std::unique_ptr<MixerStrip>> returns;
     std::unique_ptr<MixerStrip> master;
+    int stripHeight = MixerStrip::heightFor(0);
+    ChainOwner shown;
 };
 
-SessionView::SessionView(SessionController& s, TuningRegistry& tunings, juce::PropertiesFile& settingsFile)
-    : session(s), registry(tunings), settings(settingsFile), transportBar(s)
+SessionView::SessionView(SessionController& s, AudioEngine& engine, TuningRegistry& tunings,
+                         juce::PropertiesFile& settingsFile)
+    : session(s), registry(tunings), settings(settingsFile), transportBar(s), detail(s, engine, settingsFile)
 {
     setOpaque(true);
     addAndMakeVisible(transportBar);
@@ -109,6 +147,16 @@ SessionView::SessionView(SessionController& s, TuningRegistry& tunings, juce::Pr
     content->sessionGrid().onSelectionChanged = [this] {
         selectionChanged();
     };
+    content->onSelectChain = [this](ChainOwner owner) {
+        if (owner.kind == ChainOwner::Kind::Track && owner.index != selected.track)
+        {
+            selected.track = owner.index;
+            selected.sceneColumn = false;
+            selectionChanged(); // shows the track's chain
+        }
+        else
+            showChain(owner);
+    };
     content->sessionGrid().onImportMidi = [this](int t, int sc) {
         importMidi(t, sc);
     };
@@ -116,6 +164,15 @@ SessionView::SessionView(SessionController& s, TuningRegistry& tunings, juce::Pr
     viewport.setWantsKeyboardFocus(false);
     viewport.setScrollBarsShown(true, true);
     addAndMakeVisible(viewport);
+
+    // The detail view below a divider, at the height it had last time.
+    const double detailHeight = settings.getDoubleValue(detailHeightKey, 330.0);
+    split.setItemLayout(0, 120, -1.0, -0.6);
+    split.setItemLayout(1, dividerHeight, dividerHeight, dividerHeight);
+    split.setItemLayout(2, 150, -0.85, -std::clamp(detailHeight / 900.0, 0.2, 0.8));
+    addAndMakeVisible(divider);
+    addAndMakeVisible(detail);
+    showChain({ChainOwner::Kind::Track, selected.track});
 
     session.set().state().addListener(this);
     startTimerHz(refreshHz);
@@ -135,7 +192,16 @@ void SessionView::resized()
 {
     auto area = getLocalBounds();
     transportBar.setBounds(area.removeFromTop(transportHeight));
-    viewport.setBounds(area);
+    juce::Component* parts[] = {&viewport, &divider, &detail};
+    split.layOutComponents(parts, 3, area.getX(), area.getY(), area.getWidth(), area.getHeight(), true, true);
+    if (detail.getHeight() > 0)
+        settings.setValue(detailHeightKey, detail.getHeight());
+}
+
+void SessionView::showChain(ChainOwner owner)
+{
+    detail.showChainOf(owner);
+    content->highlight(owner);
 }
 
 void SessionView::timerCallback()
@@ -160,6 +226,12 @@ void SessionView::rebuild()
     content->refresh();
     transportBar.refresh();
     moveSelection(0, 0); // clamp to what exists now
+    // A deleted return (or a new set) may have taken the shown chain away.
+    auto owner = detail.owner();
+    if ((owner.kind == ChainOwner::Kind::Return && owner.index >= session.set().numReturns()) ||
+        (owner.kind == ChainOwner::Kind::Track && owner.index >= session.set().numTracks()))
+        owner = {ChainOwner::Kind::Track, selected.track};
+    showChain(owner);
 }
 
 void SessionView::moveSelection(int dTrack, int dScene)
@@ -186,6 +258,7 @@ void SessionView::selectionChanged()
     if (selected.track != lastSelectedTrack)
     {
         lastSelectedTrack = selected.track;
+        showChain({ChainOwner::Kind::Track, selected.track});
         if (onSelectedTrackChanged)
             onSelectedTrackChanged();
     }

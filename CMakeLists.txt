@@ -103,6 +103,7 @@ target_compile_definitions(lattice_juce
         JUCE_JACK=$<PLATFORM_ID:Linux>
         JUCE_ALSA=$<PLATFORM_ID:Linux>
         JUCE_WASAPI=1
+        JUCE_USE_MP3AUDIOFORMAT=1
         JUCE_DIRECTSOUND=0
         JUCE_STRICT_REFCOUNTEDPOINTER=1
         JUCE_DISABLE_JUCE_VERSION_PRINTING=1
@@ -137,12 +138,16 @@ target_compile_definitions(lattice_juce
 set_target_properties(lattice_juce PROPERTIES FOLDER "Dependencies")
 
 # --- Embedded resources ----------------------------------------------------------------------------
-# The Colundi table is compiled in, so the app works without the file on disk.
+# The Colundi table and the factory presets are compiled in, so the app works without the files on
+# disk. The presets are generated (tests/support/FactoryPresets.h).
+file(GLOB LATTICE_FACTORY_PRESETS CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/resources/presets/*.lpreset)
 juce_add_binary_data(lattice_binary_data
     HEADER_NAME LatticeBinaryData.h
     NAMESPACE LatticeResources
-    SOURCES resources/tunings/colundi_scale.txt)
-set_target_properties(lattice_binary_data PROPERTIES FOLDER "Dependencies" POSITION_INDEPENDENT_CODE ON)
+    SOURCES resources/tunings/colundi_scale.txt ${LATTICE_FACTORY_PRESETS})
+# Plain data needs no link-time optimisation (and MSVC's LTCG has crashed generating it).
+set_target_properties(lattice_binary_data PROPERTIES FOLDER "Dependencies" POSITION_INDEPENDENT_CODE ON
+                                                     INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
 
 # --- lattice_core: all non-UI Lattice code ------------------------------------------------------
 add_library(lattice_core STATIC
@@ -153,7 +158,47 @@ add_library(lattice_core STATIC
     src/core/StartupTimeline.cpp
     src/core/model/LiveSet.cpp
     src/core/model/MidiImport.cpp
-    src/devices/test/TestSynthProcessor.cpp
+    src/devices/BuiltinDevices.cpp
+    src/devices/ChainEditing.cpp
+    src/devices/dsp/Biquad.cpp
+    src/devices/dsp/FirHalfBand.cpp
+    src/devices/dsp/HalfBand.cpp
+    src/devices/dsp/OscillatorSimd.cpp
+    src/devices/dsp/OscillatorSimdAvx2.cpp
+    src/devices/dsp/ReverbTail.cpp
+    src/devices/dsp/ReverbTailAvx2.cpp
+    src/devices/dsp/Simd.cpp
+    src/devices/dsp/SincBlock.cpp
+    src/devices/dsp/SincBlockAvx2.cpp
+    src/devices/dsp/SincResampler.cpp
+    src/devices/dsp/VoiceFilterSimd.cpp
+    src/devices/dsp/VoiceFilterSimdAvx2.cpp
+    src/devices/dsp/Wavetable.cpp
+    src/devices/effects/AutoFilter.cpp
+    src/devices/effects/Chorus.cpp
+    src/devices/effects/Compressor.cpp
+    src/devices/effects/Delay.cpp
+    src/devices/effects/EqEight.cpp
+    src/devices/effects/Limiter.cpp
+    src/devices/effects/Reverb.cpp
+    src/devices/effects/Saturator.cpp
+    src/devices/effects/Utility.cpp
+    src/devices/framework/DeviceChain.cpp
+    src/devices/framework/DeviceParameter.cpp
+    src/devices/framework/DeviceRegistry.cpp
+    src/devices/framework/ParameterPager.cpp
+    src/devices/framework/ParameterSpec.cpp
+    src/devices/framework/StudioDevice.cpp
+    src/devices/instruments/Sampler.cpp
+    src/devices/instruments/Synth.cpp
+    src/devices/midi/Arpeggiator.cpp
+    src/devices/midi/Chord.cpp
+    src/devices/racks/Rack.cpp
+    src/devices/presets/Presets.cpp
+    src/devices/racks/RackEditing.cpp
+    src/devices/racks/RackLayout.cpp
+    src/devices/samples/SamplePool.cpp
+    src/devices/test/TestSynthDevice.cpp
     src/devices/test/TuningTestSynth.cpp
     src/engine/AudioEngine.cpp
     src/engine/Metronome.cpp
@@ -162,6 +207,7 @@ add_library(lattice_core STATIC
     src/engine/SnapshotBuilder.cpp
     src/engine/TestToneSource.cpp
     src/engine/TrackProcessor.cpp
+    src/engine/WorkerPool.cpp
     src/engine/Transport.cpp
     src/engine/session/ClipData.cpp
     src/engine/session/ClipPlayer.cpp
@@ -176,6 +222,7 @@ add_library(lattice_core STATIC
     src/tuning/parsers/ScalaParser.cpp)
 if(WIN32)
     target_sources(lattice_core PRIVATE src/platform/windows/PlatformWindows.cpp)
+    target_link_libraries(lattice_core PRIVATE avrt) # MMCSS for the audio worker threads
 elseif(APPLE)
     target_sources(lattice_core PRIVATE src/platform/macos/PlatformMacOS.cpp)
 else()
@@ -195,6 +242,34 @@ add_library(lattice_alloc_hooks OBJECT src/core/AllocationHooks.cpp)
 target_link_libraries(lattice_alloc_hooks PRIVATE lattice_core)
 lattice_set_warnings(lattice_alloc_hooks)
 
+# AVX2 + FMA kernels: every *Avx2.cpp in lattice_core, chosen at run time on CPUs that have them
+# (devices/dsp/Simd.h, docs/perf/avx2-plan.md). Only these files get the flags; they include
+# nothing but intrinsics and plain interfaces (see SincBlock.h), and they stay out of link-time
+# optimisation, so their code is never inlined into code for any CPU.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|x86_64|amd64)$")
+    get_target_property(LATTICE_AVX2_SOURCES lattice_core SOURCES)
+    list(FILTER LATTICE_AVX2_SOURCES INCLUDE REGEX "Avx2[.]cpp$")
+    if(MSVC)
+        set_source_files_properties(${LATTICE_AVX2_SOURCES} PROPERTIES COMPILE_OPTIONS "/arch:AVX2;/GL-")
+    else()
+        set_source_files_properties(${LATTICE_AVX2_SOURCES} PROPERTIES COMPILE_OPTIONS "-mavx2;-mfma;-fno-lto")
+    endif()
+endif()
+
+# --- Debug UI (M2/M3, replaced in M4): a library, so the tests can drive the editors headless ------
+add_library(lattice_debug_ui STATIC
+    src/app/debug/ClipPropertiesPanel.cpp
+    src/app/debug/DetailView.cpp
+    src/app/debug/DevicePanel.cpp
+    src/app/debug/DeviceUi.cpp
+    src/app/debug/MixerStrip.cpp
+    src/app/debug/SessionGrid.cpp
+    src/app/debug/SessionView.cpp
+    src/app/debug/TransportBar.cpp)
+target_include_directories(lattice_debug_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(lattice_debug_ui PUBLIC lattice_core)
+lattice_set_warnings(lattice_debug_ui)
+
 # --- App -----------------------------------------------------------------------------------------
 if(LATTICE_BUILD_APP)
     juce_add_gui_app(Lattice
@@ -206,16 +281,11 @@ if(LATTICE_BUILD_APP)
         src/app/Main.cpp
         src/app/MainWindow.cpp
         src/app/PlayPanel.cpp
-        src/app/SoakTest.cpp
-        src/app/debug/ClipPropertiesPanel.cpp
-        src/app/debug/MixerStrip.cpp
-        src/app/debug/SessionGrid.cpp
-        src/app/debug/SessionView.cpp
-        src/app/debug/TransportBar.cpp)
+        src/app/SoakTest.cpp)
     target_compile_definitions(Lattice PRIVATE
         JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:Lattice,JUCE_PRODUCT_NAME>"
         JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:Lattice,JUCE_VERSION>")
-    target_link_libraries(Lattice PRIVATE lattice_core)
+    target_link_libraries(Lattice PRIVATE lattice_core lattice_debug_ui)
     if(LATTICE_RT_CHECKS STREQUAL "ON")
         target_link_libraries(Lattice PRIVATE lattice_alloc_hooks)
         target_compile_definitions(Lattice PRIVATE LATTICE_RT_CHECKS_ENABLED=1)

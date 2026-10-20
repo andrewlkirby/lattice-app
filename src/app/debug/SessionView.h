@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/debug/DetailView.h"
 #include "app/debug/MixerStrip.h"
 #include "app/debug/SessionGrid.h"
 #include "app/debug/SessionUi.h"
@@ -15,16 +16,18 @@
 namespace lattice::debugui
 {
 
-/** The M2 debug session UI (docs/03-m2-engine-session.md, part 2e): transport bar, clip launcher
-    grid, and mixer. Every engine command can be reached from here with the mouse or a Live-style
-    shortcut, so a whole session can be built, recorded, launched and saved with no hardware.
-    Throwaway: replaced by the real UI in M4. */
+/** The debug session UI (docs/03-m2-engine-session.md, part 2e; docs/04-m3-devices.md, "3f"):
+    transport bar, clip launcher grid, mixer (tracks, returns, master) and, below a divider, the
+    detail view: the device list and the selected chain's devices. Every engine command can be
+    reached from here with the mouse or a Live-style shortcut, so a whole session can be built,
+    recorded, launched and saved with no hardware. Throwaway: replaced by the real UI in M4. */
 class SessionView final : public juce::Component, private juce::Timer, private juce::ValueTree::Listener
 {
 public:
     static constexpr int refreshHz = 30;
 
-    SessionView(SessionController& session, TuningRegistry& tunings, juce::PropertiesFile& settings);
+    SessionView(SessionController& session, AudioEngine& engine, TuningRegistry& tunings,
+                juce::PropertiesFile& settings);
     ~SessionView() override;
 
     const Selection& selection() const noexcept { return selected; }
@@ -72,13 +75,15 @@ private:
     void childChanged(const juce::ValueTree& parent, const juce::ValueTree& child)
     {
         if (parent.hasType(ids::liveSet) || parent.hasType(ids::tracks) || parent.hasType(ids::scenes) ||
-            child.hasType(ids::track) || child.hasType(ids::scene))
+            parent.hasType(ids::returns) || child.hasType(ids::track) || child.hasType(ids::scene) ||
+            child.hasType(ids::returnTrack))
             needsRebuild = true;
         else
             needsRefresh = true;
     }
 
     void rebuild();
+    void showChain(ChainOwner owner);
     void moveSelection(int dTrack, int dScene);
     void selectionChanged();
     juce::File setsFolder() const;
@@ -93,6 +98,9 @@ private:
     TransportBar transportBar;
     std::unique_ptr<Content> content;
     juce::Viewport viewport;
+    DetailView detail;
+    juce::StretchableLayoutManager split;
+    juce::StretchableLayoutResizerBar divider{&split, 1, false};
     std::unique_ptr<juce::FileChooser> chooser;
     bool needsRefresh = false;
     bool needsRebuild = false;

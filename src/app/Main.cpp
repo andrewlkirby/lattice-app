@@ -3,6 +3,7 @@
 #include "app/SoakTest.h"
 #include "core/Profiling.h"
 #include "core/StartupTimeline.h"
+#include "devices/dsp/Wavetable.h"
 #include "engine/AudioEngine.h"
 #include "engine/SessionController.h"
 #include "platform/Platform.h"
@@ -26,6 +27,8 @@ public:
     {
         LATTICE_ZONE("startup: initialise");
         timeline.mark("app init");
+        // The synth's band-limited tables build in the background while the rest starts up.
+        dsp::WaveformLibrary::preloadInBackground();
         quitWhenReady = commandLine.contains("--quit-when-ready");
         runSoak = SoakTest::parseCommandLine(commandLine, soakOptions);
 
@@ -38,6 +41,8 @@ public:
         timeline.mark("settings loaded");
 
         engine = std::make_unique<AudioEngine>();
+        // Parallel track processing: a worker per physical core, unless switched off in the settings.
+        engine->setWorkerThreads(settings->getBoolValue("multiThreadedAudio", true) ? WorkerPool::defaultWorkers() : 0);
         timeline.mark("engine created");
 
         tunings = std::make_unique<TuningRegistry>();

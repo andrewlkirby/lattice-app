@@ -4,6 +4,7 @@
 #include "engine/TrackProcessor.h"
 #include "engine/session/ClipData.h"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -27,6 +28,8 @@ struct TrackSnapshot
     bool solo = false;
     bool arm = false;
     std::vector<SlotSnapshot> slots; // one per scene
+    std::array<float, TrackProcessor::maxReturns> sendGains{}; // per return, linear (0 = off)
+    int compensation = 0; // samples of delay that line this track up with the slowest
 
     /** Index of the slot holding a clip, or -1. */
     int sceneOfClip(std::int64_t clipId) const noexcept
@@ -36,6 +39,19 @@ struct TrackSnapshot
                 return static_cast<int>(i);
         return -1;
     }
+};
+
+/** A return track: its chain is fed by the tracks' sends (docs/04-m3-devices.md, "3e"). */
+struct ReturnSnapshot
+{
+    std::int64_t id = 0;
+    std::shared_ptr<TrackProcessor> processor;
+    float gainLeft = 0.0f;
+    float gainRight = 0.0f;
+    bool mute = false;
+    bool solo = false;
+    bool preFader = false;
+    int compensation = 0;
 };
 
 struct SceneSnapshot
@@ -59,9 +75,20 @@ struct EngineSnapshot
     float metronomeGain = 0.25f;
     float masterGainLeft = 0.70710678f;
     float masterGainRight = 0.70710678f;
-    bool anySolo = false;
+    bool anySolo = false;       // a track is soloed
+    bool anyReturnSolo = false; // a return is soloed
     std::vector<TrackSnapshot> tracks;
     std::vector<SceneSnapshot> scenes;
+    std::vector<ReturnSnapshot> returns;
+    std::shared_ptr<TrackProcessor> master; // the master's device chain
+    /** Track indices in processing order, in levels: every sidechain source is in an earlier level
+        than the tracks that listen to it, and the tracks within a level are independent (they can
+        run in parallel). */
+    std::vector<std::vector<int>> levels;
+    /** The tracks' direct path to the master is delayed by the slowest return's latency, so it
+        lines up with what comes back through the returns. */
+    int masterInputDelay = 0;
+    bool reducedLatencyWhenMonitoring = false;
 
     const TrackSnapshot* findTrack(std::int64_t trackId) const noexcept
     {
