@@ -270,6 +270,21 @@ target_include_directories(lattice_debug_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/s
 target_link_libraries(lattice_debug_ui PUBLIC lattice_core)
 lattice_set_warnings(lattice_debug_ui)
 
+# --- UI (M4, docs/05-m4-ui.md): a library, so the tests can drive the views headless ---------------
+add_library(lattice_ui STATIC
+    src/ui/theme/LatticeLookAndFeel.cpp
+    src/ui/theme/Theme.cpp
+    src/ui/widgets/BoundControl.cpp
+    src/ui/widgets/Fader.cpp
+    src/ui/widgets/Knob.cpp
+    src/ui/widgets/Meter.cpp
+    src/ui/widgets/NumberBox.cpp
+    src/ui/widgets/Toggle.cpp
+    src/ui/widgets/ValueBinding.cpp)
+target_include_directories(lattice_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(lattice_ui PUBLIC lattice_core)
+lattice_set_warnings(lattice_ui)
+
 # --- App -----------------------------------------------------------------------------------------
 if(LATTICE_BUILD_APP)
     juce_add_gui_app(Lattice

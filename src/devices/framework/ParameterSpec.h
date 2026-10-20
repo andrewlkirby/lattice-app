@@ -132,6 +132,17 @@ struct ParameterSpec
 
     bool isDiscrete() const noexcept { return kind != ParamKind::Float || interval > 0.0f; }
 
+    /** The range a knob or controller moves through: the skew puts centreValue at the middle.
+        Everything that turns a parameter (devices, on-screen widgets, controllers) uses this one,
+        so they all have the same feel. */
+    juce::NormalisableRange<float> normalisableRange() const
+    {
+        juce::NormalisableRange<float> r(minValue, maxValue, interval);
+        if (kind == ParamKind::Float && !std::isnan(centreValue) && centreValue > minValue && centreValue < maxValue)
+            r.setSkewForCentre(centreValue);
+        return r;
+    }
+
     /** Clamps (and for discrete parameters rounds) a plain value into the range. */
     float constrain(float plain) const noexcept
     {
