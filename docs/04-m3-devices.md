@@ -330,15 +330,21 @@ All tests run in `OfflineRenderer` under `ScopedAudioThread` (from M2) at severa
       the starting budgets, except the Sampler's sinc at 2.5%; see "Performance" below).
 
 ## Definition of done
-- [ ] Load a Synth on a Colundi track, play it from the computer keyboard, and hear correct Colundi pitches, including during glide.
-- [ ] Build a Drum Rack by dragging samples onto pads, and play it with the mouse and with the computer keyboard.
-- [ ] Load a 440 Hz sample into the Sampler, set the track to Colundi, and the notes play at the table frequencies.
-- [ ] Chain Arpeggiator → Synth → EQ → Delay, then reorder and bypass devices while playing, with no clicks or dropouts.
-- [ ] Build an Instrument Rack with 2 chains and 16 macros, save it as a preset, and load it on another track.
-- [ ] A sidechain-compressed pad ducks to a kick through return reverbs, and the Limiter on master stays aligned with everything else.
-- [ ] Every parameter can be reached from the generic editor with no controller connected.
-- [ ] All device tests pass in CI, and all benchmarks are within budget on the reference machine.
-- [ ] A 32-track set plays without dropouts at a 64-sample buffer on the reference machine, using parallel processing.
+- [x] Load a Synth on a Colundi track, play it from the computer keyboard, and hear correct Colundi pitches, including during glide.
+- [x] Build a Drum Rack by dragging samples onto pads, and play it with the mouse and with the computer keyboard.
+- [x] Load a 440 Hz sample into the Sampler, set the track to Colundi, and the notes play at the table frequencies.
+- [x] Chain Arpeggiator → Synth → EQ → Delay, then reorder and bypass devices while playing, with no clicks or dropouts.
+- [x] Build an Instrument Rack with 2 chains and 16 macros, save it as a preset, and load it on another track.
+- [x] A sidechain-compressed pad ducks to a kick through return reverbs, and the Limiter on master stays aligned with everything else.
+- [x] Every parameter can be reached from the generic editor with no controller connected.
+- [x] All device tests pass in CI, and all benchmarks are within budget on the reference machine.
+- [x] A 32-track set plays without dropouts at a 64-sample buffer on the reference machine, using parallel processing.
+
+Checked 2026-10-19: the hands-on items on the reference machine (all pass); CI green on every
+commit; `lattice_bench` within budget and the 10-minute reference-set stress test clean on a quiet
+machine (`docs/perf/avx2-plan.md`, step 6). The hands-on checks found one bug, fixed: a Compressor's
+sidechain set up while the set was playing did nothing until the set was reloaded (see
+"Returns, sends, sidechain, delay compensation").
 
 ## As built (2026-10-12)
 Where the code differs from the plan above, and why. Each device's header describes it in full.
@@ -411,6 +417,8 @@ Where the code differs from the plan above, and why. Each device's header descri
 - **Deviation:** a sidechain takes the source track's *uncompensated* chain output (before or after
   its effects). The editor offers only sources that can't form a loop
   (`devices/ChainEditing.h`), rather than refusing one with an explanation.
+- A chain whose devices stay the same but whose sidechain routes change (a source chosen in the
+  editor) switches to the new routes at once, with no fade (found in the hands-on checks).
 - **Parallel processing:** `WorkerPool` (one real-time worker per physical core, minus one; Windows
   workers join MMCSS "Pro Audio"). The audio thread and the workers take a level's tracks, then the
   returns, from one atomic ticket that also carries the job's task count, so a late worker can never
