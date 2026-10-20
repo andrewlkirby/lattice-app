@@ -153,6 +153,7 @@ set_target_properties(lattice_binary_data PROPERTIES FOLDER "Dependencies" POSIT
 add_library(lattice_core STATIC
     src/control/ComputerKeyboardInput.cpp
     src/core/AudioCallbackStats.cpp
+    src/core/JobPool.cpp
     src/core/LatencyStats.cpp
     src/core/RealtimeCheck.cpp
     src/core/StartupTimeline.cpp

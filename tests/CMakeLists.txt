@@ -11,6 +11,7 @@ add_executable(lattice_tests
     app/DeviceEditorTests.cpp
     control/ComputerKeyboardTests.cpp
     core/AudioCallbackStatsTests.cpp
+    core/JobPoolTests.cpp
     core/LiveSetTests.cpp
     core/RealtimeCheckTests.cpp
     core/RtSharedTests.cpp
