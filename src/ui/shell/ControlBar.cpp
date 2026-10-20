@@ -43,7 +43,7 @@ LoadMeter::LoadMeter(int workerThreads) : workers(workerThreads)
     setHelpText("How long the audio callback takes, as a share of the time it has (99th percentile), and dropouts.");
 }
 
-void LoadMeter::setLoad(const EngineStateFeed::Load& l)
+void LoadMeter::setLoad(const EngineStateFeed::Load& l, const AudioCallbackStats::Summary& frames, double budget)
 {
     p99 = l.callback.p99;
     drops = l.callback.overruns + static_cast<std::uint64_t>(juce::jmax(0, l.deviceXruns));
@@ -52,7 +52,13 @@ void LoadMeter::setLoad(const EngineStateFeed::Load& l)
                juce::String(juce::roundToInt(l.callback.p999 * 100.0)) + "%, worst " +
                juce::String(juce::roundToInt(l.callback.max * 100.0)) + "%\n" + juce::String(l.callback.overruns) +
                " callbacks over time, " + juce::String(juce::jmax(0, l.deviceXruns)) + " device dropouts\n" +
-               juce::String(workers) + (workers == 1 ? " worker thread" : " worker threads"));
+               juce::String(workers) + (workers == 1 ? " worker thread" : " worker threads") +
+               (frames.callbacks == 0 || budget <= 0.0
+                    ? juce::String()
+                    : "\nUI frames: median " + juce::String(frames.p50 * budget * 1000.0, 1) + " ms, 99th percentile " +
+                          juce::String(frames.p99 * budget * 1000.0, 1) + " ms, worst " +
+                          juce::String(frames.max * budget * 1000.0, 1) + " ms; " + juce::String(frames.overruns) +
+                          " over " + juce::String(juce::roundToInt(budget * 1000.0)) + " ms"));
     repaint();
 }
 
@@ -227,7 +233,7 @@ void ControlBar::engineStateChanged(std::uint32_t aspects)
             position.setText(text, juce::dontSendNotification);
     }
     if ((aspects & EngineStateFeed::loadAspect) != 0)
-        load.setLoad(feed.load());
+        load.setLoad(feed.load(), frameSummary ? frameSummary() : AudioCallbackStats::Summary{}, frameBudgetSeconds);
 }
 
 int ControlBar::preferredHeight() const

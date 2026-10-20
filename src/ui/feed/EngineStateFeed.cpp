@@ -19,13 +19,6 @@ bool samePlay(const TrackPlayState& a, const TrackPlayState& b)
            a.loopEnd == b.loopEnd;
 }
 
-bool sameLoad(const EngineStateFeed::Load& a, const EngineStateFeed::Load& b)
-{
-    return a.callback.callbacks == b.callback.callbacks && a.callback.overruns == b.callback.overruns &&
-           a.callback.p50 == b.callback.p50 && a.callback.p99 == b.callback.p99 && a.callback.p999 == b.callback.p999 &&
-           a.callback.max == b.callback.max && a.deviceXruns == b.deviceXruns;
-}
-
 bool moving(const std::array<float, 2>& peaks)
 {
     return peaks[0] > 0.0f || peaks[1] > 0.0f;
@@ -95,6 +88,13 @@ std::array<float, 2> EngineStateFeed::returnPeaks(int returnIndex) const
 }
 
 void EngineStateFeed::tick(double nowSeconds)
+{
+    const auto started = juce::Time::getHighResolutionTicks();
+    tickBody(nowSeconds);
+    tickWork += juce::Time::highResolutionTicksToSeconds(juce::Time::getHighResolutionTicks() - started);
+}
+
+void EngineStateFeed::tickBody(double nowSeconds)
 {
     lastFrameSeconds = lastTickSeconds < 0.0 ? 0.0 : juce::jmax(0.0, nowSeconds - lastTickSeconds);
     lastTickSeconds = nowSeconds;
@@ -175,8 +175,8 @@ void EngineStateFeed::tick(double nowSeconds)
         Load l;
         l.callback = engine.callbackStats().summary();
         l.deviceXruns = engine.getDeviceManager().getXRunCount();
-        if (!sameLoad(l, loadState) || tickCount == 1)
-            changed |= loadAspect;
+        // Every interval, changed or not: what's shown with it (the UI's frame times) moves anyway.
+        changed |= loadAspect;
         loadState = l;
     }
 

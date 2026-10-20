@@ -33,7 +33,9 @@ class LoadMeter final : public juce::Component, public juce::SettableTooltipClie
 {
 public:
     explicit LoadMeter(int workerThreads);
-    void setLoad(const EngineStateFeed::Load& load);
+    /** frames: the UI's frame times, as shares of the frame budget (see MainShell). */
+    void setLoad(const EngineStateFeed::Load& load, const AudioCallbackStats::Summary& frames = {},
+                 double frameBudgetSeconds = 0.0);
     juce::String text() const;
     std::uint64_t dropouts() const noexcept { return drops; }
     void paint(juce::Graphics&) override;
@@ -63,6 +65,9 @@ public:
     Toggle& playButton() noexcept { return play; }
     Toggle& recordButton() noexcept { return record; }
     LoadMeter& loadMeter() noexcept { return load; }
+    /** Where the bar reads the UI's frame times for the load meter (the shell measures them). */
+    std::function<AudioCallbackStats::Summary()> frameSummary;
+    double frameBudgetSeconds = 0.0;
 
     int preferredHeight() const;
     void paint(juce::Graphics&) override;

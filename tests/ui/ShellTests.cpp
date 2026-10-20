@@ -255,3 +255,25 @@ TEST_CASE("Shell: snapshots of the window in every theme, for looking at", "[.ui
         WARN("Wrote " << file.getFullPathName());
     }
 }
+
+TEST_CASE("Shell: every frame's UI work is measured against the frame budget", "[ui][shell]")
+{
+    Fixture f;
+    f.shell->resetLoadStatistics();
+    CHECK(f.shell->frameStats().summary().callbacks == 0);
+    f.tick(); // the feed's work counts towards the next frame
+    for (int i = 0; i < 3; ++i)
+        f.shell->createComponentSnapshot(f.shell->getLocalBounds(), true, 1.0f); // paints the whole window
+    const auto frames = f.shell->frameStats().summary();
+    CHECK(frames.callbacks == 3);
+    CHECK(frames.max > 0.0);
+
+    // The load meter's tooltip reports them.
+    f.tick();
+    f.now += 1.0; // past the load interval
+    f.tick();
+    CHECK(f.shell->controlBar().loadMeter().getTooltip().contains("UI frames"));
+
+    CHECK(f.shell->commands().perform("view.resetLoad"));
+    CHECK(f.shell->frameStats().summary().callbacks == 0);
+}

@@ -7,6 +7,7 @@
 
 #include <array>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace lattice::ui
@@ -29,7 +30,7 @@ public:
         slotsAspect = 1u << 1,     // any slot's state, any track's play state (clip progress)
         metersAspect = 1u << 2,    // track, return and master levels (every tick while any is moving)
         notesAspect = 1u << 3,     // a track's last note
-        loadAspect = 1u << 4,      // the audio callback's load and dropouts
+        loadAspect = 1u << 4,      // the audio callback's load and dropouts (every loadIntervalSeconds)
         allAspects = 0xffffffffu
     };
 
@@ -64,6 +65,8 @@ public:
     /** The time since the tick before (0 on the first): meters and blinking advance by it. */
     double frameSeconds() const noexcept { return lastFrameSeconds; }
     std::uint64_t ticks() const noexcept { return tickCount; }
+    /** The time the ticks took since the last call (the shell adds it to the frame's work). */
+    double takeTickWorkSeconds() noexcept { return std::exchange(tickWork, 0.0); }
 
     // --- What the last tick read ---------------------------------------------------------------
     const TransportState& transport() const noexcept { return transportState; }
@@ -79,6 +82,8 @@ public:
     const std::vector<std::pair<int, int>>& changedSlots() const noexcept { return slotChanges; }
 
 private:
+    void tickBody(double nowSeconds);
+
     struct Track
     {
         std::vector<SlotState> slots;
@@ -107,6 +112,7 @@ private:
     double lastLoadSeconds = -1.0e9;
     double lastFrameSeconds = 0.0;
     std::uint64_t tickCount = 0;
+    double tickWork = 0.0;
     bool metersWereMoving = false;
 };
 

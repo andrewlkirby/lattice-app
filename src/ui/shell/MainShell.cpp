@@ -43,6 +43,8 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
     addKeyListener(&registry.keyMappings());
 
     bar = std::make_unique<ControlBar>(session, registry, stateFeed, engine.workerThreads());
+    bar->frameSummary = [this] { return frames.summary(); };
+    bar->frameBudgetSeconds = frameBudgetSeconds;
     addAndMakeVisible(*bar);
 
     browser = std::make_unique<Placeholder>("Browser", "Devices, presets, samples and tunings, with search (4e). For now the "
@@ -119,6 +121,11 @@ void MainShell::addViewCommands()
                   .defaultKeys = {ctrlAlt('i')},
                   .perform = [this] { setInfoVisible(!showInfo); },
                   .isTicked = [this] { return showInfo; }});
+    registry.add({.id = "view.resetLoad",
+                  .name = "Reset Load Statistics",
+                  .category = "View",
+                  .description = "Starts the audio load and UI frame time figures over.",
+                  .perform = [this] { resetLoadStatistics(); }});
     for (const auto* t : {&Theme::dark(), &Theme::light(), &Theme::highContrast()})
     {
         const auto themeName = t->name;
@@ -191,9 +198,23 @@ void MainShell::handleAsyncUpdate()
     status->refresh();
 }
 
+void MainShell::resetLoadStatistics()
+{
+    engine.callbackStats().reset();
+    frames.reset();
+}
+
 void MainShell::paint(juce::Graphics& g)
 {
+    // Everything in the window paints between here and paintOverChildren().
+    paintStarted = juce::Time::getHighResolutionTicks();
     g.fillAll(lookAndFeel.theme().background);
+}
+
+void MainShell::paintOverChildren(juce::Graphics&)
+{
+    const double painting = juce::Time::highResolutionTicksToSeconds(juce::Time::getHighResolutionTicks() - paintStarted);
+    frames.recordCallback(painting + stateFeed.takeTickWorkSeconds(), frameBudgetSeconds);
 }
 
 void MainShell::resized()

@@ -56,7 +56,14 @@ public:
         mouse move inside its window; tests call it directly). */
     void showInfoFor(const juce::Component* component);
 
+    /** The UI thread's work per frame (the feed's ticks and the painting), as shares of the frame
+        budget (docs/09-performance-charter.md §1: a frame takes 8 ms or less while busy). */
+    static constexpr double frameBudgetSeconds = 0.008;
+    const AudioCallbackStats& frameStats() const noexcept { return frames; }
+    void resetLoadStatistics();
+
     void paint(juce::Graphics&) override;
+    void paintOverChildren(juce::Graphics&) override;
     void resized() override;
 
     static constexpr auto themeKey = "theme";
@@ -90,6 +97,8 @@ private:
     InfoView info;
     std::unique_ptr<StatusBar> status;
     bool showBrowser = false, showDetail = false, showInfo = true;
+    AudioCallbackStats frames;
+    juce::int64 paintStarted = 0;
 };
 
 } // namespace lattice::ui
