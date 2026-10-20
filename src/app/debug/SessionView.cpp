@@ -252,6 +252,12 @@ void SessionView::moveSelection(int dTrack, int dScene)
     selectionChanged();
 }
 
+void SessionView::setSelection(const Selection& s)
+{
+    selected = s;
+    moveSelection(0, 0); // clamps, repaints and follows the track
+}
+
 void SessionView::selectionChanged()
 {
     content->sessionGrid().repaint();

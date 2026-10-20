@@ -276,6 +276,10 @@ add_library(lattice_ui STATIC
     src/ui/commands/CommandRegistry.cpp
     src/ui/commands/SessionCommands.cpp
     src/ui/feed/EngineStateFeed.cpp
+    src/ui/shell/ControlBar.cpp
+    src/ui/shell/InfoView.cpp
+    src/ui/shell/MainShell.cpp
+    src/ui/shell/StatusBar.cpp
     src/ui/theme/LatticeLookAndFeel.cpp
     src/ui/theme/Theme.cpp
     src/ui/widgets/BoundControl.cpp
@@ -304,7 +308,7 @@ if(LATTICE_BUILD_APP)
     target_compile_definitions(Lattice PRIVATE
         JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:Lattice,JUCE_PRODUCT_NAME>"
         JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:Lattice,JUCE_VERSION>")
-    target_link_libraries(Lattice PRIVATE lattice_core lattice_debug_ui)
+    target_link_libraries(Lattice PRIVATE lattice_core lattice_debug_ui lattice_ui)
     if(LATTICE_RT_CHECKS STREQUAL "ON")
         target_link_libraries(Lattice PRIVATE lattice_alloc_hooks)
         target_compile_definitions(Lattice PRIVATE LATTICE_RT_CHECKS_ENABLED=1)

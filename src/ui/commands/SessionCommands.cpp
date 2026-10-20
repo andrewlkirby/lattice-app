@@ -55,6 +55,17 @@ void addSessionCommands(CommandRegistry& registry, SessionController& session, S
                   .defaultKeys = {plain(KeyPress::spaceKey)},
                   .perform = [&session] { session.togglePlayStop(); },
                   .isTicked = [&session] { return session.transport().playing; }});
+    registry.add({.id = "transport.play",
+                  .name = "Play",
+                  .category = "Transport",
+                  .description = "Starts the transport from the beginning.",
+                  .perform = [&session] { session.play(); },
+                  .isTicked = [&session] { return session.transport().playing; }});
+    registry.add({.id = "transport.stop",
+                  .name = "Stop",
+                  .category = "Transport",
+                  .description = "Stops the transport and every clip; stopping again goes back to the beginning.",
+                  .perform = [&session] { session.stop(); }});
     registry.add({.id = "transport.continue",
                   .name = "Continue",
                   .category = "Transport",

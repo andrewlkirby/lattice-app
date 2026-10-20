@@ -31,6 +31,8 @@ public:
     ~SessionView() override;
 
     const Selection& selection() const noexcept { return selected; }
+    /** Selects a slot or a scene (clamped to the set), as clicking it would. */
+    void setSelection(const Selection& s);
     /** Called when the selected track changes (the play panel follows it). */
     std::function<void()> onSelectedTrackChanged;
 

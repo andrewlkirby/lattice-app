@@ -13,14 +13,16 @@ juce::Colour textOn(juce::Colour fill, const Theme& theme)
 Toggle::Toggle(const juce::String& caption, Role role) : juce::Button(caption), colourRole(role)
 {
     setClickingTogglesState(true);
-    setWantsKeyboardFocus(true);
+    setWantsKeyboardFocus(true);            // Tab reaches it,
+    setMouseClickGrabsKeyboardFocus(false); // but a click doesn't take Space and Enter from Play and Launch
 }
 
 Toggle::Toggle(std::unique_ptr<ValueBinding> b, Role role, const juce::String& caption)
     : juce::Button(caption.isNotEmpty() ? caption : b->spec().name), bound(std::move(b)), colourRole(role)
 {
     setClickingTogglesState(false);
-    setWantsKeyboardFocus(true);
+    setWantsKeyboardFocus(true);            // Tab reaches it,
+    setMouseClickGrabsKeyboardFocus(false); // but a click doesn't take Space and Enter from Play and Launch
     setTitle(bound->spec().name);
     bound->onChange = [this] { readBinding(); };
     readBinding();

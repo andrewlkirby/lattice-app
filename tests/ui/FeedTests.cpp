@@ -105,7 +105,7 @@ TEST_CASE("Feed: a launched clip changes its slot; the transport moves every tic
     CHECK(f.feed.slot(1, 1) == SlotState::Playing);
     REQUIRE(f.feed.changedSlots().size() == 1);
     CHECK(f.feed.changedSlots()[0] == std::pair<int, int>(1, 1));
-    CHECK(f.feed.trackPlay(1).playingClipId == static_cast<std::int64_t>(f.session.set().clip(1, 1)[ids::id]));
+    CHECK(f.feed.trackPlay(1).playingClipId == LiveSet::idOf(f.session.set().clip(1, 1)));
     CHECK(f.feed.transport().playing);
 
     // Playing: the position moves, so the transport (and the clip progress) change each tick.

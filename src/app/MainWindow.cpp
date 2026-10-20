@@ -193,34 +193,83 @@ void AudioPanel::saveDeviceState()
         settings.setValue(deviceStateKey, xml.get());
 }
 
-// --- MainComponent -------------------------------------------------------------------------------------
+// --- DebugUiPanel --------------------------------------------------------------------------------------
 
-MainComponent::MainComponent(AudioEngine& engine, juce::PropertiesFile& settings, TuningRegistry& tunings,
-                             SessionController& session, std::function<void()> firstPaint)
-    : onFirstPaint(std::move(firstPaint)), audioPanel(engine, settings), sessionPanel(session, engine, tunings, settings),
-      playPanel(session, engine, settings, tunings)
+DebugUiPanel::DebugUiPanel(AudioEngine& engine, juce::PropertiesFile& settings, TuningRegistry& tunings,
+                           SessionController& session)
+    : audio(engine, settings), sessionPanel(session, engine, tunings, settings), play(session, engine, settings, tunings)
 {
-    setOpaque(true);
-    setWantsKeyboardFocus(true);
-
     tabs.setWantsKeyboardFocus(false);
     tabs.getTabbedButtonBar().setWantsKeyboardFocus(false);
     const auto background = getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId);
     tabs.addTab("Session", background, &sessionPanel, false);
-    tabs.addTab("Audio", background, &audioPanel, false);
+    tabs.addTab("Audio", background, &audio, false);
     tabs.setTabBarDepth(28);
     addAndMakeVisible(tabs);
-    addAndMakeVisible(playPanel);
+    addAndMakeVisible(play);
 
-    sessionPanel.onSelectedTrackChanged = [this] { playPanel.setTrack(sessionPanel.selection().track); };
-    playPanel.setTrack(sessionPanel.selection().track);
+    sessionPanel.onSelectedTrackChanged = [this] { play.setTrack(sessionPanel.selection().track); };
+    play.setTrack(sessionPanel.selection().track);
+}
 
-    setSize(1180, 940);
+void DebugUiPanel::resized()
+{
+    auto area = getLocalBounds().reduced(4);
+    play.setBounds(area.removeFromBottom(playPanelHeight));
+    area.removeFromBottom(8);
+    tabs.setBounds(area);
+}
+
+// --- MainComponent -------------------------------------------------------------------------------------
+
+namespace
+{
+/** The shell's commands act on the debug session view's selection until the new Session view
+    (4b) has its own. */
+ui::SelectionAccess debugSelection(debugui::SessionView& view)
+{
+    using Kind = ui::SessionSelection::Kind;
+    return {[&view] {
+                const auto& s = view.selection();
+                return ui::SessionSelection{s.sceneColumn ? Kind::scene : Kind::slot, s.track, s.scene};
+            },
+            [&view](ui::SessionSelection s) {
+                // The debug view has no selected track header: a track selects its slot in the row.
+                view.setSelection({s.track, s.scene, s.kind == Kind::scene});
+            }};
+}
+} // namespace
+
+MainComponent::MainComponent(AudioEngine& engine, juce::PropertiesFile& settings, TuningRegistry& tunings,
+                             SessionController& session, std::function<void()> firstPaint)
+    : onFirstPaint(std::move(firstPaint)), debug(engine, settings, tunings, session)
+{
+    setOpaque(true);
+    setWantsKeyboardFocus(true);
+
+    auto& view = debug.sessionView();
+    ui::ShellActions actions;
+    actions.newSet = [&view] { view.newSet(); };
+    actions.openSet = [&view] { view.openSet(); };
+    actions.saveSet = [&view] { view.saveSet(); };
+    actions.saveSetAs = [&view] { view.saveSetAs(); };
+    actions.importMidi = [&view] { view.importMidi(view.selection().track, view.selection().scene); };
+    mainShell = std::make_unique<ui::MainShell>(session, engine, settings, debugSelection(view), std::move(actions));
+    mainShell->setDebugUi(&debug);
+    mainShell->controlBar().setComputerKeyboard(&debug.playPanel().computerKeyboard());
+    addAndMakeVisible(*mainShell);
+
+    setSize(1280, 960);
+}
+
+MainComponent::~MainComponent()
+{
+    mainShell.reset(); // before the debug UI it shows
 }
 
 void MainComponent::paint(juce::Graphics& g)
 {
-    g.fillAll(getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
+    g.fillAll(mainShell->theme().background);
 
     if (!firstPaintDone)
     {
@@ -232,19 +281,15 @@ void MainComponent::paint(juce::Graphics& g)
 
 void MainComponent::resized()
 {
-    auto area = getLocalBounds().reduced(8);
-    playPanel.setBounds(area.removeFromBottom(playPanelHeight));
-    area.removeFromBottom(8);
-    tabs.setBounds(area);
+    mainShell->setBounds(getLocalBounds());
 }
 
 bool MainComponent::keyPressed(const juce::KeyPress& key)
 {
+    // The shell's commands have had the key already (its key mappings); what's left is the
+    // computer MIDI keyboard's.
     if (dynamic_cast<juce::TextEditor*>(juce::Component::getCurrentlyFocusedComponent()) != nullptr)
         return false; // typing in a text field
-
-    if (sessionPanel.handleKey(key))
-        return true;
 
     const auto mods = key.getModifiers();
     if (mods.isCommandDown() || mods.isCtrlDown() || mods.isAltDown())
@@ -253,13 +298,12 @@ bool MainComponent::keyPressed(const juce::KeyPress& key)
     auto character = key.getTextCharacter();
     if (character == 0)
         character = static_cast<juce::juce_wchar>(key.getKeyCode());
-    return playPanel.computerKeyboard().keyDown(character, key.getKeyCode());
+    return debug.playPanel().computerKeyboard().keyDown(character, key.getKeyCode());
 }
 
 bool MainComponent::keyStateChanged(bool)
 {
-    sessionPanel.handleKeyStateChange();
-    auto& keyboard = playPanel.computerKeyboard();
+    auto& keyboard = debug.playPanel().computerKeyboard();
     for (const int code : keyboard.heldKeyCodes())
         if (!juce::KeyPress::isKeyCurrentlyDown(code))
             keyboard.keyUp(code);
