@@ -38,6 +38,7 @@ add_executable(lattice_tests
     tuning/ScalaAndRegistryTests.cpp
     tuning/TrackTuningTests.cpp
     ui/CommandTests.cpp
+    ui/FeedTests.cpp
     ui/ThemeTests.cpp
     ui/WidgetTests.cpp)
 target_include_directories(lattice_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

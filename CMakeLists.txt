@@ -274,6 +274,7 @@ lattice_set_warnings(lattice_debug_ui)
 add_library(lattice_ui STATIC
     src/ui/commands/CommandRegistry.cpp
     src/ui/commands/SessionCommands.cpp
+    src/ui/feed/EngineStateFeed.cpp
     src/ui/theme/LatticeLookAndFeel.cpp
     src/ui/theme/Theme.cpp
     src/ui/widgets/BoundControl.cpp
