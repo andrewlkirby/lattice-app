@@ -313,10 +313,11 @@ void SnapshotBuilder::rebuildChain(const juce::ValueTree& owner, TrackCache& cac
     trackSidechains[LiveSet::idOf(owner)] = build.sidechainSources;
 
     // Nothing changed for the engine (e.g. only a name): keep the published chain, so nothing fades.
+    // A new sidechain route with the same devices is a change (the track switches to it at once).
     const auto current = cache.processor->chain();
     const bool hasRacks = std::any_of(layout->racks.begin(), layout->racks.end(), [](const auto& r) { return r != nullptr; });
     if (current != nullptr && build.fresh.empty() && build.freshChains.empty() && !hasRacks &&
-        current->devices == layout->devices)
+        current->devices == layout->devices && current->sidechains == layout->sidechains)
         return;
 
     engine.installChain(*cache.processor, build.fresh, build.freshChains, std::move(layout));

@@ -94,6 +94,8 @@ struct SidechainRoute
 {
     std::int64_t trackId = 0;
     bool preFx = false;
+
+    bool operator==(const SidechainRoute&) const = default;
 };
 
 /** Finds a source track's audio for this block (audio thread; the engine provides it). The source

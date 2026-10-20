@@ -1,5 +1,6 @@
 // Returns, sends, sidechain and delay compensation (docs/04-m3-devices.md, "Tests" 8 and 9).
 
+#include "devices/ChainEditing.h"
 #include "devices/effects/Compressor.h"
 #include "devices/effects/Utility.h"
 #include "support/AllocationHooks.h"
@@ -231,5 +232,52 @@ TEST_CASE("Reduced latency when monitoring: armed tracks skip their compensation
             ++first;
         // Live input on the armed track: 100 samples late to line up with track 2, or at once.
         CHECK(first == (reduced ? 0u : 100u));
+    }
+}
+
+TEST_CASE("Sidechain: a source chosen while the set plays takes effect at once, without a fade",
+          "[engine][mixer][sidechain]")
+{
+    // As in the editor: the compressor is already playing when its sidechain is switched on and its
+    // source chosen (in either order). The chain keeps its devices, so it must switch without fading.
+    for (const bool sourceFirst : {false, true})
+    {
+        INFO((sourceFirst ? "source, then the switch" : "the switch, then the source"));
+        Fixture f(2);
+        f.add(f.chainOfTrack(0), TestRecorderDevice::typeId);
+        f.set().setTrackMute(0, true);
+        f.add(f.chainOfTrack(1), TestSineDevice::typeId);
+        // The sine well under the threshold, so the compressor only ever reacts to the sidechain.
+        auto quieter = f.add(f.chainOfTrack(1), UtilityDevice::typeId);
+        f.set().setDeviceParameter(quieter, "utility.gain", -30.0);
+        auto comp = f.add(f.chainOfTrack(1), CompressorDevice::typeId);
+        f.set().setDeviceParameter(comp, "comp.threshold", -20.0);
+        f.set().setDeviceParameter(comp, "comp.ratio", 4.0);
+        f.set().setDeviceParameter(comp, "comp.knee", 0.0);
+        f.set().setDeviceParameter(comp, "comp.attack", 1.0);
+        f.render(24000);
+        const double open = f.rmsOfLast(9600);
+
+        if (sourceFirst)
+            REQUIRE(chains::setSidechainSource(f.set(), comp, f.set().trackId(0), false));
+        f.set().setDeviceParameter(comp, "comp.sidechain", 1.0);
+        f.render(4800);
+        if (!sourceFirst)
+            REQUIRE(chains::setSidechainSource(f.set(), comp, f.set().trackId(0), false));
+        f.render(4800);
+        // The source is silent so far: the level holds through the switch (no fade out and in).
+        const auto& out = f.renderer.audioLeft;
+        const std::size_t window = 480;
+        for (std::size_t start = out.size() - 9600; start + window <= out.size(); start += window)
+        {
+            double s = 0.0;
+            for (std::size_t i = start; i < start + window; ++i)
+                s += static_cast<double>(out[i]) * out[i];
+            CHECK(toDb(std::sqrt(s / static_cast<double>(window)) / open) == Catch::Approx(0.0).margin(0.3));
+        }
+
+        f.note(60);
+        f.render(24000);
+        CHECK(toDb(f.rmsOfLast(9600) / open) == Catch::Approx(-6.0).margin(0.5)); // as when set up first
     }
 }

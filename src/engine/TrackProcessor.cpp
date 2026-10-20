@@ -7,6 +7,16 @@
 namespace lattice
 {
 
+namespace
+{
+/** The same device instances in the same order, racks included: switching between the two needs no
+    fade (e.g. only a sidechain route changed). Audio thread: compares pointers, allocates nothing. */
+bool sameDevicesIn(const DeviceChainLayout* a, const DeviceChainLayout* b) noexcept
+{
+    return a != nullptr && b != nullptr && a->devices == b->devices && a->racks == b->racks;
+}
+} // namespace
+
 TrackProcessor::TrackProcessor(std::int64_t trackId) : id(trackId)
 {
 }
@@ -168,11 +178,13 @@ void TrackProcessor::renderChain(int numSamples, const DeviceTimeInfo& time, con
     MidiBlock midiInput{sink.events, sink.capacity, sink.count, 0};
     sink.count = 0; // consumed: a processor without a scheduler (a return, the master) starts empty
 
-    // A newer chain: fade the current one out first (or switch at once if nothing is audible).
+    // A newer chain: fade the current one out first (or switch at once if nothing is audible, or if
+    // the same devices carry on and only their sidechain routes changed).
     const auto* latest = chains.latest();
     if (latest != activeChain)
     {
-        if (activeChain == nullptr || chainGain <= 0.0f)
+        if (activeChain == nullptr || chainGain <= 0.0f ||
+            (latest != nullptr && sameDevicesIn(activeChain->object.get(), latest->object.get())))
             switchChain(latest);
         else
             chainFade = ChainFade::Out;
