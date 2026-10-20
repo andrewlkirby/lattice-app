@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ui/widgets/ControlRegistry.h"
 #include "ui/widgets/ValueBinding.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -62,6 +63,8 @@ public:
     void focusGained(FocusChangeType) override { repaint(); }
     void focusLost(FocusChangeType) override { repaint(); }
     void enablementChanged() override { repaint(); }
+    /** Registers with the control registry of the window it's in (and leaves the old one). */
+    void parentHierarchyChanged() override;
 
     /** What screen readers get: a slider with the value's name, range and text. Public so tests
         can check it without a window (JUCE only hands it out for a component in one). */
@@ -84,6 +87,7 @@ private:
     float lastY = 0.0f;
     bool stepping = false;
     std::unique_ptr<juce::TextEditor> editor;
+    ControlRegistry* registry = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BoundControl)
 };

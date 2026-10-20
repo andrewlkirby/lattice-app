@@ -24,7 +24,10 @@ namespace lattice::ui
     engine state feed (ticking on this window's display refresh) and the background job pool. Keys
     reach the commands first, through the registry's key mappings; whatever no command takes goes
     on to the window (the computer keyboard). */
-class MainShell final : public juce::Component, private juce::ValueTree::Listener, private juce::AsyncUpdater
+class MainShell final : public juce::Component,
+                        public ControlRegistry::Provider,
+                        private juce::ValueTree::Listener,
+                        private juce::AsyncUpdater
 {
 public:
     MainShell(SessionController& session, AudioEngine& engine, juce::PropertiesFile& settings, SelectionAccess selection,
@@ -32,6 +35,8 @@ public:
     ~MainShell() override;
 
     CommandRegistry& commands() noexcept { return registry; }
+    /** Every control in the window, for Find, MIDI Map and Key Map. */
+    ControlRegistry& controlRegistry() override { return controls; }
     EngineStateFeed& feed() noexcept { return stateFeed; }
     JobPool& jobs() noexcept { return jobPool; }
     ControlBar& controlBar() noexcept { return *bar; }
@@ -88,6 +93,7 @@ private:
     juce::PropertiesFile& settings;
     LatticeLookAndFeel lookAndFeel;
     CommandRegistry registry;
+    ControlRegistry controls; // before the views, so it outlives their widgets
     EngineStateFeed stateFeed;
     JobPool jobPool;
 

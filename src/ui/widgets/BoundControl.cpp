@@ -48,6 +48,8 @@ BoundControl::BoundControl(std::unique_ptr<ValueBinding> b) : bound(std::move(b)
 
 BoundControl::~BoundControl()
 {
+    if (registry != nullptr)
+        registry->remove(this);
     bound->onChange = nullptr;
     if (dragging || stepping)
         bound->endGesture();
@@ -63,6 +65,18 @@ float BoundControl::pixelsForFullTravel(bool fine) const
         return juce::jlimit(60.0f, 300.0f, steps * 10.0f) * (fine ? 3.0f : 1.0f);
     }
     return fine ? 2000.0f : 200.0f;
+}
+
+void BoundControl::parentHierarchyChanged()
+{
+    auto* now = ControlRegistry::findFor(*this);
+    if (now == registry)
+        return;
+    if (registry != nullptr)
+        registry->remove(this);
+    registry = now;
+    if (registry != nullptr)
+        registry->add({.component = this, .binding = bound.get(), .name = getTitle(), .group = bound->spec().group});
 }
 
 void BoundControl::beginDrag()

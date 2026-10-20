@@ -5,6 +5,7 @@
 #include "support/OfflineRenderer.h"
 #include "support/TestDevices.h"
 #include "ui/shell/MainShell.h"
+#include "ui/widgets/Knob.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -276,4 +277,31 @@ TEST_CASE("Shell: every frame's UI work is measured against the frame budget", "
 
     CHECK(f.shell->commands().perform("view.resetLoad"));
     CHECK(f.shell->frameStats().summary().callbacks == 0);
+}
+
+TEST_CASE("Shell: the control registry knows every bound control in the window", "[ui][shell]")
+{
+    Fixture f;
+    auto& controls = f.shell->controlRegistry();
+    // The control bar's bound controls: tempo, the time signature, quantization.
+    const auto tempo = controls.search("tempo");
+    REQUIRE(tempo.size() == 1);
+    CHECK(tempo[0]->name == "Tempo");
+    CHECK(tempo[0]->binding != nullptr);
+    CHECK(controls.search("time signature").size() == 2); // every word must match
+    CHECK(controls.search("signature beat length").size() == 1);
+    CHECK(controls.search("nothing like this").empty());
+
+    // A widget leaves the registry when it leaves the window, and joins it when added.
+    juce::Component holder;
+    Knob knob(ValueBinding::property(ParameterSpec::continuous("x", "Brightness", 0.0f, 1.0f, 0.5f).inGroup("Tone"),
+                                     nullptr, f.session.set().state(), "x", [](double) {}));
+    holder.addAndMakeVisible(knob);
+    CHECK(controls.find(&knob) == nullptr);
+    f.shell->addAndMakeVisible(holder);
+    REQUIRE(controls.find(&knob) != nullptr);
+    CHECK(controls.find(&knob)->group == "Tone");
+    CHECK(controls.search("tone bright").size() == 1);
+    f.shell->removeChildComponent(&holder);
+    CHECK(controls.find(&knob) == nullptr);
 }

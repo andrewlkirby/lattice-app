@@ -283,6 +283,7 @@ add_library(lattice_ui STATIC
     src/ui/theme/LatticeLookAndFeel.cpp
     src/ui/theme/Theme.cpp
     src/ui/widgets/BoundControl.cpp
+    src/ui/widgets/ControlRegistry.cpp
     src/ui/widgets/Fader.cpp
     src/ui/widgets/Knob.cpp
     src/ui/widgets/Meter.cpp
