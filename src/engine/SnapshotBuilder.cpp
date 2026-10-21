@@ -323,6 +323,18 @@ void SnapshotBuilder::rebuildChain(const juce::ValueTree& owner, TrackCache& cac
     engine.installChain(*cache.processor, build.fresh, build.freshChains, std::move(layout));
 }
 
+void SnapshotBuilder::setAutoArmTrack(std::int64_t trackId)
+{
+    if (trackId == autoArm)
+        return;
+    autoArm = trackId;
+    if (!dirty)
+    {
+        dirty = true;
+        triggerAsyncUpdate();
+    }
+}
+
 void SnapshotBuilder::handleAsyncUpdate()
 {
     rebuildIfNeeded();
@@ -456,6 +468,12 @@ void SnapshotBuilder::rebuildNow()
         newTracks[ts.id] = std::move(cache);
         snapshot->tracks.push_back(std::move(ts));
     }
+
+    // Auto-arm: the selected track counts as armed while nothing is armed by hand.
+    if (autoArm != 0 && std::none_of(snapshot->tracks.begin(), snapshot->tracks.end(), [](const TrackSnapshot& ts) { return ts.arm; }))
+        for (auto& ts : snapshot->tracks)
+            if (ts.id == autoArm && !ts.isGroup)
+                ts.arm = true;
 
     // Return tracks: a device chain each, fed by the sends.
     const int numReturns = std::min(set.numReturns(), TrackProcessor::maxReturns);

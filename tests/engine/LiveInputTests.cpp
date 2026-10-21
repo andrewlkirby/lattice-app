@@ -114,3 +114,31 @@ TEST_CASE("Live input: an armed track with monitoring Off records what it doesn'
     REQUIRE(notes.size() == 1);
     CHECK(notes[0].pitch == 64);
 }
+
+TEST_CASE("Live input: an auto-armed track plays and records while nothing is armed by hand", "[engine][input]")
+{
+    Fixture f(3);
+    f.session.undoManager().clearUndoHistory();
+    f.session.setAutoArmTrack(f.set().trackId(1));
+    CHECK(f.session.isAutoArmed(1));
+    CHECK(f.session.isArmed(1));
+    CHECK(!f.session.isArmed(0));
+    CHECK(f.hearing() == std::vector<int>{1});
+    CHECK(!static_cast<bool>(f.set().track(1)[ids::arm])); // not in the document
+    CHECK(!f.session.undoManager().canUndo());
+
+    // Armed by hand somewhere: auto-arm steps aside.
+    f.set().setTrackArm(2, true, false);
+    CHECK(!f.session.isAutoArmed(1));
+    CHECK(f.hearing() == std::vector<int>{2});
+    f.set().setTrackArm(2, false, false);
+
+    // An empty slot on the auto-armed track records.
+    f.set().setGlobalQuantization(Quantization::None);
+    f.render(480);
+    f.session.launchSlot(1, 0);
+    f.render(4800);
+    CHECK(f.session.slotState(1, 0) == SlotState::Recording);
+    f.session.setAutoArmTrack(0);
+    CHECK(!f.session.isArmed(1));
+}

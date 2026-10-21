@@ -274,6 +274,15 @@ void MixerStrip::resized()
     volume->setBounds(area.withSizeKeepingCentre(juce::jmin(area.getWidth(), h * 2), area.getHeight()));
 }
 
+void MixerStrip::paintOverChildren(juce::Graphics& g)
+{
+    if (arm == nullptr || stripKind != Kind::track || !session.isAutoArmed(stripIndex))
+        return;
+    const auto& t = themeOf(*this);
+    g.setColour(t.arm);
+    g.drawRoundedRectangle(arm->getBounds().toFloat().reduced(1.5f), t.radius, 2.0f);
+}
+
 void MixerStrip::paint(juce::Graphics& g)
 {
     const auto& t = themeOf(*this);

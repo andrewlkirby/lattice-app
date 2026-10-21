@@ -43,6 +43,15 @@ public:
     /** Publishes any pending document change to the engine now. */
     void flush() { builder.rebuildIfNeeded(); }
 
+    // --- Auto-arm (docs/05-m4-ui.md, 4b) -----------------------------------------------------------
+    /** The selected track, armed while no track is armed by hand (0: none). The UI sets it as the
+        selection moves, when auto-arm is on. It isn't in the document. */
+    void setAutoArmTrack(std::int64_t trackId) { builder.setAutoArmTrack(trackId); }
+    /** Armed by hand, or auto-armed. */
+    bool isArmed(int trackIndex) const;
+    /** Armed only by auto-arm. */
+    bool isAutoArmed(int trackIndex) const;
+
     // --- Engine commands --------------------------------------------------------------------------
     /** On a group track's slot: launches the clips in that row on every track in the group (and
         stops those whose slot is empty). Otherwise, as clicking a slot: launches its clip; on an

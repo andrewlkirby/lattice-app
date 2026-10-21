@@ -224,7 +224,7 @@ void DebugUiPanel::resized()
 
 MainComponent::MainComponent(AudioEngine& engine, juce::PropertiesFile& settings, TuningRegistry& tunings,
                              SessionController& session, std::function<void()> firstPaint)
-    : onFirstPaint(std::move(firstPaint)), debug(engine, settings, tunings, session)
+    : onFirstPaint(std::move(firstPaint)), sessionController(session), debug(engine, settings, tunings, session)
 {
     setOpaque(true);
     setWantsKeyboardFocus(true);
@@ -236,7 +236,7 @@ MainComponent::MainComponent(AudioEngine& engine, juce::PropertiesFile& settings
     actions.saveSet = [&view] { view.saveSet(); };
     actions.saveSetAs = [&view] { view.saveSetAs(); };
     actions.importMidi = [&view] { view.importMidi(view.selection().track, view.selection().scene); };
-    mainShell = std::make_unique<ui::MainShell>(session, engine, settings, std::move(actions));
+    mainShell = std::make_unique<ui::MainShell>(session, engine, settings, tunings, std::move(actions));
     mainShell->setDebugUi(&debug);
     mainShell->selection().addListener(this);
     view.onSelectionChanged = [this] { debugSelectionChanged(); };
@@ -255,11 +255,15 @@ MainComponent::~MainComponent()
 
 void MainComponent::selectionChanged(const ui::SessionSelection& s)
 {
-    if (mirroring)
-        return;
-    const juce::ScopedValueSetter<bool> guard(mirroring, true);
-    // The debug view has no selected track header: a track selects its slot in the row.
-    debug.sessionView().setSelection({s.track, s.scene, s.kind == ui::SessionSelection::Kind::scene});
+    if (!mirroring)
+    {
+        const juce::ScopedValueSetter<bool> guard(mirroring, true);
+        // The debug view has no selected track header: a track selects its slot in the row.
+        debug.sessionView().setSelection({s.track, s.scene, s.kind == ui::SessionSelection::Kind::scene});
+    }
+    // After the play panel has taken the track (it sets the keyboard's range for the track's
+    // tuning): a Drum Rack's pads take over the range.
+    keyboardFollow.trackSelected(sessionController.set(), s.track, debug.playPanel().computerKeyboard());
 }
 
 void MainComponent::debugSelectionChanged()

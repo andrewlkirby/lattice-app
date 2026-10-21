@@ -48,7 +48,8 @@ struct Placement
 Placement place(const juce::ValueTree& chain, const juce::String& typeId, int desiredIndex,
                 const DeviceRegistry& registry, const juce::ValueTree& device = {});
 
-/** Inserts a new device by the rules. Returns it, or an invalid tree if it can't go there. */
+/** Inserts a new device by the rules. Returns it, or an invalid tree if it can't go there. On a
+    return track, its Dry/Wet starts at 100%. */
 juce::ValueTree insert(LiveSet& set, const juce::ValueTree& chain, const juce::String& typeId, int desiredIndex,
                        const DeviceRegistry& registry);
 /** Inserts a copy of a device tree (a preset) by the rules. */

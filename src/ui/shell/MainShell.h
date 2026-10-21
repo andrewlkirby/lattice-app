@@ -29,12 +29,14 @@ namespace lattice::ui
     on to the window (the computer keyboard). */
 class MainShell final : public juce::Component,
                         public ControlRegistry::Provider,
+                        private SessionSelectionModel::Listener,
                         private juce::ValueTree::Listener,
                         private juce::AsyncUpdater
 {
 public:
     /** actions: the dialogs the window provides (a missing rename is the Session view's prompt). */
-    MainShell(SessionController& session, AudioEngine& engine, juce::PropertiesFile& settings, ShellActions actions);
+    MainShell(SessionController& session, AudioEngine& engine, juce::PropertiesFile& settings, TuningRegistry& tunings,
+              ShellActions actions);
     ~MainShell() override;
 
     CommandRegistry& commands() noexcept { return registry; }
@@ -86,12 +88,20 @@ public:
     static constexpr auto mixerKey = "view.mixer";
     static constexpr auto sendsKey = "view.sends";
     static constexpr auto ioKey = "view.io";
+    static constexpr auto autoArmKey = "session.autoArm";
+
+    /** Auto-arm (on by default): selecting a MIDI track arms it while no track is armed by hand,
+        so the keyboards play what's selected (the M3 hands-on checks found the keyboard playing a
+        track armed earlier). */
+    bool isAutoArmOn() const noexcept { return autoArm; }
+    void setAutoArm(bool on);
 
 private:
     /** A panel that a later phase fills, saying which. */
     class Placeholder;
 
     void addViewCommands();
+    void selectionChanged(const SessionSelection& now) override;
     /** Also the global mouse listener's: every move anywhere, shown if it's inside this window. */
     void mouseMove(const juce::MouseEvent&) override;
     void valueTreePropertyChanged(juce::ValueTree&, const juce::Identifier&) override { triggerAsyncUpdate(); }
@@ -117,6 +127,7 @@ private:
     InfoView info;
     std::unique_ptr<StatusBar> status;
     bool showBrowser = false, showDetail = false, showInfo = true;
+    bool autoArm = true;
     AudioCallbackStats frames;
     juce::int64 paintStarted = 0;
 };

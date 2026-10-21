@@ -42,6 +42,10 @@ public:
     ~SnapshotBuilder() override;
 
     void rebuildIfNeeded();
+    /** The track auto-armed by selection (0: none): it's armed in the snapshot while no track is
+        armed in the document. Not part of the document (no undo step, nothing to save). */
+    void setAutoArmTrack(std::int64_t trackId);
+    std::int64_t autoArmTrack() const noexcept { return autoArm; }
     void rebuildNow();
     /** Forces a rebuild on the next turn (e.g. a tuning file was loaded that tracks may refer to). */
     void invalidate() { markDirty(set.state()); }
@@ -114,6 +118,7 @@ private:
     TuningResolver resolveTuning;
     const DeviceRegistry& registry;
     bool dirty = true;
+    std::int64_t autoArm = 0;
     bool allChainsDirty = true;
     std::unordered_set<std::int64_t> dirtyChains; // IDs of chain owners (tracks)
     std::unordered_map<std::int64_t, StudioDevice*> deviceIndex;

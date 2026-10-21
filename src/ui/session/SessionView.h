@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/SessionController.h"
+#include "tuning/TuningRegistry.h"
 #include "ui/commands/CommandRegistry.h"
 #include "ui/feed/EngineStateFeed.h"
 #include "ui/session/MixerStrip.h"
@@ -44,7 +45,7 @@ class SessionView final : public juce::Component,
 {
 public:
     SessionView(SessionController& session, EngineStateFeed& feed, CommandRegistry& commands,
-                SessionSelectionModel& selection);
+                SessionSelectionModel& selection, TuningRegistry& tunings);
     ~SessionView() override;
 
     const SessionLayout& layout() const noexcept { return grid; }
@@ -63,6 +64,7 @@ public:
             none,
             header,
             fold,
+            tuning, // a MIDI track header's tuning badge
             slot,
             launch,
             stop,
@@ -85,6 +87,10 @@ public:
     /** Dragging clips: from the slot pressed to another; the selected clips go along, keeping their
         layout. copy (Ctrl): leaves the originals. Tracks that can't take clips are skipped. */
     void dragClipsTo(const Hit& target, bool copy);
+    /** The tuning badge's area in a column's header (local coordinates; empty for groups and returns). */
+    juce::Rectangle<int> tuningBadge(int column) const;
+    /** The tunings a track can be given, for the badge's menu, and setting one (one undo step). */
+    juce::PopupMenu tuningMenu(int track);
     /** Colours what's selected (clips, tracks or scenes) with a palette colour. */
     void colourSelection(int paletteIndex);
     /** Imports MIDI files at a slot (one per scene down from it). */
@@ -159,6 +165,7 @@ private:
     EngineStateFeed& feed;
     CommandRegistry& commands;
     SessionSelectionModel& selection;
+    TuningRegistry& tunings;
     SessionLayout grid;
     float widthZoom = 1.0f, heightZoom = 1.0f;
     juce::Point<int> scroll;

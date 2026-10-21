@@ -24,7 +24,8 @@ namespace lattice::ui
     - Sends: a knob per return, with the return's name and the level in dB (the M3 hands-on
       checks found unlabelled sends hard to use).
     - Main: pan; the fader with its meter and a dB box; the track activator (lit while the track
-      is on, showing its number), solo, and arm (not on a group or a return); "Pre" on a return
+      is on, showing its number), solo, and arm (not on a group or a return; ringed while the
+      track is auto-armed); "Pre" on a return
       (its sends are taken before the faders). A track that feeds a sidechain shows "SC".
 
     Every control is a bound widget, so it's one undo step per gesture and follows the document.
@@ -74,6 +75,8 @@ public:
     bool feedsSidechain() const noexcept { return sidechainBadge; }
 
     void paint(juce::Graphics&) override;
+    /** A ring round the arm button while the track is auto-armed. */
+    void paintOverChildren(juce::Graphics&) override;
     void resized() override;
 
 private:

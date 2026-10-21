@@ -5,6 +5,7 @@
 #include "engine/AudioEngine.h"
 #include "engine/SessionController.h"
 #include "tuning/TuningRegistry.h"
+#include "ui/session/KeyboardFollow.h"
 #include "ui/shell/MainShell.h"
 
 #include <juce_audio_utils/juce_audio_utils.h>
@@ -118,6 +119,8 @@ private:
     std::function<void()> onFirstPaint;
     bool firstPaintDone = false;
     bool mirroring = false;
+    ui::KeyboardFollow keyboardFollow;
+    SessionController& sessionController;
 
     DebugUiPanel debug;
     std::unique_ptr<ui::MainShell> mainShell;

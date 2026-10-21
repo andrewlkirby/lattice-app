@@ -51,8 +51,9 @@ void askForText(juce::Component& owner, const juce::String& title, const juce::S
                             true);
 }
 
-SessionView::SessionView(SessionController& s, EngineStateFeed& f, CommandRegistry& c, SessionSelectionModel& sel)
-    : session(s), feed(f), commands(c), selection(sel)
+SessionView::SessionView(SessionController& s, EngineStateFeed& f, CommandRegistry& c, SessionSelectionModel& sel,
+                         TuningRegistry& tuningRegistry)
+    : session(s), feed(f), commands(c), selection(sel), tunings(tuningRegistry)
 {
     setTitle("Session view");
     setOpaque(true);
@@ -283,7 +284,7 @@ SessionView::Hit SessionView::hitAt(juce::Point<int> p) const
     {
         const auto fold = grid.foldButton(hit.column).translated(slots.getX() - scroll.x, headers.getY());
         const auto& c = grid.columns()[static_cast<std::size_t>(hit.column)];
-        hit.area = c.isGroup && fold.contains(p) ? Area::fold : Area::header;
+        hit.area = c.isGroup && fold.contains(p) ? Area::fold : tuningBadge(hit.column).contains(p) ? Area::tuning : Area::header;
     }
     else if (slots.contains(p))
     {
@@ -323,6 +324,13 @@ void SessionView::press(const Hit& hit, juce::ModifierKeys mods)
     case Area::header:
         if (track >= 0)
             selection.set({Kind::track, track, selection.get().scene});
+        break;
+    case Area::tuning:
+        if (track < 0)
+            break;
+        selection.set({Kind::track, track, selection.get().scene});
+        tuningMenu(track).showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this).withTargetScreenArea(
+            localAreaToGlobal(tuningBadge(hit.column))));
         break;
     case Area::launch:
         if (track < 0)
@@ -412,6 +420,35 @@ void SessionView::dragClipsTo(const Hit& target, bool copy)
     if (firstTo >= 0 && lastTo >= 0)
         selection.set({Kind::slot, firstTo, juce::jlimit(0, set.numScenes() - 1, s.firstScene() + dScene), lastTo,
                        juce::jlimit(0, set.numScenes() - 1, s.lastScene() + dScene)});
+}
+
+juce::Rectangle<int> SessionView::tuningBadge(int column) const
+{
+    if (column < 0 || column >= static_cast<int>(grid.columns().size()))
+        return {};
+    const auto& col = grid.columns()[static_cast<std::size_t>(column)];
+    if (col.kind != SessionLayout::Column::Kind::track || col.isGroup)
+        return {};
+    const auto& t = themeOf(*this);
+    const auto r = juce::Rectangle<int>(slots.getX() + col.x - scroll.x, headers.getY(), col.width, headers.getHeight());
+    const int width = juce::jmin(r.getWidth() / 2, juce::roundToInt(t.controlHeight * 2.6f));
+    return r.withTrimmedTop(4).removeFromRight(width).reduced(2, 2);
+}
+
+juce::PopupMenu SessionView::tuningMenu(int track)
+{
+    juce::PopupMenu menu;
+    const auto current = session.set().track(track)[ids::tuningId].toString();
+    const auto shown = tunings.findById(current) != nullptr ? current : tunings.defaultTuning()->id;
+    juce::Component::SafePointer<SessionView> safe(this);
+    for (const auto& tuning : tunings.getAll())
+        menu.addItem(tuning->name, true, tuning->id == shown, [safe, track, id = tuning->id] {
+            if (safe == nullptr || track >= safe->session.set().numTracks())
+                return;
+            safe->session.undoManager().beginNewTransaction("Tuning");
+            safe->session.set().setTrackTuning(track, id);
+        });
+    return menu;
 }
 
 void SessionView::colourSelection(int paletteIndex)
@@ -641,6 +678,16 @@ void SessionView::mouseDoubleClick(const juce::MouseEvent& e)
 
 void SessionView::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
 {
+    // Ctrl+wheel: the tracks' width; Ctrl+Shift+wheel: the scenes' height.
+    if (e.mods.isCommandDown())
+    {
+        const float step = (wheel.deltaY != 0.0f ? wheel.deltaY : wheel.deltaX) > 0.0f ? 1.1f : 1.0f / 1.1f;
+        if (e.mods.isShiftDown())
+            setZoom(widthZoom, heightZoom * step);
+        else
+            setZoom(widthZoom * step, heightZoom);
+        return;
+    }
     const float step = static_cast<float>(grid.rowHeight()) * 3.0f;
     const bool sideways = e.mods.isShiftDown() || std::abs(wheel.deltaX) > std::abs(wheel.deltaY);
     const float amount = (sideways && !e.mods.isShiftDown() ? wheel.deltaX : wheel.deltaY) * (wheel.isReversed ? 1.0f : -1.0f);
@@ -692,6 +739,8 @@ void SessionView::engineStateChanged(std::uint32_t aspects)
 void SessionView::selectionChanged(const SessionSelection&)
 {
     repaint();
+    for (auto& s : strips)
+        s->repaint();
     revealSelection();
 }
 
@@ -806,6 +855,17 @@ void SessionView::paintHeaders(juce::Graphics& g)
             g.fillPath(p);
             text.removeFromLeft(juce::roundToInt(fold.getWidth() + t.spacing));
         }
+        if (const auto badge = tuningBadge(c); !badge.isEmpty())
+        {
+            const auto id = node[ids::tuningId].toString();
+            const auto tuning = tunings.findById(id) != nullptr ? tunings.findById(id) : tunings.defaultTuning();
+            g.setColour(t.surfaceSunken);
+            g.fillRoundedRectangle(badge.toFloat(), t.radius);
+            g.setColour(t.textDim);
+            g.setFont(t.font(t.fontSmall));
+            g.drawFittedText(tuning != nullptr ? tuning->name : juce::String(), badge.reduced(2, 0), juce::Justification::centred, 1, 0.7f);
+            text.setRight(badge.getX() - 2);
+        }
         g.setColour(t.text);
         g.setFont(selected ? juce::Font(t.font(t.fontNormal)).boldened() : juce::Font(t.font(t.fontNormal)));
         g.drawFittedText(node[ids::name].toString(), text, juce::Justification::centredLeft, 1, 0.8f);
@@ -873,7 +933,7 @@ void SessionView::paintSlot(juce::Graphics& g, int column, int scene, juce::Rect
     // The launch button: play, stop or record.
     const auto button = grid.launchButton(r).toFloat().reduced(static_cast<float>(r.getHeight()) * 0.3f);
     const bool blink = blinkOn();
-    const bool armed = !group && static_cast<bool>(set.track(track)[ids::arm]);
+    const bool armed = !group && session.isArmed(track);
     if (hasContent)
     {
         switch (state)

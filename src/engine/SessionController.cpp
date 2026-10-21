@@ -113,6 +113,23 @@ void SessionController::send(const EngineCommand& command)
 
 // --- Commands ---------------------------------------------------------------------------------------
 
+bool SessionController::isAutoArmed(int trackIndex) const
+{
+    if (trackIndex < 0 || trackIndex >= liveSet.numTracks() || builder.autoArmTrack() == 0 ||
+        trackIdOf(trackIndex) != builder.autoArmTrack() || liveSet.isGroupTrack(trackIndex))
+        return false;
+    for (int t = 0; t < liveSet.numTracks(); ++t)
+        if (static_cast<bool>(liveSet.track(t)[ids::arm]))
+            return false;
+    return true;
+}
+
+bool SessionController::isArmed(int trackIndex) const
+{
+    return (trackIndex >= 0 && trackIndex < liveSet.numTracks() && static_cast<bool>(liveSet.track(trackIndex)[ids::arm])) ||
+           isAutoArmed(trackIndex);
+}
+
 void SessionController::launchSlot(int trackIndex, int sceneIndex)
 {
     if (trackIndex < 0 || trackIndex >= liveSet.numTracks() || sceneIndex < 0 ||
@@ -163,7 +180,7 @@ void SessionController::launchSlot(int trackIndex, int sceneIndex)
         return;
     }
 
-    if (static_cast<bool>(liveSet.track(trackIndex)[ids::arm]))
+    if (isArmed(trackIndex))
     {
         startRecording(trackIndex, sceneIndex);
         return;

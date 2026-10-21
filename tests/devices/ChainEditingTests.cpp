@@ -214,3 +214,19 @@ TEST_CASE("Sidechain sources: never the device's own track, and never a loop", "
     CHECK(chains::setSidechainSource(f.set, nested, id(2), false));
     CHECK(chains::sidechainSources(f.set, compC) == std::vector<std::int64_t>{id(0)});
 }
+
+TEST_CASE("Chain rules: an effect inserted on a return starts fully wet", "[devices][chains]")
+{
+    juce::UndoManager undo;
+    LiveSet set(&undo);
+    set.resetToDefault(1, 1);
+    REQUIRE(set.numReturns() >= 1);
+    const auto& registry = testRegistry();
+    const auto onReturn = chains::insert(set, LiveSet::chainOf(set.returnTrack(0)), ReverbDevice::typeId, -1, registry);
+    REQUIRE(onReturn.isValid());
+    CHECK(LiveSet::deviceParameter(onReturn, "reverb.mix", 0.0) == 1.0);
+    // On a track it keeps its own default.
+    const auto onTrack = chains::insert(set, LiveSet::chainOf(set.track(0)), ReverbDevice::typeId, -1, registry);
+    REQUIRE(onTrack.isValid());
+    CHECK(LiveSet::deviceParameter(onTrack, "reverb.mix", -1.0) == -1.0); // nothing stored: the default
+}

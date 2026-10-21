@@ -1,6 +1,7 @@
 #include "devices/ChainEditing.h"
 
 #include "devices/racks/Rack.h"
+#include "tuning/TrackTuning.h"
 
 #include <algorithm>
 
@@ -177,7 +178,20 @@ juce::ValueTree insert(LiveSet& set, const juce::ValueTree& chain, const juce::S
     const auto p = place(chain, typeId, desiredIndex, registry);
     if (!p.allowed)
         return {};
-    return set.insertDevice(chain, makeRoom(set, p), typeId);
+    auto device = set.insertDevice(chain, makeRoom(set, p), typeId);
+    // On a return track an effect is fed by the sends, so its dry signal is just the send again:
+    // it starts fully wet (the M3 hands-on checks found a Reverb at its 30% track default there).
+    if (device.isValid() && chain.getParent().hasType(ids::returnTrack))
+    {
+        TrackTuning tuning;
+        DeviceCreateContext context;
+        context.tuning = &tuning;
+        if (const auto prototype = registry.create(typeId, context))
+            for (int i = 0; i < prototype->numParameters(); ++i)
+                if (const auto& spec = prototype->parameter(i).spec(); spec.name == "Dry/Wet")
+                    set.setDeviceParameter(device, spec.id, spec.maxValue);
+    }
+    return device;
 }
 
 juce::ValueTree insertCopy(LiveSet& set, const juce::ValueTree& chain, const juce::ValueTree& device, int desiredIndex,

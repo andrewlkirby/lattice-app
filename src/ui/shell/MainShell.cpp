@@ -30,7 +30,8 @@ private:
     juce::String title, message;
 };
 
-MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile& settingsFile, ShellActions actions)
+MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile& settingsFile, TuningRegistry& tunings,
+                     ShellActions actions)
     : session(s), engine(e), settings(settingsFile), registry(&s.undoManager()), stateFeed(s, e)
 {
     setLookAndFeel(&lookAndFeel);
@@ -57,7 +58,7 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
                                                        "device list is in the Debug UI tab.");
     detail = std::make_unique<Placeholder>("Detail view", "The Clip view with the piano roll (4c) and the Device view with "
                                                           "device panels (4d). Shift+Tab will switch between them.");
-    session_ = std::make_unique<SessionView>(session, stateFeed, registry, selected);
+    session_ = std::make_unique<SessionView>(session, stateFeed, registry, selected, tunings);
     session_->setMixerVisible(settings.getBoolValue(mixerKey, true));
     session_->setSendsVisible(settings.getBoolValue(sendsKey, true));
     session_->setIOVisible(settings.getBoolValue(ioKey, true));
@@ -88,12 +89,17 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
     detail->setVisible(showDetail);
     info.setVisible(showInfo);
 
+    autoArm = settings.getBoolValue(autoArmKey, true);
+    selected.addListener(this);
+    selectionChanged(selected.get());
+
     stateFeed.attachTo(*this);
     juce::Desktop::getInstance().addGlobalMouseListener(this);
 }
 
 MainShell::~MainShell()
 {
+    selected.removeListener(this);
     juce::Desktop::getInstance().removeGlobalMouseListener(this);
     session.set().state().removeListener(this);
     stateFeed.detach();
@@ -131,6 +137,12 @@ void MainShell::addViewCommands()
                   .defaultKeys = {KeyPress('/', ModifierKeys::shiftModifier, '?')}, // Shift+?, as in Live
                   .perform = [this] { setInfoVisible(!showInfo); },
                   .isTicked = [this] { return showInfo; }});
+    registry.add({.id = "session.autoArm",
+                  .name = "Auto-Arm",
+                  .category = "Session",
+                  .description = "Arms the selected MIDI track while no track is armed by hand, so the keyboards play it.",
+                  .perform = [this] { setAutoArm(!autoArm); },
+                  .isTicked = [this] { return autoArm; }});
     registry.add({.id = "view.mixer",
                   .name = "Show Mixer",
                   .category = "View",
@@ -179,6 +191,21 @@ void MainShell::addViewCommands()
                       .perform = [this, t] { setTheme(*t); },
                       .isTicked = [this, themeName] { return theme().name == themeName; }});
     }
+}
+
+void MainShell::setAutoArm(bool on)
+{
+    autoArm = on;
+    settings.setValue(autoArmKey, on);
+    selectionChanged(selected.get());
+}
+
+void MainShell::selectionChanged(const SessionSelection& now)
+{
+    auto& set = session.set();
+    const bool midiTrack = now.kind != SessionSelection::Kind::scene && now.track >= 0 && now.track < set.numTracks() &&
+                           !set.isGroupTrack(now.track);
+    session.setAutoArmTrack(autoArm && midiTrack ? set.trackId(now.track) : 0);
 }
 
 void MainShell::setDebugUi(juce::Component* debugUi)

@@ -4,7 +4,10 @@
 
 #include "support/OfflineRenderer.h"
 #include "support/TestDevices.h"
+#include "devices/racks/Rack.h"
+#include "devices/racks/RackEditing.h"
 #include "ui/commands/SessionCommands.h"
+#include "ui/session/KeyboardFollow.h"
 #include "ui/session/SessionView.h"
 #include "ui/theme/LatticeLookAndFeel.h"
 
@@ -26,7 +29,7 @@ struct Fixture
         session.newSet(tracks, scenes);
         session.flush();
         addSessionCommands(commands, session, {[this] { return selection.get(); }, [this](SessionSelection s) { selection.set(s); }}, {});
-        view = std::make_unique<SessionView>(session, feed, commands, selection);
+        view = std::make_unique<SessionView>(session, feed, commands, selection, tunings);
         view->setLookAndFeel(&laf);
         view->setSize(1000, 800);
     }
@@ -456,4 +459,56 @@ TEST_CASE("Session view: a MIDI file dropped on a slot becomes a clip there", "[
     CHECK(LiveSet::notesOf(set.clip(1, 2)).size() == 1);
     CHECK(f.selection.get() == SessionSelection{Kind::slot, 1, 2});
     file.deleteFile();
+}
+
+TEST_CASE("Session view: a MIDI track's header shows its tuning; the badge changes it", "[ui][session]")
+{
+    Fixture f(2);
+    auto& set = f.session.set();
+    set.groupTracks(1, 1); // A G >B
+    f.rebuildNow();
+    CHECK(!f.view->tuningBadge(0).isEmpty());
+    CHECK(f.view->tuningBadge(1).isEmpty()); // a group has no tuning
+    CHECK(f.view->hitAt(f.view->tuningBadge(0).getCentre()).area == Area::tuning);
+    const auto menu = f.view->tuningMenu(0);
+    juce::PopupMenu::MenuItemIterator it(menu);
+    bool foundColundi = false;
+    while (it.next())
+        if (it.getItem().text.containsIgnoreCase("colundi"))
+        {
+            foundColundi = true;
+            it.getItem().action();
+        }
+    REQUIRE(foundColundi);
+    CHECK(set.track(0)[ids::tuningId].toString().containsIgnoreCase("colundi"));
+    f.session.undoManager().undo();
+    CHECK(!set.track(0)[ids::tuningId].toString().containsIgnoreCase("colundi"));
+}
+
+TEST_CASE("Session view: the computer keyboard follows a Drum Rack's pads, and comes back", "[ui][session]")
+{
+    Fixture f(2);
+    auto& set = f.session.set();
+    auto chain = LiveSet::chainOf(set.track(1));
+    while (chain.getNumChildren() > 0)
+        set.removeDevice(chain.getChild(0));
+    auto rack = set.insertDevice(chain, -1, RackDevice::drumRackId);
+    racks::addDrumPad(set, rack, 40);
+    racks::addDrumPad(set, rack, 55);
+    CHECK(drumPadPageStart(set, 1) == 36);
+    CHECK(drumPadPageStart(set, 0) == -1);
+
+    ComputerKeyboardInput keyboard([](const juce::MidiMessage&) {});
+    keyboard.setBaseNote(60);
+    KeyboardFollow follow;
+    follow.trackSelected(set, 1, keyboard);
+    CHECK(keyboard.getBaseNote() == 36);
+    follow.trackSelected(set, 1, keyboard); // still on it
+    CHECK(keyboard.getBaseNote() == 36);
+    follow.trackSelected(set, 0, keyboard);
+    CHECK(keyboard.getBaseNote() == 60); // back where it was
+
+    racks::removeChain(set, racks::padFor(rack, 40));
+    racks::addDrumPad(set, rack, 70); // lowest pad now 55: the page from 52
+    CHECK(drumPadPageStart(set, 1) == 52);
 }

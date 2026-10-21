@@ -28,7 +28,7 @@ struct Fixture
         settings = std::make_unique<juce::PropertiesFile>(settingsFile, options);
         session.newSet(2, 2);
         session.flush();
-        shell = std::make_unique<MainShell>(session, engine, *settings, ShellActions{});
+        shell = std::make_unique<MainShell>(session, engine, *settings, tunings, ShellActions{});
         shell->setSize(1280, 900);
     }
     ~Fixture()
@@ -324,4 +324,25 @@ TEST_CASE("Shell: the menu bar has every command, once, by category", "[ui][shel
         }
     }
     CHECK(items == static_cast<int>(f.shell->commands().all().size()));
+}
+
+TEST_CASE("Shell: auto-arm follows the selected MIDI track, and can be turned off", "[ui][shell]")
+{
+    Fixture f;
+    auto& set = f.session.set();
+    for (int t = 0; t < set.numTracks(); ++t)
+        set.setTrackArm(t, false, true);
+    f.shell->selection().set({SessionSelection::Kind::slot, 1, 0});
+    CHECK(f.session.isAutoArmed(1));
+    f.shell->selection().set({SessionSelection::Kind::track, 0, 0});
+    CHECK(f.session.isAutoArmed(0));
+    CHECK(!f.session.isArmed(1));
+    f.shell->selection().set({SessionSelection::Kind::scene, 0, 1}); // a scene: no track
+    CHECK(!f.session.isArmed(0));
+
+    f.shell->selection().set({SessionSelection::Kind::slot, 1, 0});
+    CHECK(f.shell->commands().perform("session.autoArm")); // off
+    CHECK(!f.shell->isAutoArmOn());
+    CHECK(!f.session.isArmed(1));
+    CHECK(!f.settings->getBoolValue(MainShell::autoArmKey, true));
 }
