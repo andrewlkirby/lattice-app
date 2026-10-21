@@ -262,3 +262,90 @@ TEST_CASE("Commands: transport and launch commands reach the engine", "[ui][comm
     f.session.undoManager().undo();
     CHECK(!set.metronomeOn());
 }
+
+TEST_CASE("Commands: ranges of clips delete, duplicate, copy, cut and paste", "[ui][commands]")
+{
+    Fixture f;
+    auto& set = f.session.set();
+    for (const auto& [t, s] : {std::pair{0, 0}, {1, 0}, {1, 1}})
+        set.createClip(t, s, 4.0).setProperty(ids::name, juce::String(t) + "/" + juce::String(s), nullptr);
+    f.selection = {Kind::slot, 0, 0, 1, 1}; // tracks 0-1, scenes 0-1
+
+    // Duplicate: new scenes right under the range, holding copies.
+    const int scenes = set.numScenes();
+    CHECK(f.registry.perform("edit.duplicate"));
+    CHECK(set.numScenes() == scenes + 2);
+    CHECK(set.clip(0, 2)[ids::name] == "0/0");
+    CHECK(set.clip(1, 3)[ids::name] == "1/1");
+    CHECK(f.selection == SessionSelection{Kind::slot, 0, 2, 1, 3});
+    f.session.undoManager().undo();
+    CHECK(set.numScenes() == scenes);
+
+    // Copy, paste elsewhere (replacing what's there), cut.
+    f.selection = {Kind::slot, 0, 0, 1, 1};
+    CHECK(f.registry.perform("edit.copy"));
+    f.selection = {Kind::slot, 1, 2};
+    CHECK(f.registry.perform("edit.paste"));
+    CHECK(set.clip(1, 2)[ids::name] == "0/0");
+    CHECK(set.clip(2, 2)[ids::name] == "1/0");
+    CHECK(set.clip(2, 3)[ids::name] == "1/1");
+    CHECK(!set.clip(1, 3).isValid()); // 0/1 was empty
+    CHECK(f.selection == SessionSelection{Kind::slot, 1, 2, 2, 3});
+    CHECK(f.registry.perform("edit.cut"));
+    CHECK(!set.clip(1, 2).isValid());
+    CHECK(!set.clip(2, 3).isValid());
+    f.selection = {Kind::slot, 0, 3};
+    CHECK(f.registry.perform("edit.paste")); // the cut clips
+    CHECK(set.clip(0, 3)[ids::name] == "0/0");
+
+    // Delete a range.
+    f.selection = {Kind::slot, 0, 0, 1, 1};
+    CHECK(f.registry.perform("edit.delete"));
+    CHECK(!set.clip(0, 0).isValid());
+    CHECK(!set.clip(1, 1).isValid());
+}
+
+TEST_CASE("Commands: ranges of scenes and tracks duplicate in order; a range of tracks groups", "[ui][commands]")
+{
+    Fixture f;
+    auto& set = f.session.set();
+    for (int s = 0; s < set.numScenes(); ++s)
+        set.setSceneName(s, "S" + juce::String(s));
+    f.selection = {Kind::scene, 0, 1, -1, 2};
+    CHECK(f.registry.perform("edit.duplicate"));
+    juce::StringArray order;
+    for (int s = 0; s < set.numScenes(); ++s)
+        order.add(set.scene(s)[ids::name].toString());
+    CHECK(order == juce::StringArray{"S0", "S1", "S2", "S1", "S2", "S3"});
+
+    f.selection = {Kind::track, 0, 0, 1, -1};
+    CHECK(f.registry.perform("create.group"));
+    CHECK(set.isGroupTrack(0));
+    CHECK(set.groupMembers(0) == std::vector<int>{1, 2});
+    f.selection = {Kind::track, 0, 0, 3, -1}; // the group and track 3 (the third MIDI track)
+    const int tracks = set.numTracks();
+    CHECK(f.registry.perform("edit.duplicate"));
+    CHECK(set.numTracks() == tracks + 4);
+    CHECK(set.isGroupTrack(4));
+    CHECK(set.parentGroupOf(5) == 4);
+}
+
+TEST_CASE("Commands: Capture and Insert Scene copies what's playing into a new scene", "[ui][commands]")
+{
+    Fixture f;
+    auto& set = f.session.set();
+    set.createClip(0, 0, 4.0).setProperty(ids::name, "a", nullptr);
+    set.createClip(1, 1, 4.0).setProperty(ids::name, "b", nullptr);
+    set.createClip(2, 0, 4.0);
+    f.session.launchSlot(0, 0);
+    f.session.launchSlot(1, 1);
+    f.render(48000 * 3);
+    f.selection = {Kind::scene, 0, 1};
+    const int scenes = set.numScenes();
+    CHECK(f.registry.perform("create.captureScene"));
+    CHECK(set.numScenes() == scenes + 1);
+    CHECK(set.clip(0, 2)[ids::name] == "a");
+    CHECK(set.clip(1, 2)[ids::name] == "b");
+    CHECK(!set.clip(2, 2).isValid()); // wasn't playing
+    CHECK(f.selection == SessionSelection{Kind::scene, 0, 2});
+}

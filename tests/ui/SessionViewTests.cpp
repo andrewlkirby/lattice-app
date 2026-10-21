@@ -366,3 +366,94 @@ TEST_CASE("Session view: a track's I/O sets its MIDI input, channel and monitori
     CHECK(f.view->mixerArea().getHeight() < height);
     CHECK(!f.view->stripForColumn(0)->inputBox()->isVisible());
 }
+
+TEST_CASE("Session view: Shift+click selects a range; dragging moves the clips, Ctrl+drag copies them",
+          "[ui][session][editing]")
+{
+    Fixture f(4, 6);
+    auto& set = f.session.set();
+    set.createClip(0, 0, 4.0).setProperty(ids::name, "a", nullptr);
+    set.createClip(1, 1, 4.0).setProperty(ids::name, "b", nullptr);
+    f.rebuildNow();
+
+    f.view->press(f.view->hitAt(f.bodyOf(0, 0)));
+    f.view->release();
+    f.view->press(f.view->hitAt(f.bodyOf(1, 1)), juce::ModifierKeys::shiftModifier);
+    f.view->release();
+    CHECK(f.selection.get() == SessionSelection{Kind::slot, 0, 0, 1, 1});
+
+    // Drag the range from a's slot to two scenes down and one track right.
+    f.view->press(f.view->hitAt(f.bodyOf(0, 0)));
+    f.view->dragClipsTo(f.view->hitAt(f.bodyOf(1, 2)), false);
+    f.view->release();
+    CHECK(!set.clip(0, 0).isValid());
+    CHECK(set.clip(1, 2)[ids::name] == "a");
+    CHECK(set.clip(2, 3)[ids::name] == "b");
+    CHECK(f.selection.get() == SessionSelection{Kind::slot, 1, 2, 2, 3});
+    f.session.undoManager().undo(); // one step
+    CHECK(set.clip(0, 0)[ids::name] == "a");
+    CHECK(set.clip(1, 1)[ids::name] == "b");
+
+    // Ctrl+drag: copies, the originals stay.
+    f.selection.set({Kind::slot, 0, 0});
+    f.view->press(f.view->hitAt(f.bodyOf(0, 0)));
+    f.view->dragClipsTo(f.view->hitAt(f.bodyOf(3, 5)), true);
+    f.view->release();
+    CHECK(set.clip(0, 0)[ids::name] == "a");
+    CHECK(set.clip(3, 5)[ids::name] == "a");
+    CHECK(set.clip(3, 5)[ids::id] != set.clip(0, 0)[ids::id]);
+
+    // A group's column can't take clips: a drag onto it moves nothing there.
+    set.groupTracks(2, 2); // A B G >C D
+    f.rebuildNow();
+    f.selection.set({Kind::slot, 0, 0});
+    f.view->press(f.view->hitAt(f.bodyOf(0, 0)));
+    f.view->dragClipsTo(f.view->hitAt(f.bodyOf(2, 4)), false);
+    f.view->release();
+    CHECK(set.clip(0, 0).isValid());
+    CHECK(!set.clip(2, 4).isValid());
+}
+
+TEST_CASE("Session view: colouring what's selected", "[ui][session][editing]")
+{
+    Fixture f(3);
+    auto& set = f.session.set();
+    set.createClip(0, 0, 4.0);
+    set.createClip(1, 0, 4.0);
+    f.selection.set({Kind::slot, 0, 0, 1, 0});
+    f.view->colourSelection(5);
+    CHECK(static_cast<juce::int64>(set.clip(0, 0)[ids::colour]) == static_cast<juce::int64>(LiveSet::paletteColour(5)));
+    CHECK(static_cast<juce::int64>(set.clip(1, 0)[ids::colour]) == static_cast<juce::int64>(LiveSet::paletteColour(5)));
+    f.selection.set({Kind::track, 2, 0});
+    f.view->colourSelection(9);
+    CHECK(static_cast<juce::int64>(set.track(2)[ids::colour]) == static_cast<juce::int64>(LiveSet::paletteColour(9)));
+    f.session.undoManager().undo();
+    CHECK(static_cast<juce::int64>(set.track(2)[ids::colour]) != static_cast<juce::int64>(LiveSet::paletteColour(9)));
+}
+
+TEST_CASE("Session view: a MIDI file dropped on a slot becomes a clip there", "[ui][session][editing]")
+{
+    Fixture f(2);
+    auto& set = f.session.set();
+    // A one-bar file with one note.
+    juce::MidiMessageSequence seq;
+    seq.addEvent(juce::MidiMessage::noteOn(1, 64, static_cast<juce::uint8>(100)), 0.0);
+    seq.addEvent(juce::MidiMessage::noteOff(1, 64), 480.0);
+    seq.updateMatchedPairs();
+    juce::MidiFile midi;
+    midi.setTicksPerQuarterNote(480);
+    midi.addTrack(seq);
+    const auto file = juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("drop", ".mid");
+    {
+        juce::FileOutputStream out(file);
+        REQUIRE(midi.writeTo(out));
+    }
+    CHECK(f.view->isInterestedInFileDrag({file.getFullPathName()}));
+    CHECK(!f.view->isInterestedInFileDrag({"C:/x/notes.txt"}));
+    const auto at = f.bodyOf(1, 2);
+    f.view->filesDropped({file.getFullPathName()}, at.x, at.y);
+    REQUIRE(set.clip(1, 2).isValid());
+    CHECK(LiveSet::notesOf(set.clip(1, 2)).size() == 1);
+    CHECK(f.selection.get() == SessionSelection{Kind::slot, 1, 2});
+    file.deleteFile();
+}

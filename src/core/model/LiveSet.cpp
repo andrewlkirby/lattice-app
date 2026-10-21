@@ -664,7 +664,20 @@ int LiveSet::duplicateTrack(int index)
 {
     if (index < 0 || index >= numTracks())
         return -1;
-    const int end = blockEnd(index);
+    return duplicateTracks(index, blockEnd(index) - 1);
+}
+
+int LiveSet::duplicateTracks(int first, int last)
+{
+    const int count = numTracks();
+    if (first < 0 || last >= count || first > last)
+        return -1;
+    const auto parent = track(first).getProperty(ids::groupId, static_cast<juce::int64>(0));
+    for (int t = first; t <= last; t = blockEnd(t))
+        if (blockEnd(t) > last + 1 || track(t).getProperty(ids::groupId, static_cast<juce::int64>(0)) != parent)
+            return -1;
+    const int index = first;
+    const int end = last + 1;
     // Copy the whole block, under new IDs, with the copies' members pointing at the copied groups.
     std::vector<juce::ValueTree> copies;
     std::map<juce::int64, juce::int64> renamed;
@@ -678,7 +691,8 @@ int LiveSet::duplicateTrack(int index)
         copy.setProperty(ids::solo, false, nullptr);
         copies.push_back(copy);
     }
-    copies.front().setProperty(ids::name, track(index)[ids::name].toString() + " copy", nullptr);
+    if (blockEnd(index) == end) // one track (or one group): its copy says so
+        copies.front().setProperty(ids::name, track(index)[ids::name].toString() + " copy", nullptr);
     for (auto& copy : copies)
         if (const auto it = renamed.find(static_cast<juce::int64>(copy.getProperty(ids::groupId, static_cast<juce::int64>(0))));
             it != renamed.end())
@@ -1090,6 +1104,8 @@ void LiveSet::moveClip(int fromTrack, int fromScene, int toTrack, int toScene)
 {
     if (fromTrack == toTrack && fromScene == toScene)
         return;
+    if (toTrack < 0 || toTrack >= numTracks() || isGroupTrack(toTrack))
+        return; // a group track has no clips of its own
     auto c = clip(fromTrack, fromScene);
     auto destination = slot(toTrack, toScene);
     if (!c.isValid() || !destination.isValid())
@@ -1098,6 +1114,59 @@ void LiveSet::moveClip(int fromTrack, int fromScene, int toTrack, int toScene)
         destination.removeChild(old, undo);
     slot(fromTrack, fromScene).removeChild(c, undo);
     destination.appendChild(c, undo);
+}
+
+void LiveSet::moveClips(const std::vector<ClipMove>& moves)
+{
+    // Lift every source first, then put each one down: overlapping moves can't overwrite a clip
+    // that hasn't moved yet.
+    std::vector<std::pair<juce::ValueTree, ClipMove>> lifted;
+    for (const auto& m : moves)
+    {
+        if (m.toTrack < 0 || m.toTrack >= numTracks() || m.toScene < 0 || m.toScene >= numScenes() || isGroupTrack(m.toTrack))
+            continue;
+        auto c = clip(m.fromTrack, m.fromScene);
+        if (!c.isValid())
+            continue;
+        slot(m.fromTrack, m.fromScene).removeChild(c, undo);
+        lifted.emplace_back(c, m);
+    }
+    for (auto& [c, m] : lifted)
+    {
+        auto destination = slot(m.toTrack, m.toScene);
+        if (auto old = destination.getChildWithName(ids::clip); old.isValid())
+            destination.removeChild(old, undo);
+        destination.appendChild(c, undo);
+    }
+}
+
+juce::ValueTree LiveSet::putClipCopy(int trackIndex, int sceneIndex, const juce::ValueTree& source)
+{
+    auto destination = slot(trackIndex, sceneIndex);
+    if (!destination.isValid() || !source.isValid() || isGroupTrack(trackIndex))
+        return {};
+    auto copy = source.createCopy();
+    reassignIds(copy);
+    if (auto old = destination.getChildWithName(ids::clip); old.isValid())
+        destination.removeChild(old, undo);
+    destination.appendChild(copy, undo);
+    return copy;
+}
+
+int LiveSet::paletteSize() noexcept
+{
+    return static_cast<int>(palette.size());
+}
+
+juce::uint32 LiveSet::paletteColour(int index) noexcept
+{
+    return palette[static_cast<std::size_t>(juce::jlimit(0, paletteSize() - 1, index))];
+}
+
+void LiveSet::setColour(juce::ValueTree node, juce::uint32 argb)
+{
+    if (node.isValid())
+        node.setProperty(ids::colour, static_cast<juce::int64>(argb), undo);
 }
 
 std::pair<int, int> LiveSet::findClip(std::int64_t clipId) const

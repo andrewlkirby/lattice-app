@@ -298,10 +298,22 @@ SessionView::Hit SessionView::hitAt(juce::Point<int> p) const
     return hit;
 }
 
-void SessionView::press(const Hit& hit)
+void SessionView::press(const Hit& hit, juce::ModifierKeys mods)
 {
     auto& set = session.set();
     const int track = trackOf(hit.column);
+    // Shift: extend the selection, if it's of the same kind as what was clicked.
+    if (mods.isShiftDown())
+    {
+        const auto s = selection.get();
+        const bool slotClick = hit.area == Area::slot || hit.area == Area::launch;
+        if (slotClick && s.kind == Kind::slot && track >= 0)
+            return selection.set(s.extendedTo(track, hit.scene));
+        if ((hit.area == Area::header || hit.area == Area::fold) && s.kind == Kind::track && track >= 0)
+            return selection.set(s.extendedTo(track, s.scene));
+        if ((hit.area == Area::scene || hit.area == Area::sceneLaunch) && s.kind == Kind::scene)
+            return selection.set(s.extendedTo(s.track, hit.scene));
+    }
     switch (hit.area)
     {
     case Area::fold:
@@ -320,8 +332,13 @@ void SessionView::press(const Hit& hit)
         pressed = hit;
         break;
     case Area::slot:
-        if (track >= 0)
+        if (track < 0)
+            break;
+        // Inside a selected range, the range stays (it may be about to be dragged).
+        if (!selection.get().containsSlot(track, hit.scene))
             selection.set({Kind::slot, track, hit.scene});
+        if (set.clip(track, hit.scene).isValid())
+            dragFrom = hit;
         break;
     case Area::stop:
         if (track >= 0)
@@ -349,6 +366,128 @@ void SessionView::release()
         if (const int track = trackOf(pressed.column); track >= 0)
             session.releaseSlot(track, pressed.scene);
     pressed = {};
+    dragFrom = {};
+    dragging = false;
+}
+
+void SessionView::dragClipsTo(const Hit& target, bool copy)
+{
+    if (dragFrom.area == Area::none || target.column < 0 || target.scene < 0)
+        return;
+    auto& set = session.set();
+    const int dColumn = target.column - dragFrom.column;
+    const int dScene = target.scene - dragFrom.scene;
+    if (dColumn == 0 && dScene == 0)
+        return;
+    auto s = selection.get();
+    if (!s.containsSlot(trackOf(dragFrom.column), dragFrom.scene))
+        s = {Kind::slot, trackOf(dragFrom.column), dragFrom.scene};
+    // Every selected clip, to the slot as many columns and scenes away (on screen: folded groups'
+    // tracks and returns are skipped over).
+    std::vector<LiveSet::ClipMove> moves;
+    for (int t = s.firstTrack(); t <= s.lastTrack(); ++t)
+    {
+        const int from = grid.columnOfTrack(t);
+        const int to = trackOf(from + dColumn);
+        if (from < 0 || to < 0)
+            continue;
+        for (int sc = s.firstScene(); sc <= s.lastScene(); ++sc)
+            if (set.clip(t, sc).isValid())
+                moves.push_back({t, sc, to, sc + dScene});
+    }
+    session.undoManager().beginNewTransaction(copy ? "Copy clips" : "Move clips");
+    if (copy)
+    {
+        std::vector<std::pair<juce::ValueTree, LiveSet::ClipMove>> sources;
+        for (const auto& m : moves)
+            sources.emplace_back(set.clip(m.fromTrack, m.fromScene).createCopy(), m);
+        for (const auto& [clip, m] : sources)
+            if (m.toScene >= 0 && m.toScene < set.numScenes())
+                set.putClipCopy(m.toTrack, m.toScene, clip);
+    }
+    else
+        set.moveClips(moves);
+    const int firstTo = trackOf(grid.columnOfTrack(s.firstTrack()) + dColumn);
+    const int lastTo = trackOf(grid.columnOfTrack(s.lastTrack()) + dColumn);
+    if (firstTo >= 0 && lastTo >= 0)
+        selection.set({Kind::slot, firstTo, juce::jlimit(0, set.numScenes() - 1, s.firstScene() + dScene), lastTo,
+                       juce::jlimit(0, set.numScenes() - 1, s.lastScene() + dScene)});
+}
+
+void SessionView::colourSelection(int paletteIndex)
+{
+    auto& set = session.set();
+    const auto argb = LiveSet::paletteColour(paletteIndex);
+    const auto s = selection.get();
+    session.undoManager().beginNewTransaction("Colour");
+    switch (s.kind)
+    {
+    case Kind::slot:
+        for (int t = s.firstTrack(); t <= s.lastTrack(); ++t)
+            for (int sc = s.firstScene(); sc <= s.lastScene(); ++sc)
+                set.setColour(set.clip(t, sc), argb);
+        break;
+    case Kind::track:
+        for (int t = s.firstTrack(); t <= s.lastTrack(); ++t)
+            set.setColour(set.track(t), argb);
+        break;
+    case Kind::scene:
+        for (int sc = s.firstScene(); sc <= s.lastScene(); ++sc)
+            set.setColour(set.scene(sc), argb);
+        break;
+    }
+}
+
+namespace
+{
+bool isMidiFile(const juce::String& path)
+{
+    return juce::File(path).hasFileExtension("mid;midi");
+}
+} // namespace
+
+void SessionView::importMidiFiles(const juce::StringArray& files, const Hit& at)
+{
+    const int track = trackOf(at.column);
+    if (track < 0 || at.scene < 0)
+        return;
+    session.undoManager().beginNewTransaction("Import MIDI");
+    int scene = at.scene;
+    for (const auto& f : files)
+        if (isMidiFile(f) && scene < session.set().numScenes())
+            session.importMidiFile(juce::File(f), track, scene++);
+    selection.set({Kind::slot, track, at.scene});
+}
+
+bool SessionView::isInterestedInFileDrag(const juce::StringArray& files)
+{
+    return std::any_of(files.begin(), files.end(), [](const juce::String& f) { return isMidiFile(f); });
+}
+
+void SessionView::fileDragMove(const juce::StringArray&, int x, int y)
+{
+    const auto hit = hitAt({x, y});
+    const auto target = hit.area == Area::slot || hit.area == Area::launch ? hit : Hit{};
+    if (target.column != dropTarget.column || target.scene != dropTarget.scene)
+    {
+        dropTarget = target;
+        repaint(slots);
+    }
+}
+
+void SessionView::fileDragExit(const juce::StringArray&)
+{
+    dropTarget = {};
+    repaint(slots);
+}
+
+void SessionView::filesDropped(const juce::StringArray& files, int x, int y)
+{
+    dropTarget = {};
+    const auto hit = hitAt({x, y});
+    if (hit.area == Area::slot || hit.area == Area::launch)
+        importMidiFiles(files, hit);
+    repaint(slots);
 }
 
 void SessionView::doubleClick(const Hit& hit)
@@ -443,7 +582,20 @@ void SessionView::showMenu(const Hit& hit)
     default:
         return;
     }
-    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this).withMousePosition());
+    // Colours, for what's selected.
+    static const char* const colourNames[] = {"Rose", "Orange", "Ochre", "Lemon", "Lime", "Green",
+                                              "Mint", "Cyan", "Sky", "Blue", "Periwinkle", "Orchid"};
+    juce::PopupMenu colours;
+    for (int i = 0; i < LiveSet::paletteSize(); ++i)
+        colours.addColouredItem(1000 + i, i < 12 ? colourNames[i] : juce::String(i + 1), juce::Colour(LiveSet::paletteColour(i)), true,
+                                false, nullptr);
+    menu.addSeparator();
+    menu.addSubMenu("Colour", colours);
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this).withMousePosition(),
+                       [safe = juce::Component::SafePointer<SessionView>(this)](int result) {
+                           if (safe != nullptr && result >= 1000 && result < 1000 + LiveSet::paletteSize())
+                               safe->colourSelection(result - 1000);
+                       });
 }
 
 void SessionView::mouseDown(const juce::MouseEvent& e)
@@ -452,12 +604,33 @@ void SessionView::mouseDown(const juce::MouseEvent& e)
     if (e.mods.isPopupMenu())
         showMenu(hit);
     else
-        press(hit);
+        press(hit, e.mods);
 }
 
-void SessionView::mouseUp(const juce::MouseEvent&)
+void SessionView::mouseDrag(const juce::MouseEvent& e)
 {
+    if (dragFrom.area == Area::none)
+        return;
+    if (!dragging && e.getDistanceFromDragStart() < 4)
+        return;
+    dragging = true;
+    const auto hit = hitAt(e.getPosition());
+    if ((hit.area == Area::slot || hit.area == Area::launch) && (hit.column != dragTo.column || hit.scene != dragTo.scene))
+    {
+        dragTo = hit;
+        repaint(slots);
+    }
+    setMouseCursor(e.mods.isCommandDown() ? juce::MouseCursor::CopyingCursor : juce::MouseCursor::DraggingHandCursor);
+}
+
+void SessionView::mouseUp(const juce::MouseEvent& e)
+{
+    if (dragging)
+        dragClipsTo(dragTo, e.mods.isCommandDown());
+    setMouseCursor(juce::MouseCursor::NormalCursor);
+    dragTo = {};
     release();
+    repaint(slots);
 }
 
 void SessionView::mouseDoubleClick(const juce::MouseEvent& e)
@@ -614,7 +787,7 @@ void SessionView::paintHeaders(juce::Graphics& g)
             continue;
         const bool isTrack = col.kind == SessionLayout::Column::Kind::track;
         const auto node = isTrack ? set.track(col.index) : set.returnTrack(col.index);
-        const bool selected = isTrack && sel.kind == Kind::track && sel.track == col.index;
+        const bool selected = isTrack && sel.kind == Kind::track && sel.containsTrack(col.index);
         g.setColour(selected ? t.surfaceRaised.brighter(0.1f) : col.isGroup ? t.surfaceRaised : t.surface);
         g.fillRect(r.reduced(1, 0));
         g.setColour(colourOf(node));
@@ -755,10 +928,25 @@ void SessionView::paintSlot(juce::Graphics& g, int column, int scene, juce::Rect
     }
 
     const auto sel = selection.get();
-    if (sel.kind == Kind::slot && sel.track == track && sel.scene == scene)
+    if (sel.containsSlot(track, scene))
     {
-        g.setColour(t.selection);
+        g.setColour(t.selection.withMultipliedAlpha(sel.isRange() ? 0.8f : 1.0f));
         g.drawRoundedRectangle(cell, t.radius, 1.5f);
+    }
+    // Where dragged clips would land, and the slot a MIDI file would go to.
+    bool target = dropTarget.column == column && dropTarget.scene == scene;
+    if (dragging && dragTo.column >= 0)
+    {
+        const int dColumn = dragTo.column - dragFrom.column, dScene = dragTo.scene - dragFrom.scene;
+        const int fromTrack = trackOf(column - dColumn);
+        target = target || (fromTrack >= 0 && (sel.containsSlot(fromTrack, scene - dScene) ||
+                                               (fromTrack == trackOf(dragFrom.column) && scene - dScene == dragFrom.scene)) &&
+                            set.clip(fromTrack, scene - dScene).isValid());
+    }
+    if (target)
+    {
+        g.setColour(t.accent);
+        g.drawRoundedRectangle(cell.reduced(1.0f), t.radius, 2.0f);
     }
 }
 
@@ -832,7 +1020,7 @@ void SessionView::paintScenes(juce::Graphics& g)
         }
         g.setColour(t.text);
         g.drawFittedText(label, text, juce::Justification::centredLeft, 1, 0.8f);
-        if (sel.kind == Kind::scene && sel.scene == s)
+        if (sel.kind == Kind::scene && sel.containsScene(s))
         {
             g.setColour(t.selection);
             g.drawRoundedRectangle(r.reduced(1).toFloat(), t.radius, 1.5f);

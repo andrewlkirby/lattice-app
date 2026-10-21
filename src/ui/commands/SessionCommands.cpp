@@ -112,10 +112,57 @@ void addSessionCommands(CommandRegistry& registry, SessionController& session, S
                   .defaultKeys = {ctrl('y'), ctrlShift('z')},
                   .perform = [&undo] { undo.redo(); },
                   .isEnabled = [&undo] { return undo.canRedo(); }});
+    // A clipboard of clips, as offsets from the copied range's top-left slot.
+    struct ClipboardCell
+    {
+        int track, scene;
+        juce::ValueTree clip;
+    };
+    auto clipboard = std::make_shared<std::vector<ClipboardCell>>();
+    const auto rangeHasClip = [&set, selected] {
+        const auto s = selected();
+        if (s.kind != Kind::slot)
+            return false;
+        for (int t = s.firstTrack(); t <= s.lastTrack() && t < set.numTracks(); ++t)
+            for (int sc = s.firstScene(); sc <= s.lastScene() && sc < set.numScenes(); ++sc)
+                if (set.clip(t, sc).isValid())
+                    return true;
+        return false;
+    };
+    const auto copyRange = [&set, selected, clipboard] {
+        const auto s = selected();
+        clipboard->clear();
+        for (int t = s.firstTrack(); t <= s.lastTrack() && t < set.numTracks(); ++t)
+            for (int sc = s.firstScene(); sc <= s.lastScene() && sc < set.numScenes(); ++sc)
+                if (const auto c = set.clip(t, sc); c.isValid())
+                    clipboard->push_back({t - s.firstTrack(), sc - s.firstScene(), c.createCopy()});
+    };
+    const auto deleteRange = [&set, selection, clamp] {
+        const auto s = selection.get();
+        switch (s.kind)
+        {
+        case Kind::slot:
+            for (int t = s.firstTrack(); t <= s.lastTrack() && t < set.numTracks(); ++t)
+                for (int sc = s.firstScene(); sc <= s.lastScene() && sc < set.numScenes(); ++sc)
+                    set.deleteClip(t, sc);
+            break;
+        case Kind::scene:
+            for (int sc = s.lastScene(); sc >= s.firstScene(); --sc)
+                if (set.numScenes() > 1)
+                    set.deleteScene(sc);
+            break;
+        case Kind::track:
+            for (int t = juce::jmin(s.lastTrack(), set.numTracks() - 1); t >= s.firstTrack(); --t)
+                if (set.parentGroupOf(t) < s.firstTrack()) // a group's members go with it
+                    set.deleteTrack(t);
+            break;
+        }
+        selection.set(clamp({s.kind, s.firstTrack(), s.firstScene()}));
+    };
     registry.add({.id = "edit.duplicate",
                   .name = "Duplicate",
                   .category = "Edit",
-                  .description = "Duplicates the selected clip (into the next empty slot below), scene or track.",
+                  .description = "Duplicates the selected clips (into new scenes below them), scenes or tracks (after the last one).",
                   .defaultKeys = {ctrl('d')},
                   .perform =
                       [&set, selection, clamp] {
@@ -123,48 +170,102 @@ void addSessionCommands(CommandRegistry& registry, SessionController& session, S
                           switch (s.kind)
                           {
                           case Kind::slot:
-                              if (const int to = set.duplicateClip(s.track, s.scene); to >= 0)
-                                  selection.set({Kind::slot, s.track, to});
-                              break;
-                          case Kind::scene:
-                              selection.set(clamp({Kind::scene, s.track, set.duplicateScene(s.scene)}));
-                              break;
-                          case Kind::track:
-                              selection.set(clamp({Kind::track, set.duplicateTrack(s.track), s.scene}));
+                          {
+                              if (!s.isRange())
+                              {
+                                  if (const int to = set.duplicateClip(s.track, s.scene); to >= 0)
+                                      selection.set({Kind::slot, s.track, to});
+                                  break;
+                              }
+                              // New scenes right under the range, holding copies of its clips.
+                              const int rows = s.lastScene() - s.firstScene() + 1;
+                              for (int r = 0; r < rows; ++r)
+                                  set.addScene(s.lastScene() + 1 + r);
+                              for (int t = s.firstTrack(); t <= s.lastTrack(); ++t)
+                                  for (int sc = s.firstScene(); sc <= s.lastScene(); ++sc)
+                                      if (const auto c = set.clip(t, sc); c.isValid())
+                                          set.putClipCopy(t, sc + rows, c);
+                              selection.set({Kind::slot, s.firstTrack(), s.firstScene() + rows, s.lastTrack(), s.lastScene() + rows});
                               break;
                           }
+                          case Kind::scene:
+                          {
+                              const int rows = s.lastScene() - s.firstScene() + 1;
+                              // Each copy lands right after its scene; it moves to after the
+                              // range's earlier copies, so the copies follow the range in order.
+                              for (int r = 0; r < rows; ++r)
+                              {
+                                  const int copy = set.duplicateScene(s.firstScene() + r);
+                                  set.moveScene(copy, s.lastScene() + 1 + r);
+                              }
+                              selection.set(clamp({Kind::scene, s.track, s.lastScene() + 1, -1, s.lastScene() + rows}));
+                              break;
+                          }
+                          case Kind::track:
+                          {
+                              const int last = juce::jmax(s.lastTrack(), set.blockEnd(s.lastTrack()) - 1);
+                              if (const int copy = set.duplicateTracks(s.firstTrack(), last); copy >= 0)
+                                  selection.set(clamp({Kind::track, copy, s.scene, copy + (last - s.firstTrack()), -1}));
+                              break;
+                          }
+                          }
                       },
-                  .isEnabled = [selected, hasClip] { return selected().kind != Kind::slot || hasClip(); },
+                  .isEnabled = [selected, rangeHasClip] { return selected().kind != Kind::slot || rangeHasClip(); },
                   .undoable = true});
     registry.add({.id = "edit.delete",
                   .name = "Delete",
                   .category = "Edit",
-                  .description = "Deletes the selected clip, scene or track (a set always keeps one scene and one track).",
+                  .description = "Deletes the selected clips, scenes or tracks (a set always keeps one scene and one track).",
                   .defaultKeys = {plain(KeyPress::deleteKey), plain(KeyPress::backspaceKey)},
-                  .perform =
-                      [&set, selection, clamp] {
-                          const auto s = selection.get();
-                          switch (s.kind)
-                          {
-                          case Kind::slot:
-                              set.deleteClip(s.track, s.scene);
-                              break;
-                          case Kind::scene:
-                              set.deleteScene(s.scene);
-                              break;
-                          case Kind::track:
-                              set.deleteTrack(s.track);
-                              break;
-                          }
-                          selection.set(clamp(s));
-                      },
+                  .perform = deleteRange,
                   .isEnabled =
-                      [&set, selected, hasClip] {
+                      [&set, selected, rangeHasClip] {
                           const auto s = selected();
-                          return s.kind == Kind::slot    ? hasClip()
+                          return s.kind == Kind::slot    ? rangeHasClip()
                                  : s.kind == Kind::scene ? set.numScenes() > 1
                                                          : set.numTracks() > 1;
                       },
+                  .undoable = true});
+    registry.add({.id = "edit.copy",
+                  .name = "Copy",
+                  .category = "Edit",
+                  .description = "Copies the selected clips.",
+                  .defaultKeys = {ctrl('c')},
+                  .perform = copyRange,
+                  .isEnabled = rangeHasClip});
+    registry.add({.id = "edit.cut",
+                  .name = "Cut",
+                  .category = "Edit",
+                  .description = "Copies the selected clips and deletes them.",
+                  .defaultKeys = {ctrl('x')},
+                  .perform =
+                      [copyRange, deleteRange] {
+                          copyRange();
+                          deleteRange();
+                      },
+                  .isEnabled = rangeHasClip,
+                  .undoable = true});
+    registry.add({.id = "edit.paste",
+                  .name = "Paste",
+                  .category = "Edit",
+                  .description = "Pastes the copied clips with their top-left one at the selected slot, replacing what's there.",
+                  .defaultKeys = {ctrl('v')},
+                  .perform =
+                      [&set, selection, clipboard] {
+                          const auto s = selection.get();
+                          int lastTrack = s.firstTrack(), lastScene = s.firstScene();
+                          for (const auto& cell : *clipboard)
+                          {
+                              const int t = s.firstTrack() + cell.track, sc = s.firstScene() + cell.scene;
+                              if (t < set.numTracks() && sc < set.numScenes() && set.putClipCopy(t, sc, cell.clip).isValid())
+                              {
+                                  lastTrack = juce::jmax(lastTrack, t);
+                                  lastScene = juce::jmax(lastScene, sc);
+                              }
+                          }
+                          selection.set({Kind::slot, s.firstTrack(), s.firstScene(), lastTrack, lastScene});
+                      },
+                  .isEnabled = [selected, clipboard] { return selected().kind == Kind::slot && !clipboard->empty(); },
                   .undoable = true});
     registry.add({.id = "edit.rename",
                   .name = "Rename",
@@ -227,12 +328,13 @@ void addSessionCommands(CommandRegistry& registry, SessionController& session, S
     registry.add({.id = "create.group",
                   .name = "Group Tracks",
                   .category = "Create",
-                  .description = "Puts the selected track (with everything in it, for a group) into a new group track.",
+                  .description = "Puts the selected tracks (with everything in them, for groups) into a new group track.",
                   .defaultKeys = {ctrl('g')},
                   .perform =
                       [&set, selection] {
                           const auto s = selection.get();
-                          if (const int g = set.groupTracks(s.track, set.blockEnd(s.track) - 1); g >= 0)
+                          const int last = juce::jmax(s.lastTrack(), set.blockEnd(s.lastTrack()) - 1);
+                          if (const int g = set.groupTracks(s.firstTrack(), last); g >= 0)
                               selection.set({Kind::track, g, s.scene});
                       },
                   .isEnabled = [&set, selected] { return selected().kind != Kind::scene && selected().track < set.numTracks(); },
@@ -262,6 +364,26 @@ void addSessionCommands(CommandRegistry& registry, SessionController& session, S
                       [&set, selection] {
                           const auto s = selection.get();
                           selection.set({Kind::scene, s.track, set.addScene(s.scene + 1)});
+                      },
+                  .undoable = true});
+    registry.add({.id = "create.captureScene",
+                  .name = "Capture and Insert Scene",
+                  .category = "Create",
+                  .description = "Inserts a scene after the selected one holding a copy of every clip playing now.",
+                  .defaultKeys = {ctrlShift('i')},
+                  .perform =
+                      [&set, &session, selection] {
+                          const auto s = selection.get();
+                          const int scene = set.addScene(s.lastScene() + 1);
+                          for (int t = 0; t < set.numTracks(); ++t)
+                          {
+                              const auto playing = session.trackState(t).playingClipId;
+                              if (playing == 0)
+                                  continue;
+                              if (const auto [ct, cs] = set.findClip(playing); ct >= 0)
+                                  set.putClipCopy(t, scene, set.clip(ct, cs));
+                          }
+                          selection.set({Kind::scene, s.track, scene});
                       },
                   .undoable = true});
     registry.add({.id = "create.midiClip",

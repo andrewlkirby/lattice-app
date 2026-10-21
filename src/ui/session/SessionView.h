@@ -35,6 +35,7 @@ namespace lattice::ui
     view. A change to the set's structure (tracks, returns, scenes, groups, folding) rebuilds the
     layout and the strips; anything else only repaints, so a fader being dragged stays put. */
 class SessionView final : public juce::Component,
+                          public juce::FileDragAndDropTarget,
                           private EngineStateFeed::Listener,
                           private SessionSelectionModel::Listener,
                           private juce::ValueTree::Listener,
@@ -75,10 +76,25 @@ public:
     };
     Hit hitAt(juce::Point<int> local) const;
 
-    /** What a click, its release and a double-click do (the mouse handlers call these; tests too). */
-    void press(const Hit& hit);
+    /** What a click, its release and a double-click do (the mouse handlers call these; tests too).
+        Shift extends the selection to what was clicked. */
+    void press(const Hit& hit, juce::ModifierKeys mods = {});
     void release();
     void doubleClick(const Hit& hit);
+
+    /** Dragging clips: from the slot pressed to another; the selected clips go along, keeping their
+        layout. copy (Ctrl): leaves the originals. Tracks that can't take clips are skipped. */
+    void dragClipsTo(const Hit& target, bool copy);
+    /** Colours what's selected (clips, tracks or scenes) with a palette colour. */
+    void colourSelection(int paletteIndex);
+    /** Imports MIDI files at a slot (one per scene down from it). */
+    void importMidiFiles(const juce::StringArray& files, const Hit& at);
+
+    // juce::FileDragAndDropTarget: MIDI files from the OS file explorer.
+    bool isInterestedInFileDrag(const juce::StringArray& files) override;
+    void fileDragMove(const juce::StringArray& files, int x, int y) override;
+    void fileDragExit(const juce::StringArray& files) override;
+    void filesDropped(const juce::StringArray& files, int x, int y) override;
     /** Renames what's selected (a prompt), for the Rename command. */
     void renameSelection();
 
@@ -108,6 +124,7 @@ public:
     void resized() override;
     void mouseDown(const juce::MouseEvent&) override;
     void mouseUp(const juce::MouseEvent&) override;
+    void mouseDrag(const juce::MouseEvent&) override;
     void mouseDoubleClick(const juce::MouseEvent&) override;
     void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
@@ -148,6 +165,9 @@ private:
     juce::Rectangle<int> headers, slots, stops, scenes, mixer;
     juce::ScrollBar vertical{true}, horizontal{false};
     Hit pressed;
+    Hit dragFrom, dragTo; // a clip drag in progress (dragFrom.area none: none)
+    bool dragging = false;
+    Hit dropTarget; // a file drag hovering over a slot
     bool structureChanged = true;
     bool showMixer = true, showSends = true, showIO = true;
     juce::Component stripArea; // clips the strips to the scrolling part

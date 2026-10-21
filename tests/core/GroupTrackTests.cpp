@@ -151,3 +151,34 @@ TEST_CASE("Group tracks: a set with groups saves and loads the same", "[core][mo
     CHECK(loaded.groupLeaves(1) == f.set.groupLeaves(1));
     CHECK(static_cast<bool>(loaded.track(2)[ids::folded]));
 }
+
+TEST_CASE("Clips: moving a block onto itself keeps every clip; copies never land on a group", "[core][model][groups]")
+{
+    Fixture f; // A B C D
+    for (int s = 0; s < 2; ++s)
+        f.set.createClip(0, s, 4.0).setProperty(ids::name, "c" + juce::String(s), nullptr);
+    // Down one row, overlapping: c0 to scene 1, c1 to scene 2 (a new scene for it).
+    f.set.addScene();
+    f.set.moveClips({{0, 0, 0, 1}, {0, 1, 0, 2}});
+    CHECK(!f.set.clip(0, 0).isValid());
+    CHECK(f.set.clip(0, 1)[ids::name] == "c0");
+    CHECK(f.set.clip(0, 2)[ids::name] == "c1");
+
+    f.group(1, 2, "G"); // A G >B >C D
+    CHECK(!f.set.putClipCopy(1, 0, f.set.clip(0, 1)).isValid()); // the group
+    f.set.moveClips({{0, 1, 1, 1}});
+    CHECK(f.set.clip(0, 1).isValid()); // didn't move into the group
+    const auto copy = f.set.putClipCopy(2, 0, f.set.clip(0, 1));
+    REQUIRE(copy.isValid());
+    CHECK(copy[ids::id] != f.set.clip(0, 1)[ids::id]);
+}
+
+TEST_CASE("Group tracks: duplicating a range of tracks copies them after the last, in order", "[core][model][groups]")
+{
+    Fixture f;
+    f.group(1, 2, "G"); // A G >B >C D
+    CHECK(f.set.duplicateTracks(0, 3) == 4); // A and G's block
+    CHECK(names(f.set) == "A G >B >C A G >B >C D");
+    CHECK(f.set.parentGroupOf(6) == 5);
+    CHECK(f.set.duplicateTracks(2, 4) == -1); // cuts a block
+}

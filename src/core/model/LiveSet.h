@@ -237,6 +237,9 @@ public:
     /** Copies a track (with its clips, under new IDs) to just after it, a group with its members.
         Returns the copy's index. */
     int duplicateTrack(int index);
+    /** Copies tracks first..last (whole blocks at one level, as for groupTracks) to just after the
+        last one, in order. Returns the first copy's index, or -1 if the range isn't whole blocks. */
+    int duplicateTracks(int first, int last);
     /** Moves a track (a group with its members) to where track `to` is: before it when moving up,
         after it when moving down. It joins the group it lands in. */
     void moveTrack(int from, int to);
@@ -339,8 +342,27 @@ public:
     /** Copies the clip into the next empty slot below it. Returns that scene index, or -1 if there
         is no empty slot below. */
     int duplicateClip(int trackIndex, int sceneIndex);
-    /** Moves a clip, replacing whatever is at the destination. */
+    /** Moves a clip, replacing whatever is at the destination (never into a group track). */
     void moveClip(int fromTrack, int fromScene, int toTrack, int toScene);
+    struct ClipMove
+    {
+        int fromTrack, fromScene, toTrack, toScene;
+    };
+    /** Moves several clips at once, each replacing whatever is at its destination; the sources may
+        overlap the destinations (moving a block one row down). Moves into group tracks and from
+        empty slots are skipped. The clips keep their IDs. */
+    void moveClips(const std::vector<ClipMove>& moves);
+    /** Puts a copy of a clip (under new IDs) into a slot, replacing whatever is there. Returns it,
+        or an invalid tree for a group track or a slot that doesn't exist. */
+    juce::ValueTree putClipCopy(int trackIndex, int sceneIndex, const juce::ValueTree& clip);
+
+    // --- Colours -------------------------------------------------------------------------------------
+    /** The colours tracks, scenes and clips are given and offered, in order. */
+    static int paletteSize() noexcept;
+    /** As ARGB (the model has no graphics: juce::Colour takes it as it is). */
+    static juce::uint32 paletteColour(int index) noexcept;
+    /** Sets a track's, scene's, return's or clip's colour, as ARGB (one undo action). */
+    void setColour(juce::ValueTree node, juce::uint32 argb);
 
     /** Location (track, scene) of a clip by ID, or (-1, -1). */
     std::pair<int, int> findClip(std::int64_t clipId) const;
