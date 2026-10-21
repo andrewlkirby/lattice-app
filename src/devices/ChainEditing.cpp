@@ -64,7 +64,7 @@ bool carriesMidi(const juce::ValueTree& chain)
 {
     const auto owner = chain.getParent();
     if (owner.hasType(ids::track))
-        return true;
+        return !LiveSet::isGroup(owner); // a group track's chain is audio effects only
     if (owner.hasType(ids::rackChain))
     {
         const auto kind = RackDevice::kindForType(rackOf(chain)[ids::deviceType].toString());
@@ -251,6 +251,8 @@ std::vector<std::int64_t> sidechainSources(const LiveSet& set, const juce::Value
     for (int t = 0; t < set.numTracks(); ++t)
     {
         const auto id = set.trackId(t);
+        if (set.isGroupTrack(t))
+            continue; // a group's output only exists once everything in it has been mixed
         if (onTrack && (id == own || reaches(set, id, own)))
             continue;
         out.push_back(id);

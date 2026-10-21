@@ -166,12 +166,21 @@ public:
         float* const* buses = nullptr;  // per return: two channels, added to
         int count = 0;
         bool audible = true;            // false: the sends are muted too
+        /** Samples the sends wait, so they reach the returns in time with the direct path: the
+            latency of the group chains this track's direct path still goes through (0 outside
+            groups, and the path is then exactly as without groups). */
+        int delay = 0;
     };
 
     /** Stage 2 (audio thread, in a fixed order): fader and pan (ramped towards the targets), sends,
         meters; adds the result into busLeft / busRight. */
     void mix(int numSamples, float targetLeft, float targetRight, const Sends& sends, float* busLeft,
              float* busRight) noexcept LATTICE_NONBLOCKING;
+
+    /** A group track's input: its members' faded outputs are added here (stage 2) before its
+        chain runs. clearGroupInput() starts a block. Audio thread. */
+    float* const* groupInput() noexcept { return groupChannels; }
+    void clearGroupInput(int numSamples) noexcept LATTICE_NONBLOCKING;
 
     /** After renderChain(): the chain's output (before compensation) and after compensation. */
     const float* const* chainOutput() const noexcept { return chainChannels; }
@@ -218,9 +227,14 @@ private:
     juce::AudioBuffer<float> buffer;     // the chain's output
     juce::AudioBuffer<float> delayed;    // after compensation
     juce::AudioBuffer<float> tapBuffer;  // the pre-effects tap
+    juce::AudioBuffer<float> groupBuffer; // a group track's input
+    juce::AudioBuffer<float> sendBuffer;  // the sends' signal when they wait (Sends::delay)
     float* chainChannels[2] = {nullptr, nullptr};
     float* outputChannels[2] = {nullptr, nullptr};
     float* tapChannels[2] = {nullptr, nullptr};
+    float* groupChannels[2] = {nullptr, nullptr};
+    float* sendChannels[4] = {nullptr, nullptr, nullptr, nullptr}; // pre-fader L R, post-fader L R
+    dsp::DelayLine sendLines[2];
     std::atomic<bool> tapWanted{false};
     std::atomic<int> publishedLatency{0};
     dsp::DelayLine compensationLines[2];

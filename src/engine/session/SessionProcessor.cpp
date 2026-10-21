@@ -100,6 +100,13 @@ void renderTrackTask(void* context, int index) noexcept
     track.processor->renderChain(job.numSamples, *job.time, nullptr, track.compensation);
 }
 
+void renderGroupTask(void* context, int index) noexcept
+{
+    const auto& job = *static_cast<const ChainJob*>(context);
+    const auto& group = job.snapshot->tracks[static_cast<std::size_t>((*job.level)[static_cast<std::size_t>(index)])];
+    group.processor->renderChain(job.numSamples, *job.time, group.processor->groupInput(), group.compensation);
+}
+
 void renderReturnTask(void* context, int index) noexcept
 {
     const auto& job = *static_cast<const ChainJob*>(context);
@@ -136,7 +143,7 @@ void SessionProcessor::renderMix(const EngineSnapshot& snapshot, const DeviceTim
         track.processor->reportEvents(n);
 
     // 1. Every track's chain, level by level (sidechain sources before their listeners); the
-    //    tracks of a level in parallel. Each writes only its own buffers.
+    //    tracks of a level in parallel. Each writes only its own buffers. (Group tracks come in 2.)
     for (const auto& level : snapshot.levels)
     {
         job.level = &level;
@@ -154,8 +161,7 @@ void SessionProcessor::renderMix(const EngineSnapshot& snapshot, const DeviceTim
     std::array<bool, TrackProcessor::maxReturns> preFader{};
     for (int r = 0; r < numReturns; ++r)
         preFader[static_cast<std::size_t>(r)] = snapshot.returns[static_cast<std::size_t>(r)].preFader;
-    for (const auto& track : snapshot.tracks)
-    {
+    const auto mixTrack = [&](const TrackSnapshot& track) {
         // Soloing tracks keeps the returns audible ("solo in place"): a soloed track still reaches
         // them, the others don't. Soloing a return silences the tracks' direct outputs.
         const bool trackAudible = !track.mute && (!snapshot.anySolo || track.solo);
@@ -166,7 +172,32 @@ void SessionProcessor::renderMix(const EngineSnapshot& snapshot, const DeviceTim
         sends.buses = returnInputPointers.data();
         sends.count = numReturns;
         sends.audible = trackAudible;
-        track.processor->mix(n, direct ? track.gainLeft : 0.0f, direct ? track.gainRight : 0.0f, sends, busL, busR);
+        sends.delay = track.sendDelay;
+        // Into its group's input, or the master bus.
+        float* outL = busL;
+        float* outR = busR;
+        if (track.parent >= 0)
+        {
+            auto* const* in = snapshot.tracks[static_cast<std::size_t>(track.parent)].processor->groupInput();
+            outL = in[0];
+            outR = in[1];
+        }
+        track.processor->mix(n, direct ? track.gainLeft : 0.0f, direct ? track.gainRight : 0.0f, sends, outL, outR);
+    };
+    for (const auto& track : snapshot.tracks)
+        if (track.isGroup)
+            track.processor->clearGroupInput(n);
+    for (const auto& track : snapshot.tracks)
+        if (!track.isGroup)
+            mixTrack(track);
+    // The groups, deepest first: each one's chain on what its members mixed into it, then its own
+    // fader into its parent. The same sums in the same order whatever ran in parallel.
+    for (const auto& level : snapshot.groupLevels)
+    {
+        job.level = &level;
+        runOn(pool, static_cast<int>(level.size()), renderGroupTask, job);
+        for (const int g : level)
+            mixTrack(snapshot.tracks[static_cast<std::size_t>(g)]);
     }
 
     // 3. The returns, then their faders.

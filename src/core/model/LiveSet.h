@@ -66,6 +66,9 @@ inline const juce::Identifier arm{"arm"};
 inline const juce::Identifier tuningId{"tuningId"};
 inline const juce::Identifier noteOffset{"noteOffset"};
 inline const juce::Identifier highNotePolicy{"highNotePolicy"};
+inline const juce::Identifier trackKind{"kind"};  // "group" for a group track; absent for a MIDI track
+inline const juce::Identifier groupId{"groupId"}; // the ID of the group track a track is in (0: none)
+inline const juce::Identifier folded{"folded"};   // a group track shown folded (not undoable)
 
 // Return track (also id, name, colour, volumeDb, pan, mute, solo) and send
 inline const juce::Identifier preFader{"preFader"};
@@ -146,7 +149,7 @@ struct NoteData
     (docs/03-m2-engine-session.md, part 2a).
 
         LIVESET  tempo, time signature, global quantization, metronome, ...
-         ├─ TRACKS / TRACK  id, name, colour, mixer values, tuning
+         ├─ TRACKS / TRACK  id, name, colour, mixer values, tuning; kind and groupId for groups
          │     ├─ SLOTS / SLOT (one per scene)  hasStopButton, optional CLIP
          │     │                 └─ CLIP  loop, launch settings, follow actions
          │     │                       └─ NOTES / NOTE  pitch, start, length, velocity, muted
@@ -222,12 +225,45 @@ public:
     std::int64_t trackId(int index) const;
     int trackIndexForId(std::int64_t id) const; // -1 if none
 
-    /** Inserts a MIDI track (at the end when insertIndex is out of range). Returns its index. */
+    /** Inserts a MIDI track (at the end when insertIndex is out of range). Returns its index. It
+        joins the group it lands in (see "Group tracks" below). */
     int addTrack(int insertIndex = -1);
+    /** Deletes a track; a group track goes with its members. A set always keeps a track that isn't
+        a group, so deleting everything else is refused. */
     void deleteTrack(int index);
-    /** Copies a track (with its clips, under new IDs) to just after it. Returns the copy's index. */
+    /** Copies a track (with its clips, under new IDs) to just after it, a group with its members.
+        Returns the copy's index. */
     int duplicateTrack(int index);
+    /** Moves a track (a group with its members) to where track `to` is: before it when moving up,
+        after it when moving down. It joins the group it lands in. */
     void moveTrack(int from, int to);
+
+    // --- Group tracks (docs/05-m4-ui.md, 4b) ----------------------------------------------------------
+    // A group track is a summing bus with its own audio effects and mixer; it has no instrument and
+    // no clips. Its members follow it in the track list, so a group and everything in it are one
+    // contiguous block, and groups nest. Adding or moving a track puts it in the group it lands in:
+    // right after a group's own track means inside that group; otherwise it joins the group of the
+    // track that follows it (none at the end of the list).
+    static bool isGroup(const juce::ValueTree& track);
+    bool isGroupTrack(int index) const;
+    /** The index of the group track a track is in, or -1. */
+    int parentGroupOf(int index) const;
+    /** How many groups a track is inside (0 at the top). */
+    int groupDepth(int index) const;
+    /** One past the last track of the block that starts at `index` (index + 1 for a plain track). */
+    int blockEnd(int index) const;
+    /** The tracks directly in a group (not their members), in order. */
+    std::vector<int> groupMembers(int groupIndex) const;
+    /** The plain (non-group) tracks inside a group, at any depth, in order. */
+    std::vector<int> groupLeaves(int groupIndex) const;
+    /** Puts tracks first..last into a new group track inserted before them, as one undo step for
+        the caller. The range must be whole blocks at one level (no group cut in two). Returns the
+        group's index, or -1 if the range isn't one. */
+    int groupTracks(int first, int last);
+    /** Takes a group's members out of it (into its own group, if it's inside one) and deletes the
+        group track with its devices. */
+    void ungroup(int groupIndex);
+    void setGroupFolded(int groupIndex, bool fold);
 
     void setTrackName(int index, const juce::String& name);
     void setTrackVolumeDb(int index, double db);
@@ -345,6 +381,8 @@ private:
     juce::ValueTree makeReturn(int number);
     juce::ValueTree makeTrack(int number);
     juce::ValueTree makeScene();
+    /** The group a track inserted at insertIndex would join (0: none). */
+    juce::int64 groupAt(int insertIndex) const;
     juce::ValueTree makeSlot() const;
     /** Gives every TRACK, CLIP and SCENE in tree a new ID. */
     void reassignIds(const juce::ValueTree& tree);

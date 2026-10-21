@@ -4,6 +4,7 @@
 #include "engine/TrackProcessor.h"
 #include "engine/session/ClipData.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -24,9 +25,16 @@ struct TrackSnapshot
     std::shared_ptr<TrackProcessor> processor;
     float gainLeft = 0.0f; // volume × constant-power pan, before mute/solo
     float gainRight = 0.0f;
+    /** Muted itself or by a group it's in (a muted group silences everything in it). */
     bool mute = false;
+    /** On a soloed path: soloed itself, or a group it's in, or something in it (so a soloed
+        track's groups stay audible). */
     bool solo = false;
     bool arm = false;
+    bool isGroup = false; // a group track: its chain's input is its members' mix
+    int parent = -1;      // the index of the group track it mixes into, or -1 for the master
+    /** Samples its sends wait (TrackProcessor::Sends::delay): the latency of its groups' chains. */
+    int sendDelay = 0;
     std::vector<SlotSnapshot> slots; // one per scene
     std::array<float, TrackProcessor::maxReturns> sendGains{}; // per return, linear (0 = off)
     int compensation = 0; // samples of delay that line this track up with the slowest
@@ -83,8 +91,11 @@ struct EngineSnapshot
     std::shared_ptr<TrackProcessor> master; // the master's device chain
     /** Track indices in processing order, in levels: every sidechain source is in an earlier level
         than the tracks that listen to it, and the tracks within a level are independent (they can
-        run in parallel). */
+        run in parallel). Group tracks aren't in them (see groupLevels). */
     std::vector<std::vector<int>> levels;
+    /** Group track indices in levels, deepest first: a group renders after everything in it has
+        been mixed into its input, and the groups of one level are independent. */
+    std::vector<std::vector<int>> groupLevels;
     /** The tracks' direct path to the master is delayed by the slowest return's latency, so it
         lines up with what comes back through the returns. */
     int masterInputDelay = 0;
@@ -98,6 +109,14 @@ struct EngineSnapshot
         return nullptr;
     }
 };
+
+/** Balance (for a stereo signal, a group track's): unity at the centre; turning towards one side
+    turns the other side down, to silence at the end. pan −1..1 → {left, right} gains. */
+inline std::pair<float, float> balancePan(double pan) noexcept
+{
+    const double p = std::clamp(pan, -1.0, 1.0);
+    return {static_cast<float>(p > 0.0 ? 1.0 - p : 1.0), static_cast<float>(p < 0.0 ? 1.0 + p : 1.0)};
+}
 
 /** Constant-power pan law (−3 dB at the centre): pan −1..1 → {left, right} gains. */
 inline std::pair<float, float> constantPowerPan(double pan) noexcept

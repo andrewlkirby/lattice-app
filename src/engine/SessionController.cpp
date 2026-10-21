@@ -120,6 +120,24 @@ void SessionController::launchSlot(int trackIndex, int sceneIndex)
         return;
     flush();
 
+    if (liveSet.isGroupTrack(trackIndex))
+    {
+        // A group's slot launches the clips in that row on every track in it, and stops the
+        // tracks whose slot there is empty (as a scene would, for those tracks only). It never
+        // starts a recording.
+        for (const int leaf : liveSet.groupLeaves(trackIndex))
+        {
+            const auto clip = liveSet.clip(leaf, sceneIndex);
+            EngineCommand c;
+            c.type = CommandType::LaunchSlot;
+            c.trackId = trackIdOf(leaf);
+            c.scene = sceneIndex;
+            c.clipId = clip.isValid() ? LiveSet::idOf(clip) : 0;
+            send(c);
+        }
+        return;
+    }
+
     const auto clip = liveSet.clip(trackIndex, sceneIndex);
     const auto state = trackState(trackIndex);
     EngineCommand c;
@@ -156,6 +174,12 @@ void SessionController::launchSlot(int trackIndex, int sceneIndex)
 
 void SessionController::releaseSlot(int trackIndex, int sceneIndex)
 {
+    if (trackIndex >= 0 && trackIndex < liveSet.numTracks() && liveSet.isGroupTrack(trackIndex))
+    {
+        for (const int leaf : liveSet.groupLeaves(trackIndex))
+            releaseSlot(leaf, sceneIndex);
+        return;
+    }
     const auto clip = liveSet.clip(trackIndex, sceneIndex);
     if (!clip.isValid())
         return;
@@ -181,6 +205,12 @@ void SessionController::stopTrack(int trackIndex)
 {
     if (trackIndex < 0 || trackIndex >= liveSet.numTracks())
         return;
+    if (liveSet.isGroupTrack(trackIndex))
+    {
+        for (const int leaf : liveSet.groupLeaves(trackIndex))
+            stopTrack(leaf);
+        return;
+    }
     EngineCommand c;
     c.type = CommandType::StopTrack;
     c.trackId = trackIdOf(trackIndex);
@@ -325,6 +355,22 @@ int SessionController::lastNoteOn(int trackIndex) const
 
 SlotState SessionController::slotState(int trackIndex, int sceneIndex) const
 {
+    if (trackIndex >= 0 && trackIndex < liveSet.numTracks() && liveSet.isGroupTrack(trackIndex))
+    {
+        // A group's slot shows the liveliest state of the slots in its row: recording, then
+        // playing, then waiting to launch or stop, then holding a clip.
+        constexpr SlotState order[] = {SlotState::Recording, SlotState::QueuedRecord, SlotState::Playing,
+                                       SlotState::QueuedLaunch, SlotState::QueuedStop, SlotState::Stopped};
+        int best = static_cast<int>(std::size(order));
+        for (const int leaf : liveSet.groupLeaves(trackIndex))
+        {
+            const auto s = slotState(leaf, sceneIndex);
+            for (int i = 0; i < best; ++i)
+                if (order[i] == s)
+                    best = i;
+        }
+        return best < static_cast<int>(std::size(order)) ? order[best] : SlotState::Empty;
+    }
     const auto clip = liveSet.clip(trackIndex, sceneIndex);
     const auto state = trackState(trackIndex);
     const std::int64_t id = clip.isValid() ? LiveSet::idOf(clip) : 0;

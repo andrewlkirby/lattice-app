@@ -11,6 +11,7 @@ add_executable(lattice_tests
     app/DeviceEditorTests.cpp
     control/ComputerKeyboardTests.cpp
     core/AudioCallbackStatsTests.cpp
+    core/GroupTrackTests.cpp
     core/JobPoolTests.cpp
     core/LiveSetTests.cpp
     core/RealtimeCheckTests.cpp
@@ -28,6 +29,7 @@ add_executable(lattice_tests
     devices/SynthTests.cpp
     devices/TuningTestSynthTests.cpp
     engine/AudioEngineTests.cpp
+    engine/GroupTrackEngineTests.cpp
     engine/MixerRoutingTests.cpp
     engine/ParallelProcessingTests.cpp
     engine/SessionEngineTests.cpp

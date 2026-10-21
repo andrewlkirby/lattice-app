@@ -624,39 +624,218 @@ void LiveSet::reassignIds(const juce::ValueTree& tree)
     remap(tree);
 }
 
+juce::int64 LiveSet::groupAt(int insertIndex) const
+{
+    // Right after a group's own track: inside it. Otherwise the group of the track that follows.
+    if (insertIndex > 0 && isGroupTrack(insertIndex - 1))
+        return static_cast<juce::int64>(trackId(insertIndex - 1));
+    if (insertIndex >= 0 && insertIndex < numTracks())
+        return static_cast<juce::int64>(track(insertIndex).getProperty(ids::groupId, static_cast<juce::int64>(0)));
+    return 0;
+}
+
 int LiveSet::addTrack(int insertIndex)
 {
     const int count = numTracks();
     if (insertIndex < 0 || insertIndex > count)
         insertIndex = count;
-    tracksNode().addChild(makeTrack(count + 1), insertIndex, undo);
+    auto t = makeTrack(count + 1);
+    if (const auto g = groupAt(insertIndex); g != 0)
+        t.setProperty(ids::groupId, g, nullptr);
+    tracksNode().addChild(t, insertIndex, undo);
     return insertIndex;
 }
 
 void LiveSet::deleteTrack(int index)
 {
-    if (index >= 0 && index < numTracks())
-        tracksNode().removeChild(index, undo);
+    if (index < 0 || index >= numTracks())
+        return;
+    const int end = blockEnd(index);
+    bool plainLeft = false;
+    for (int t = 0; t < numTracks() && !plainLeft; ++t)
+        plainLeft = (t < index || t >= end) && !isGroupTrack(t);
+    if (!plainLeft)
+        return; // a set keeps a track that can hold clips
+    for (int t = end - 1; t >= index; --t)
+        tracksNode().removeChild(t, undo);
 }
 
 int LiveSet::duplicateTrack(int index)
 {
     if (index < 0 || index >= numTracks())
         return -1;
-    auto copy = track(index).createCopy();
-    reassignIds(copy);
-    copy.setProperty(ids::name, track(index)[ids::name].toString() + " copy", nullptr);
-    copy.setProperty(ids::arm, false, nullptr);
-    copy.setProperty(ids::solo, false, nullptr);
-    tracksNode().addChild(copy, index + 1, undo);
-    return index + 1;
+    const int end = blockEnd(index);
+    // Copy the whole block, under new IDs, with the copies' members pointing at the copied groups.
+    std::vector<juce::ValueTree> copies;
+    std::map<juce::int64, juce::int64> renamed;
+    for (int t = index; t < end; ++t)
+    {
+        auto copy = track(t).createCopy();
+        const auto oldId = static_cast<juce::int64>(trackId(t));
+        reassignIds(copy);
+        renamed[oldId] = static_cast<juce::int64>(copy[ids::id]);
+        copy.setProperty(ids::arm, false, nullptr);
+        copy.setProperty(ids::solo, false, nullptr);
+        copies.push_back(copy);
+    }
+    copies.front().setProperty(ids::name, track(index)[ids::name].toString() + " copy", nullptr);
+    for (auto& copy : copies)
+        if (const auto it = renamed.find(static_cast<juce::int64>(copy.getProperty(ids::groupId, static_cast<juce::int64>(0))));
+            it != renamed.end())
+            copy.setProperty(ids::groupId, it->second, nullptr);
+    for (std::size_t i = 0; i < copies.size(); ++i)
+        tracksNode().addChild(copies[i], end + static_cast<int>(i), undo);
+    return end;
 }
 
 void LiveSet::moveTrack(int from, int to)
 {
     const int count = numTracks();
-    if (from >= 0 && from < count && to >= 0 && to < count && from != to)
-        tracksNode().moveChild(from, to, undo);
+    if (from < 0 || from >= count || to < 0 || to >= count || from == to)
+        return;
+    const int end = blockEnd(from);
+    if (to >= from && to < end)
+        return; // into itself
+    // Where the block goes: before track `to` when moving up, after it when moving down.
+    const int size = end - from;
+    int before = to < from ? to : to + 1;
+    if (to > from)
+        before = std::min(count, before); // counted with the block still in place
+    std::vector<juce::ValueTree> block;
+    for (int t = from; t < end; ++t)
+        block.push_back(track(t));
+    for (int t = end - 1; t >= from; --t)
+        tracksNode().removeChild(t, undo);
+    if (before > from)
+        before -= size;
+    // With the block out, the group a track inserted here would join.
+    const auto landed = groupAt(before);
+    for (int i = 0; i < size; ++i)
+        tracksNode().addChild(block[static_cast<std::size_t>(i)], before + i, undo);
+    if (landed != static_cast<juce::int64>(block.front().getProperty(ids::groupId, static_cast<juce::int64>(0))))
+        block.front().setProperty(ids::groupId, landed, undo);
+}
+
+bool LiveSet::isGroup(const juce::ValueTree& t)
+{
+    return t[ids::trackKind].toString() == "group";
+}
+
+bool LiveSet::isGroupTrack(int index) const
+{
+    return isGroup(track(index));
+}
+
+int LiveSet::parentGroupOf(int index) const
+{
+    const auto g = static_cast<juce::int64>(track(index).getProperty(ids::groupId, static_cast<juce::int64>(0)));
+    if (g == 0)
+        return -1;
+    for (int t = index - 1; t >= 0; --t)
+        if (trackId(t) == g)
+            return t;
+    return -1;
+}
+
+int LiveSet::groupDepth(int index) const
+{
+    int depth = 0;
+    for (int g = parentGroupOf(index); g >= 0; g = parentGroupOf(g))
+        ++depth;
+    return depth;
+}
+
+int LiveSet::blockEnd(int index) const
+{
+    const int count = numTracks();
+    if (index < 0 || index >= count)
+        return index + 1;
+    if (!isGroupTrack(index))
+        return index + 1;
+    // Everything after it that's deeper than it is inside it (members follow their group).
+    const int depth = groupDepth(index);
+    int end = index + 1;
+    while (end < count && groupDepth(end) > depth)
+        ++end;
+    return end;
+}
+
+std::vector<int> LiveSet::groupMembers(int groupIndex) const
+{
+    std::vector<int> out;
+    if (groupIndex < 0 || groupIndex >= numTracks() || !isGroupTrack(groupIndex))
+        return out;
+    const int end = blockEnd(groupIndex);
+    for (int t = groupIndex + 1; t < end; t = blockEnd(t))
+        out.push_back(t);
+    return out;
+}
+
+std::vector<int> LiveSet::groupLeaves(int groupIndex) const
+{
+    std::vector<int> out;
+    if (groupIndex < 0 || groupIndex >= numTracks() || !isGroupTrack(groupIndex))
+        return out;
+    for (int t = groupIndex + 1; t < blockEnd(groupIndex); ++t)
+        if (!isGroupTrack(t))
+            out.push_back(t);
+    return out;
+}
+
+int LiveSet::groupTracks(int first, int last)
+{
+    const int count = numTracks();
+    if (first < 0 || last >= count || first > last)
+        return -1;
+    // Whole blocks at one level: every block starting in the range ends inside it, and they all
+    // share the first track's group.
+    const auto parent = track(first).getProperty(ids::groupId, static_cast<juce::int64>(0));
+    for (int t = first; t <= last; t = blockEnd(t))
+        if (blockEnd(t) > last + 1 || track(t).getProperty(ids::groupId, static_cast<juce::int64>(0)) != parent)
+            return -1;
+
+    juce::ValueTree g(ids::track);
+    const auto id = static_cast<juce::int64>(allocateId());
+    g.setProperty(ids::id, id, nullptr);
+    g.setProperty(ids::trackKind, "group", nullptr);
+    g.setProperty(ids::name, "Group", nullptr);
+    g.setProperty(ids::colour, track(first)[ids::colour], nullptr);
+    g.setProperty(ids::volumeDb, 0.0, nullptr);
+    g.setProperty(ids::pan, 0.0, nullptr);
+    g.setProperty(ids::mute, false, nullptr);
+    g.setProperty(ids::solo, false, nullptr);
+    g.setProperty(ids::arm, false, nullptr);
+    if (static_cast<juce::int64>(parent) != 0)
+        g.setProperty(ids::groupId, parent, nullptr);
+    juce::ValueTree slotsNode(ids::slots);
+    for (int s = 0; s < numScenes(); ++s)
+        slotsNode.appendChild(makeSlot(), nullptr);
+    g.appendChild(slotsNode, nullptr);
+    g.appendChild(juce::ValueTree(ids::devices), nullptr);
+
+    std::vector<juce::ValueTree> tops;
+    for (int t = first; t <= last; t = blockEnd(t))
+        tops.push_back(track(t));
+    tracksNode().addChild(g, first, undo);
+    for (auto& t : tops)
+        t.setProperty(ids::groupId, id, undo);
+    return first;
+}
+
+void LiveSet::ungroup(int groupIndex)
+{
+    if (groupIndex < 0 || groupIndex >= numTracks() || !isGroupTrack(groupIndex))
+        return;
+    const auto parent = track(groupIndex).getProperty(ids::groupId, static_cast<juce::int64>(0));
+    for (const int m : groupMembers(groupIndex))
+        track(m).setProperty(ids::groupId, parent, undo);
+    tracksNode().removeChild(groupIndex, undo);
+}
+
+void LiveSet::setGroupFolded(int groupIndex, bool fold)
+{
+    if (groupIndex >= 0 && groupIndex < numTracks() && isGroupTrack(groupIndex))
+        track(groupIndex).setProperty(ids::folded, fold, nullptr);
 }
 
 void LiveSet::setTrackName(int index, const juce::String& newName)
@@ -697,6 +876,8 @@ void LiveSet::setTrackSolo(int index, bool shouldSolo, bool additive)
 
 void LiveSet::setTrackArm(int index, bool shouldArm, bool additive)
 {
+    if (shouldArm && isGroupTrack(index))
+        return; // nothing to play: a group has no instrument
     setExclusiveFlag(index, ids::arm, shouldArm, additive);
 }
 
@@ -839,8 +1020,8 @@ juce::ValueTree LiveSet::createClip(int trackIndex, int sceneIndex, double lengt
                                     const juce::String& clipName, bool undoable)
 {
     auto s = slot(trackIndex, sceneIndex);
-    if (!s.isValid())
-        return {};
+    if (!s.isValid() || isGroupTrack(trackIndex))
+        return {}; // a group track has no clips of its own
 
     lengthBeats = std::max(lengthBeats, minLoopLength);
     juce::ValueTree c(ids::clip);

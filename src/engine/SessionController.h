@@ -44,7 +44,9 @@ public:
     void flush() { builder.rebuildIfNeeded(); }
 
     // --- Engine commands --------------------------------------------------------------------------
-    /** Clicking a slot: launches its clip; on an empty slot, starts recording if the track is armed,
+    /** On a group track's slot: launches the clips in that row on every track in the group (and
+        stops those whose slot is empty). Otherwise, as clicking a slot: launches its clip; on an
+        empty slot, starts recording if the track is armed,
         otherwise presses the slot's stop button. Clicking a clip that is recording ends it. */
     void launchSlot(int trackIndex, int sceneIndex);
     /** Releasing a slot's launch button (Gate clips). */

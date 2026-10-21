@@ -12,8 +12,8 @@ namespace lattice::chains
 
     - a chain that carries MIDI (a track's, an Instrument or Drum Rack's chain) runs
       MIDI effects -> at most one instrument -> audio effects;
-    - an audio-only chain (a return's, the master's, an Audio Effect Rack's) holds audio effects
-      only;
+    - an audio-only chain (a group track's, a return's, the master's, an Audio Effect Rack's)
+      holds audio effects only;
     - an Instrument or Drum Rack counts as an instrument, an Audio Effect Rack as an audio effect;
     - racks nest at most RackDevice::maxDepth deep, and never inside themselves.
 
@@ -61,7 +61,7 @@ bool move(LiveSet& set, const juce::ValueTree& device, const juce::ValueTree& to
 // --- Sidechain --------------------------------------------------------------------------------------
 /** The tracks (by ID) a device may take its sidechain from: every track except its own and the
     ones that already listen to its own track, directly or through others (that would be a loop).
-    A device on a return or the master may listen to any track. */
+    A device on a return or the master may listen to any track. Group tracks are never sources. */
 std::vector<std::int64_t> sidechainSources(const LiveSet& set, const juce::ValueTree& device);
 /** Sets (or with trackId 0 clears) a device's sidechain source. Refuses a loop. */
 bool setSidechainSource(LiveSet& set, juce::ValueTree device, std::int64_t trackId, bool preFx);
