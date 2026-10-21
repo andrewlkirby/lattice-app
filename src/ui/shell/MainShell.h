@@ -83,6 +83,8 @@ public:
     static constexpr auto browserKey = "view.browser";
     static constexpr auto detailKey = "view.detail";
     static constexpr auto infoKey = "view.info";
+    static constexpr auto mixerKey = "view.mixer";
+    static constexpr auto sendsKey = "view.sends";
 
 private:
     /** A panel that a later phase fills, saying which. */

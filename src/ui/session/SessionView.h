@@ -3,6 +3,7 @@
 #include "engine/SessionController.h"
 #include "ui/commands/CommandRegistry.h"
 #include "ui/feed/EngineStateFeed.h"
+#include "ui/session/MixerStrip.h"
 #include "ui/session/SessionLayout.h"
 #include "ui/session/SessionSelectionModel.h"
 
@@ -23,9 +24,16 @@ namespace lattice::ui
       stops tracks, and Stop All every clip.
     - Right-clicking offers the commands for what was clicked.
 
-    It paints itself in one component, and repaints only what the engine state feed says changed
-    (plus the playing slots' progress and the queued slots' blinking). Tracks and slots scroll;
-    the headers, the stop row and the scene column stay in view. */
+    - The mixer sits at the bottom, a strip under each column and the master's under the scene
+      column. It scrolls sideways with the tracks but never out of view (the M3 hands-on checks
+      found the arm buttons and sends scrolled away below the grid). The mixer, and its sends,
+      can be hidden.
+
+    It paints itself in one component (the strips are children), and repaints only what the engine
+    state feed says changed (plus the playing slots' progress and the queued slots' blinking).
+    Tracks and slots scroll; the headers, the stop row, the mixer and the scene column stay in
+    view. A change to the set's structure (tracks, returns, scenes, groups, folding) rebuilds the
+    layout and the strips; anything else only repaints, so a fader being dragged stays put. */
 class SessionView final : public juce::Component,
                           private EngineStateFeed::Listener,
                           private SessionSelectionModel::Listener,
@@ -74,11 +82,23 @@ public:
     /** Renames what's selected (a prompt), for the Rename command. */
     void renameSelection();
 
+    /** Applies pending document changes now (normally the message loop does; tests call it). */
+    void flushUpdates() { handleUpdateNowIfNeeded(); }
+
+    void setMixerVisible(bool visible);
+    void setSendsVisible(bool visible);
+    bool isMixerVisible() const noexcept { return showMixer; }
+    bool areSendsVisible() const noexcept { return showSends; }
+    /** The strip under a column (or nullptr), and the master's. */
+    MixerStrip* stripForColumn(int column) const;
+    MixerStrip* masterStrip() const noexcept { return master.get(); }
+
     /** Screen areas (local coordinates). */
     juce::Rectangle<int> headerArea() const noexcept { return headers; }
     juce::Rectangle<int> slotsArea() const noexcept { return slots; }
     juce::Rectangle<int> stopArea() const noexcept { return stops; }
     juce::Rectangle<int> sceneColumn() const noexcept { return scenes; }
+    juce::Rectangle<int> mixerArea() const noexcept { return mixer; }
     /** A slot's rectangle on screen (local coordinates; may be outside the slots area). */
     juce::Rectangle<int> slotOnScreen(int column, int scene) const;
 
@@ -95,11 +115,17 @@ private:
     void valueTreePropertyChanged(juce::ValueTree&, const juce::Identifier&) override;
     void valueTreeChildAdded(juce::ValueTree&, juce::ValueTree&) override;
     void valueTreeChildRemoved(juce::ValueTree&, juce::ValueTree&, int) override;
-    void valueTreeChildOrderChanged(juce::ValueTree&, int, int) override { triggerAsyncUpdate(); }
+    void valueTreeChildOrderChanged(juce::ValueTree&, int, int) override
+    {
+        structureChanged = true;
+        triggerAsyncUpdate();
+    }
     void handleAsyncUpdate() override;
     void scrollBarMoved(juce::ScrollBar*, double) override;
 
     void rebuild();
+    void rebuildStrips();
+    void placeStrips();
     void updateScrollBars();
     bool blinkOn() const;
     void showMenu(const Hit& hit);
@@ -117,9 +143,14 @@ private:
     SessionLayout grid;
     float widthZoom = 1.0f, heightZoom = 1.0f;
     juce::Point<int> scroll;
-    juce::Rectangle<int> headers, slots, stops, scenes;
+    juce::Rectangle<int> headers, slots, stops, scenes, mixer;
     juce::ScrollBar vertical{true}, horizontal{false};
     Hit pressed;
+    bool structureChanged = true;
+    bool showMixer = true, showSends = true;
+    juce::Component stripArea; // clips the strips to the scrolling part
+    std::vector<std::unique_ptr<MixerStrip>> strips; // one per column
+    std::unique_ptr<MixerStrip> master;
 };
 
 /** Asks for a line of text without a modal loop; calls onOk with it if the user confirms, and only

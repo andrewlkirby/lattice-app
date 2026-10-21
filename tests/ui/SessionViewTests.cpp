@@ -8,6 +8,7 @@
 #include "ui/session/SessionView.h"
 #include "ui/theme/LatticeLookAndFeel.h"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 using namespace lattice;
@@ -27,7 +28,7 @@ struct Fixture
         addSessionCommands(commands, session, {[this] { return selection.get(); }, [this](SessionSelection s) { selection.set(s); }}, {});
         view = std::make_unique<SessionView>(session, feed, commands, selection);
         view->setLookAndFeel(&laf);
-        view->setSize(900, 400);
+        view->setSize(1000, 800);
     }
     ~Fixture() { view->setLookAndFeel(nullptr); }
 
@@ -209,4 +210,119 @@ TEST_CASE("Session view: a snapshot, for looking at", "[.ui-snapshot]")
     juce::FileOutputStream out(file);
     REQUIRE(png.writeImageToStream(image, out));
     WARN("Wrote " << file.getFullPathName());
+}
+
+TEST_CASE("Session view: a mixer strip under every column and the master's under the scenes", "[ui][session][mixer]")
+{
+    Fixture f(3);
+    auto& set = f.session.set();
+    set.groupTracks(0, 1);
+    f.rebuildNow();
+    const auto& columns = f.view->layout().columns();
+    for (int c = 0; c < static_cast<int>(columns.size()); ++c)
+    {
+        auto* strip = f.view->stripForColumn(c);
+        REQUIRE(strip != nullptr);
+        CHECK(strip->index() == columns[static_cast<std::size_t>(c)].index);
+        const bool isTrack = columns[static_cast<std::size_t>(c)].kind == SessionLayout::Column::Kind::track;
+        CHECK((strip->kind() == MixerStrip::Kind::track) == isTrack);
+        if (isTrack)
+        {
+            CHECK(static_cast<int>(strip->sendKnobs().size()) == set.numReturns());
+            CHECK((strip->armButton() == nullptr) == set.isGroupTrack(strip->index())); // no arm on a group
+        }
+        else
+            CHECK(strip->preFaderButton() != nullptr);
+    }
+    REQUIRE(f.view->masterStrip() != nullptr);
+    CHECK(f.view->masterStrip()->getX() >= f.view->sceneColumn().getX());
+
+    // Strips sit under their columns, and scroll with them.
+    auto* first = f.view->stripForColumn(1);
+    const int x = first->getScreenX();
+    f.view->setScrollPosition({40, 0});
+    if (f.view->scrollPosition().x > 0)
+        CHECK(first->getScreenX() == x - f.view->scrollPosition().x);
+}
+
+TEST_CASE("Session view: the mixer's controls write the set; a drag doesn't rebuild the strips", "[ui][session][mixer]")
+{
+    Fixture f(2);
+    auto& set = f.session.set();
+    f.rebuildNow();
+    auto* strip = f.view->stripForColumn(0);
+    REQUIRE(strip != nullptr);
+
+    strip->fader()->beginDrag();
+    strip->fader()->dragBy(-30.0f, false);
+    strip->fader()->endDrag();
+    const double db = set.track(0)[ids::volumeDb];
+    CHECK(db < 0.0);
+    CHECK(strip->volumeBox()->binding().value() == Catch::Approx(static_cast<float>(db)));
+    f.view->flushUpdates();
+    CHECK(f.view->stripForColumn(0) == strip); // a property change only repaints
+
+    strip->volumeBox()->commitTypeIn("-inf");
+    CHECK(static_cast<double>(set.track(0)[ids::volumeDb]) == LiveSet::minVolumeDb);
+    CHECK(strip->volumeBox()->binding().text() == "-inf dB");
+
+    // The activator is lit while the track is on.
+    CHECK(strip->activator()->isOn());
+    strip->activator()->binding()->setValue(0.0f);
+    CHECK(static_cast<bool>(set.track(0)[ids::mute]));
+    CHECK(!strip->activator()->isOn());
+
+    // A send shows its level in dB, and writes it.
+    REQUIRE(!strip->sendKnobs().empty());
+    auto& send = *strip->sendKnobs()[0];
+    CHECK(send.binding().text() == "-inf dB");
+    send.commitTypeIn("-12");
+    CHECK(set.sendLevel(0, 0) == Catch::Approx(-12.0));
+    CHECK(send.getTitle() == "Send to " + set.returnTrack(0)[ids::name].toString());
+
+    // A new track does rebuild them.
+    set.addTrack();
+    f.view->flushUpdates();
+    CHECK(f.view->stripForColumn(2) != nullptr);
+    CHECK(f.view->stripForColumn(2)->kind() == MixerStrip::Kind::track);
+}
+
+TEST_CASE("Session view: the mixer stays in view however many scenes; it and its sends can be hidden",
+          "[ui][session][mixer]")
+{
+    Fixture f(4, 64);
+    f.rebuildNow();
+    auto* strip = f.view->stripForColumn(0);
+    REQUIRE(strip != nullptr);
+    REQUIRE(strip->armButton() != nullptr);
+    const auto arm = strip->armButton()->getScreenBounds();
+    CHECK(f.view->getScreenBounds().contains(arm)); // with 64 scenes, the arm button still shows
+    f.selection.set({Kind::slot, 0, 63});
+    CHECK(f.view->getScreenBounds().contains(strip->armButton()->getScreenBounds()));
+
+    const int mixerHeight = f.view->mixerArea().getHeight();
+    f.view->setSendsVisible(false);
+    CHECK(f.view->mixerArea().getHeight() < mixerHeight);
+    CHECK(!strip->sendKnobs()[0]->isVisible());
+    f.view->setMixerVisible(false);
+    CHECK(f.view->mixerArea().getHeight() == 0);
+    CHECK(f.view->stripForColumn(0) == nullptr);
+}
+
+TEST_CASE("Session view: meters follow the engine", "[ui][session][mixer]")
+{
+    Fixture f(2);
+    auto& set = f.session.set();
+    auto chain = LiveSet::chainOf(set.track(0));
+    while (chain.getNumChildren() > 0)
+        set.removeDevice(chain.getChild(0));
+    set.insertDevice(chain, -1, TestRecorderDevice::typeId);
+    set.setTrackArm(0, true, false);
+    f.rebuildNow();
+    f.render(480);
+    f.engine.midiInput().push(juce::MidiMessage::noteOn(1, 60, static_cast<juce::uint8>(100)));
+    f.render(4800);
+    CHECK(f.view->stripForColumn(0)->fader()->meter().peakDb(0) > -60.0f);
+    CHECK(f.view->stripForColumn(1)->fader()->meter().peakDb(0) == Meter::floorDb);
+    CHECK(f.view->masterStrip()->fader()->meter().peakDb(0) > -60.0f);
 }

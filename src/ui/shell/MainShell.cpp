@@ -58,6 +58,8 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
     detail = std::make_unique<Placeholder>("Detail view", "The Clip view with the piano roll (4c) and the Device view with "
                                                           "device panels (4d). Shift+Tab will switch between them.");
     session_ = std::make_unique<SessionView>(session, stateFeed, registry, selected);
+    session_->setMixerVisible(settings.getBoolValue(mixerKey, true));
+    session_->setSendsVisible(settings.getBoolValue(sendsKey, true));
     arrangementPlaceholder = std::make_unique<Placeholder>("Arrangement", "After the MVP.");
     addChildComponent(*browser);
     addChildComponent(*detail);
@@ -128,6 +130,28 @@ void MainShell::addViewCommands()
                   .defaultKeys = {ctrlAlt('i')},
                   .perform = [this] { setInfoVisible(!showInfo); },
                   .isTicked = [this] { return showInfo; }});
+    registry.add({.id = "view.mixer",
+                  .name = "Show Mixer",
+                  .category = "View",
+                  .description = "Shows or hides the Session view's mixer.",
+                  .defaultKeys = {ctrlAlt('m')},
+                  .perform =
+                      [this] {
+                          session_->setMixerVisible(!session_->isMixerVisible());
+                          settings.setValue(mixerKey, session_->isMixerVisible());
+                      },
+                  .isTicked = [this] { return session_ != nullptr && session_->isMixerVisible(); }});
+    registry.add({.id = "view.sends",
+                  .name = "Show Sends",
+                  .category = "View",
+                  .description = "Shows or hides the sends in the Session view's mixer.",
+                  .defaultKeys = {ctrlAlt('s')},
+                  .perform =
+                      [this] {
+                          session_->setSendsVisible(!session_->areSendsVisible());
+                          settings.setValue(sendsKey, session_->areSendsVisible());
+                      },
+                  .isTicked = [this] { return session_ != nullptr && session_->areSendsVisible(); }});
     registry.add({.id = "view.resetLoad",
                   .name = "Reset Load Statistics",
                   .category = "View",

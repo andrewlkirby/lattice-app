@@ -62,14 +62,18 @@ SessionView::SessionView(SessionController& s, EngineStateFeed& f, CommandRegist
         bar->addListener(this);
         addAndMakeVisible(*bar);
     }
+    stripArea.setInterceptsMouseClicks(false, true);
+    addAndMakeVisible(stripArea);
     session.set().state().addListener(this);
     selection.addListener(this);
-    feed.addListener(this, EngineStateFeed::slotsAspect | EngineStateFeed::transportAspect);
+    feed.addListener(this, EngineStateFeed::slotsAspect | EngineStateFeed::transportAspect | EngineStateFeed::metersAspect);
     rebuild();
 }
 
 SessionView::~SessionView()
 {
+    strips.clear();
+    master.reset();
     feed.removeListener(this);
     selection.removeListener(this);
     session.set().state().removeListener(this);
@@ -88,8 +92,62 @@ void SessionView::rebuild()
 {
     const auto& t = themeOf(*this);
     grid.build(session.set(), SessionLayout::metricsFor(t.controlHeight, widthZoom, heightZoom));
+    rebuildStrips();
+    structureChanged = false;
     resized();
     repaint();
+}
+
+void SessionView::rebuildStrips()
+{
+    strips.clear();
+    master.reset();
+    if (!showMixer)
+        return;
+    for (const auto& col : grid.columns())
+    {
+        auto strip = std::make_unique<MixerStrip>(session,
+                                                  col.kind == SessionLayout::Column::Kind::track ? MixerStrip::Kind::track
+                                                                                                 : MixerStrip::Kind::returnTrack,
+                                                  col.index);
+        strip->setShowsSends(showSends);
+        stripArea.addAndMakeVisible(*strip);
+        strips.push_back(std::move(strip));
+    }
+    master = std::make_unique<MixerStrip>(session, MixerStrip::Kind::master, 0);
+    addAndMakeVisible(*master);
+}
+
+void SessionView::setMixerVisible(bool visible)
+{
+    if (visible == showMixer)
+        return;
+    showMixer = visible;
+    rebuild();
+}
+
+void SessionView::setSendsVisible(bool visible)
+{
+    if (visible == showSends)
+        return;
+    showSends = visible;
+    for (auto& s : strips)
+        s->setShowsSends(visible);
+    resized();
+}
+
+MixerStrip* SessionView::stripForColumn(int column) const
+{
+    return column >= 0 && column < static_cast<int>(strips.size()) ? strips[static_cast<std::size_t>(column)].get() : nullptr;
+}
+
+void SessionView::placeStrips()
+{
+    for (std::size_t c = 0; c < strips.size() && c < grid.columns().size(); ++c)
+    {
+        const auto& col = grid.columns()[c];
+        strips[c]->setBounds(col.x - scroll.x, 0, col.width, stripArea.getHeight());
+    }
 }
 
 void SessionView::resized()
@@ -98,12 +156,24 @@ void SessionView::resized()
     auto area = getLocalBounds();
     const int bar = juce::roundToInt(themeOf(*this).spacing * 3.0f);
     horizontal.setBounds(area.removeFromBottom(bar));
-    scenes = area.removeFromRight(juce::roundToInt(m.sceneWidth));
+    // The mixer: as tall as its strips want, but leaving the grid a few rows.
+    const int mixerHeight = showMixer ? juce::jmin(MixerStrip::heightFor(*this, session.set().numReturns(), showSends),
+                                                   juce::jmax(0, area.getHeight() - juce::roundToInt(m.headerHeight + m.stopRowHeight) -
+                                                                     3 * grid.rowHeight()))
+                                      : 0;
+    auto mixerRow = area.removeFromBottom(mixerHeight);
+    auto sceneSide = area.removeFromRight(juce::roundToInt(m.sceneWidth));
+    scenes = sceneSide;
     vertical.setBounds(area.removeFromRight(bar));
     headers = area.removeFromTop(juce::roundToInt(m.headerHeight));
     stops = area.removeFromBottom(juce::roundToInt(m.stopRowHeight));
     slots = area;
+    mixer = mixerRow;
+    stripArea.setBounds(mixerRow.withWidth(slots.getRight() - mixerRow.getX()).withX(slots.getX()));
+    if (master != nullptr)
+        master->setBounds(mixerRow.withX(sceneSide.getX()).withWidth(sceneSide.getWidth()));
     setScrollPosition(scroll); // clamps to the new sizes
+    placeStrips();
 }
 
 void SessionView::setScrollPosition(juce::Point<int> p)
@@ -114,6 +184,7 @@ void SessionView::setScrollPosition(juce::Point<int> p)
     if (p != scroll)
     {
         scroll = p;
+        placeStrips();
         repaint();
     }
     updateScrollBars();
@@ -397,6 +468,20 @@ void SessionView::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWhe
 void SessionView::engineStateChanged(std::uint32_t aspects)
 {
     const int numColumns = static_cast<int>(grid.columns().size());
+    if ((aspects & EngineStateFeed::metersAspect) != 0)
+    {
+        for (int c = 0; c < static_cast<int>(strips.size()) && c < numColumns; ++c)
+        {
+            const auto& col = grid.columns()[static_cast<std::size_t>(c)];
+            strips[static_cast<std::size_t>(c)]->showLevels(
+                col.kind == SessionLayout::Column::Kind::track ? feed.trackPeaks(col.index) : feed.returnPeaks(col.index),
+                feed.frameSeconds());
+        }
+        if (master != nullptr)
+            master->showLevels(feed.masterPeaks(), feed.frameSeconds());
+        if (aspects == EngineStateFeed::metersAspect)
+            return;
+    }
     if ((aspects & EngineStateFeed::slotsAspect) != 0)
         for (const auto& [track, scene] : feed.changedSlots())
             if (const int c = grid.columnOfTrack(track); c >= 0)
@@ -423,27 +508,49 @@ void SessionView::selectionChanged(const SessionSelection&)
     revealSelection();
 }
 
-void SessionView::valueTreePropertyChanged(juce::ValueTree& tree, const juce::Identifier&)
+namespace
 {
-    if (!insideDevice(tree))
-        triggerAsyncUpdate();
+/** Changes that move columns or rows: the layout and the strips are built again. */
+bool changesStructure(const juce::ValueTree& parent)
+{
+    return parent.hasType(ids::tracks) || parent.hasType(ids::returns) || parent.hasType(ids::scenes) ||
+           parent.hasType(ids::liveSet);
+}
+} // namespace
+
+void SessionView::valueTreePropertyChanged(juce::ValueTree& tree, const juce::Identifier& property)
+{
+    if (insideDevice(tree))
+        return;
+    if (property == ids::folded || property == ids::groupId || property == ids::trackKind)
+        structureChanged = true;
+    triggerAsyncUpdate();
 }
 
 void SessionView::valueTreeChildAdded(juce::ValueTree& parent, juce::ValueTree&)
 {
-    if (!insideDevice(parent))
-        triggerAsyncUpdate();
+    if (insideDevice(parent))
+        return;
+    if (changesStructure(parent))
+        structureChanged = true;
+    triggerAsyncUpdate();
 }
 
 void SessionView::valueTreeChildRemoved(juce::ValueTree& parent, juce::ValueTree&, int)
 {
-    if (!insideDevice(parent))
-        triggerAsyncUpdate();
+    if (insideDevice(parent))
+        return;
+    if (changesStructure(parent))
+        structureChanged = true;
+    triggerAsyncUpdate();
 }
 
 void SessionView::handleAsyncUpdate()
 {
-    rebuild();
+    if (structureChanged)
+        rebuild();
+    else
+        repaint(); // names, colours, clips, arm...: the strips follow the document by themselves
 }
 
 bool SessionView::blinkOn() const
@@ -473,6 +580,11 @@ void SessionView::paint(juce::Graphics& g)
         paintStops(g);
     }
     paintScenes(g);
+    if (showMixer)
+    {
+        g.setColour(t.border);
+        g.fillRect(mixer.withHeight(1));
+    }
 }
 
 void SessionView::paintHeaders(juce::Graphics& g)
