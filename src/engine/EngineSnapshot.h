@@ -31,6 +31,11 @@ struct TrackSnapshot
         track's groups stay audible). */
     bool solo = false;
     bool arm = false;
+    /** Live input: from which source (-1 every one; computerKeyboardSource or an input's number),
+        on which channel (0 every one), and when it's heard. */
+    int inputSource = -1;
+    int inputChannel = 0;
+    Monitoring monitoring = Monitoring::Auto;
     bool isGroup = false; // a group track: its chain's input is its members' mix
     int parent = -1;      // the index of the group track it mixes into, or -1 for the master
     /** Samples its sends wait (TrackProcessor::Sends::delay): the latency of its groups' chains. */

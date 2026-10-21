@@ -30,6 +30,7 @@ add_executable(lattice_tests
     devices/TuningTestSynthTests.cpp
     engine/AudioEngineTests.cpp
     engine/GroupTrackEngineTests.cpp
+    engine/LiveInputTests.cpp
     engine/MixerRoutingTests.cpp
     engine/ParallelProcessingTests.cpp
     engine/SessionEngineTests.cpp

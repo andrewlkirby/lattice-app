@@ -87,6 +87,8 @@ public:
 
     void setMixerVisible(bool visible);
     void setSendsVisible(bool visible);
+    void setIOVisible(bool visible);
+    bool isIOVisible() const noexcept { return showIO; }
     bool isMixerVisible() const noexcept { return showMixer; }
     bool areSendsVisible() const noexcept { return showSends; }
     /** The strip under a column (or nullptr), and the master's. */
@@ -147,7 +149,7 @@ private:
     juce::ScrollBar vertical{true}, horizontal{false};
     Hit pressed;
     bool structureChanged = true;
-    bool showMixer = true, showSends = true;
+    bool showMixer = true, showSends = true, showIO = true;
     juce::Component stripArea; // clips the strips to the scrolling part
     std::vector<std::unique_ptr<MixerStrip>> strips; // one per column
     std::unique_ptr<MixerStrip> master;

@@ -69,6 +69,9 @@ inline const juce::Identifier highNotePolicy{"highNotePolicy"};
 inline const juce::Identifier trackKind{"kind"};  // "group" for a group track; absent for a MIDI track
 inline const juce::Identifier groupId{"groupId"}; // the ID of the group track a track is in (0: none)
 inline const juce::Identifier folded{"folded"};   // a group track shown folded (not undoable)
+inline const juce::Identifier midiInput{"midiInput"};     // "" all inputs, "computer", or an input's identifier
+inline const juce::Identifier midiChannel{"midiChannel"}; // 0 all channels, or 1-16
+inline const juce::Identifier monitoring{"monitoring"};   // Monitoring
 
 // Return track (also id, name, colour, volumeDb, pan, mute, solo) and send
 inline const juce::Identifier preFader{"preFader"};
@@ -276,6 +279,13 @@ public:
     void setTrackTuning(int index, const juce::String& tuningId);
     void setTrackNoteOffset(int index, int offset);
     void setTrackHighNotePolicy(int index, int policy);
+    /** Where a track's live MIDI comes from: "" for every input, "computer" for the computer and
+        on-screen keyboards, or a MIDI input's identifier. */
+    void setTrackMidiInput(int index, const juce::String& input);
+    /** 0 for every channel, or 1-16. */
+    void setTrackMidiChannel(int index, int channel);
+    void setTrackMonitoring(int index, Monitoring monitoring);
+    static constexpr auto computerKeyboardInput = "computer";
 
     juce::ValueTree master() const;
     void setMasterVolumeDb(double db);

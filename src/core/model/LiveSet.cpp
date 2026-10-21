@@ -891,6 +891,21 @@ void LiveSet::setTrackNoteOffset(int index, int offset)
     track(index).setProperty(ids::noteOffset, juce::jlimit(-127, 127, offset), undo);
 }
 
+void LiveSet::setTrackMidiInput(int index, const juce::String& input)
+{
+    track(index).setProperty(ids::midiInput, input, undo);
+}
+
+void LiveSet::setTrackMidiChannel(int index, int channel)
+{
+    track(index).setProperty(ids::midiChannel, juce::jlimit(0, 16, channel), undo);
+}
+
+void LiveSet::setTrackMonitoring(int index, Monitoring m)
+{
+    track(index).setProperty(ids::monitoring, static_cast<int>(m), undo);
+}
+
 void LiveSet::setTrackHighNotePolicy(int index, int policy)
 {
     track(index).setProperty(ids::highNotePolicy, juce::jlimit(0, 1, policy), undo);

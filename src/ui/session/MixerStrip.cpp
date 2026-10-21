@@ -54,12 +54,66 @@ std::unique_ptr<Toggle> flagToggle(const juce::String& name, Toggle::Role role, 
 }
 } // namespace
 
+std::vector<MixerStrip::MidiInputInfo> MixerStrip::availableMidiInputs()
+{
+    std::vector<MidiInputInfo> out;
+    for (const auto& d : juce::MidiInput::getAvailableDevices())
+        out.push_back({d.identifier, d.name});
+    return out;
+}
+
 MixerStrip::MixerStrip(SessionController& s, Kind k, int i) : session(s), stripKind(k), stripIndex(i)
 {
     auto& set = session.set();
     auto* undo = &session.undoManager();
     const auto node = k == Kind::track ? set.track(i) : k == Kind::returnTrack ? set.returnTrack(i) : set.master();
     setTitle(k == Kind::master ? juce::String("Master") : node[ids::name].toString());
+
+    // I/O: a MIDI track's live input.
+    if (k == Kind::track && !set.isGroupTrack(i))
+    {
+        // The inputs offered: every one, the computer keyboard, each MIDI input, and the one the
+        // track names if it isn't connected now.
+        juce::StringArray inputIds{"", LiveSet::computerKeyboardInput}, names{"All Ins", "Computer Keyboard"};
+        for (const auto& d : availableMidiInputs())
+        {
+            inputIds.add(d.identifier);
+            names.add(d.name);
+        }
+        const auto current = node[ids::midiInput].toString();
+        if (!inputIds.contains(current))
+        {
+            inputIds.add(current);
+            names.add(current + " (not connected)");
+        }
+        input = std::make_unique<NumberBox>(std::make_unique<ValueBinding>(
+            ParameterSpec::choice("midiInput", "MIDI From", names, 0).inGroup("I/O"),
+            [node, inputIds] { return static_cast<double>(juce::jmax(0, inputIds.indexOf(node[ids::midiInput].toString()))); },
+            [&set, i, inputIds](double v) { set.setTrackMidiInput(i, inputIds[juce::jlimit(0, inputIds.size() - 1, juce::roundToInt(v))]); },
+            undo, node, [node](const juce::ValueTree& tree, const juce::Identifier& p) { return tree == node && p == ids::midiInput; }));
+        juce::StringArray channels{"All Channels"};
+        for (int ch = 1; ch <= 16; ++ch)
+            channels.add("Ch. " + juce::String(ch));
+        channel = std::make_unique<NumberBox>(ValueBinding::property(ParameterSpec::choice("midiChannel", "MIDI Channel", channels, 0).inGroup("I/O"),
+                                                                     undo, node, ids::midiChannel,
+                                                                     [&set, i](double v) { set.setTrackMidiChannel(i, juce::roundToInt(v)); }));
+        // Monitoring: three buttons; clicking the lit In or Off goes back to Auto.
+        const char* captions[] = {"Auto", "In", "Off"};
+        for (int m = 0; m < 3; ++m)
+        {
+            const auto mode = static_cast<Monitoring>(m);
+            auto binding = std::make_unique<ValueBinding>(
+                ParameterSpec::toggle("monitoring" + juce::String(captions[m]), juce::String("Monitor ") + captions[m], m == 0).inGroup("I/O"),
+                [node, m] { return static_cast<int>(node[ids::monitoring]) == m ? 1.0 : 0.0; },
+                [&set, i, mode](double v) { set.setTrackMonitoring(i, v > 0.5 ? mode : Monitoring::Auto); }, undo, node,
+                [node](const juce::ValueTree& tree, const juce::Identifier& p) { return tree == node && p == ids::monitoring; });
+            monitor[static_cast<std::size_t>(m)] = std::make_unique<Toggle>(std::move(binding), Toggle::Role::accent, captions[m]);
+        }
+        addAndMakeVisible(*input);
+        addAndMakeVisible(*channel);
+        for (auto& b : monitor)
+            addAndMakeVisible(*b);
+    }
 
     // Sends: a track's, to each return.
     if (k == Kind::track)
@@ -135,6 +189,17 @@ MixerStrip::MixerStrip(SessionController& s, Kind k, int i) : session(s), stripK
             addAndMakeVisible(*t);
 }
 
+void MixerStrip::setShowsIO(bool show)
+{
+    showIO = show;
+    for (juce::Component* c : {static_cast<juce::Component*>(input.get()), static_cast<juce::Component*>(channel.get()),
+                               static_cast<juce::Component*>(monitor[0].get()), static_cast<juce::Component*>(monitor[1].get()),
+                               static_cast<juce::Component*>(monitor[2].get())})
+        if (c != nullptr)
+            c->setVisible(show);
+    resized();
+}
+
 void MixerStrip::setShowsSends(bool show)
 {
     showSends = show;
@@ -152,11 +217,12 @@ void MixerStrip::showLevels(std::array<float, 2> peaks, double frameSeconds)
     meter.setLevels(1, peaks[1], peaks[1]);
 }
 
-int MixerStrip::heightFor(const juce::Component& themed, int numReturns, bool withSends)
+int MixerStrip::heightFor(const juce::Component& themed, int numReturns, bool withSends, bool withIO)
 {
     const auto& t = themeOf(themed);
     const float knob = t.controlHeight * 1.6f + 2.0f * (t.fontSmall + 4.0f) + t.spacing;
-    const float sendsHeight = withSends ? static_cast<float>(numReturns) * (knob * 0.75f) : 0.0f;
+    const float ioHeight = withIO ? 3.0f * (t.controlHeight + t.spacing) + t.spacing : 0.0f;
+    const float sendsHeight = ioHeight + (withSends ? static_cast<float>(numReturns) * (knob * 0.75f) : 0.0f);
     const float main = knob * 0.8f + t.controlHeight * 7.0f + t.controlHeight + t.spacing * 4.0f;
     return juce::roundToInt(sendsHeight + main + t.padding * 2.0f);
 }
@@ -169,6 +235,23 @@ void MixerStrip::resized()
     const int h = juce::roundToInt(t.controlHeight);
     const int knobHeight = juce::roundToInt(t.controlHeight * 1.6f + 2.0f * (t.fontSmall + 4.0f) + t.spacing);
 
+    if (showIO)
+    {
+        if (input != nullptr)
+        {
+            input->setBounds(area.removeFromTop(h));
+            area.removeFromTop(gap);
+            channel->setBounds(area.removeFromTop(h));
+            area.removeFromTop(gap);
+            auto row = area.removeFromTop(h);
+            const int third = row.getWidth() / 3;
+            for (auto& b : monitor)
+                b->setBounds(row.removeFromLeft(third).reduced(1, 0));
+        }
+        else
+            area.removeFromTop(3 * (h + gap) - gap); // keeps the strips lined up
+        area.removeFromTop(gap * 2);
+    }
     if (showSends)
         for (auto& s : sends)
             s->setBounds(area.removeFromTop(knobHeight * 3 / 4).withSizeKeepingCentre(juce::jmin(area.getWidth(), knobHeight), knobHeight * 3 / 4));

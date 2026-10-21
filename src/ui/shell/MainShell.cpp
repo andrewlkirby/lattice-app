@@ -60,6 +60,7 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
     session_ = std::make_unique<SessionView>(session, stateFeed, registry, selected);
     session_->setMixerVisible(settings.getBoolValue(mixerKey, true));
     session_->setSendsVisible(settings.getBoolValue(sendsKey, true));
+    session_->setIOVisible(settings.getBoolValue(ioKey, true));
     arrangementPlaceholder = std::make_unique<Placeholder>("Arrangement", "After the MVP.");
     addChildComponent(*browser);
     addChildComponent(*detail);
@@ -127,7 +128,7 @@ void MainShell::addViewCommands()
                   .name = "Show Info View",
                   .category = "View",
                   .description = "Shows or hides the info view, which describes what's under the pointer.",
-                  .defaultKeys = {ctrlAlt('i')},
+                  .defaultKeys = {KeyPress('/', ModifierKeys::shiftModifier, '?')}, // Shift+?, as in Live
                   .perform = [this] { setInfoVisible(!showInfo); },
                   .isTicked = [this] { return showInfo; }});
     registry.add({.id = "view.mixer",
@@ -141,6 +142,17 @@ void MainShell::addViewCommands()
                           settings.setValue(mixerKey, session_->isMixerVisible());
                       },
                   .isTicked = [this] { return session_ != nullptr && session_->isMixerVisible(); }});
+    registry.add({.id = "view.io",
+                  .name = "Show In/Out",
+                  .category = "View",
+                  .description = "Shows or hides the tracks' MIDI input, channel and monitoring in the Session view's mixer.",
+                  .defaultKeys = {ctrlAlt('i')},
+                  .perform =
+                      [this] {
+                          session_->setIOVisible(!session_->isIOVisible());
+                          settings.setValue(ioKey, session_->isIOVisible());
+                      },
+                  .isTicked = [this] { return session_ != nullptr && session_->isIOVisible(); }});
     registry.add({.id = "view.sends",
                   .name = "Show Sends",
                   .category = "View",

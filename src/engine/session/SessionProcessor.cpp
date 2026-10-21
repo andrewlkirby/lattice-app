@@ -701,15 +701,23 @@ void SessionProcessor::routeLiveInput(const EngineSnapshot& snapshot, const Time
 
     for (const auto& t : snapshot.tracks)
     {
-        if (!t.arm)
+        // Heard: monitoring In, or Auto while armed. Recorded: while armed, whatever the
+        // monitoring. Either way only what comes from the track's input and channel.
+        const bool hear = t.monitoring == Monitoring::In || (t.monitoring == Monitoring::Auto && t.arm);
+        if ((!hear && !t.arm) || t.isGroup)
             continue;
         auto& sink = t.processor->events();
         auto& st = t.processor->session();
         for (int i = 0; i < numInput; ++i)
         {
             const auto& e = input[i];
-            sink.add(sample, e);
-            if (st.captureClipId == 0 || e.size < 3)
+            if (t.inputSource >= 0 && e.source != t.inputSource)
+                continue;
+            if (t.inputChannel > 0 && e.size > 0 && (e.bytes[0] & 0xf0) != 0xf0 && (e.bytes[0] & 0x0f) + 1 != t.inputChannel)
+                continue;
+            if (hear)
+                sink.add(sample, e);
+            if (!t.arm || st.captureClipId == 0 || e.size < 3)
                 continue;
 
             const auto status = static_cast<std::uint8_t>(e.bytes[0] & statusMask);

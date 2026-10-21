@@ -6,7 +6,7 @@
 namespace lattice
 {
 
-bool MidiInputQueue::push(const juce::MidiMessage& message)
+bool MidiInputQueue::push(const juce::MidiMessage& message, std::uint8_t source)
 {
     RT_ASSERT_NOT_AUDIO_THREAD();
 
@@ -19,6 +19,7 @@ bool MidiInputQueue::push(const juce::MidiMessage& message)
 
     TimedMidi event;
     event.size = static_cast<std::uint8_t>(size);
+    event.source = source;
     std::copy_n(message.getRawData(), size, event.bytes);
 
     const double arrival = nowSeconds();

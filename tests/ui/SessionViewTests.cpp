@@ -326,3 +326,43 @@ TEST_CASE("Session view: meters follow the engine", "[ui][session][mixer]")
     CHECK(f.view->stripForColumn(1)->fader()->meter().peakDb(0) == Meter::floorDb);
     CHECK(f.view->masterStrip()->fader()->meter().peakDb(0) > -60.0f);
 }
+
+TEST_CASE("Session view: a track's I/O sets its MIDI input, channel and monitoring", "[ui][session][mixer]")
+{
+    Fixture f(2);
+    auto& set = f.session.set();
+    set.groupTracks(1, 1); // A G >B
+    f.rebuildNow();
+    auto* strip = f.view->stripForColumn(0);
+    REQUIRE(strip->inputBox() != nullptr);
+    CHECK(f.view->stripForColumn(1)->inputBox() == nullptr); // a group has no input
+
+    auto& in = strip->inputBox()->binding();
+    CHECK(in.text() == "All Ins");
+    strip->inputBox()->commitTypeIn("Computer Keyboard");
+    CHECK(set.track(0)[ids::midiInput].toString() == LiveSet::computerKeyboardInput);
+    f.session.undoManager().undo();
+    CHECK(set.track(0)[ids::midiInput].toString().isEmpty());
+
+    strip->channelBox()->commitTypeIn("Ch. 3");
+    CHECK(static_cast<int>(set.track(0)[ids::midiChannel]) == 3);
+
+    // Monitoring: one lit at a time; clicking the lit one goes back to Auto.
+    CHECK(strip->monitorButton(Monitoring::Auto)->isOn());
+    strip->monitorButton(Monitoring::In)->binding()->setValue(1.0f);
+    CHECK(static_cast<int>(set.track(0)[ids::monitoring]) == static_cast<int>(Monitoring::In));
+    CHECK(strip->monitorButton(Monitoring::In)->isOn());
+    CHECK(!strip->monitorButton(Monitoring::Auto)->isOn());
+    strip->monitorButton(Monitoring::In)->binding()->setValue(0.0f);
+    CHECK(static_cast<int>(set.track(0)[ids::monitoring]) == static_cast<int>(Monitoring::Auto));
+
+    // An input the track names but that isn't connected still shows.
+    set.setTrackMidiInput(0, "gone-device");
+    f.rebuildNow();
+    CHECK(f.view->stripForColumn(0)->inputBox()->binding().text() == "gone-device (not connected)");
+
+    const int height = f.view->mixerArea().getHeight();
+    f.view->setIOVisible(false);
+    CHECK(f.view->mixerArea().getHeight() < height);
+    CHECK(!f.view->stripForColumn(0)->inputBox()->isVisible());
+}

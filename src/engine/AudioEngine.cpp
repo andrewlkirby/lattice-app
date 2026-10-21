@@ -296,9 +296,20 @@ void AudioEngine::audioDeviceStopped()
 {
 }
 
-void AudioEngine::handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMessage& message)
+std::uint8_t AudioEngine::midiSourceFor(const juce::String& inputIdentifier)
 {
-    midiQueue.push(message);
+    const std::scoped_lock lock(midiSourcesLock);
+    if (const auto it = midiSources.find(inputIdentifier); it != midiSources.end())
+        return it->second;
+    // 255 inputs in one session is far beyond any setup; past it, they share the last number.
+    const auto next = static_cast<std::uint8_t>(juce::jmin<std::size_t>(255, midiSources.size() + 1));
+    midiSources[inputIdentifier] = next;
+    return next;
+}
+
+void AudioEngine::handleIncomingMidiMessage(juce::MidiInput* input, const juce::MidiMessage& message)
+{
+    midiQueue.push(message, input != nullptr ? midiSourceFor(input->getIdentifier()) : computerKeyboardSource);
 }
 
 } // namespace lattice

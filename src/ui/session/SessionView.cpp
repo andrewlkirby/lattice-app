@@ -111,10 +111,12 @@ void SessionView::rebuildStrips()
                                                                                                  : MixerStrip::Kind::returnTrack,
                                                   col.index);
         strip->setShowsSends(showSends);
+        strip->setShowsIO(showIO);
         stripArea.addAndMakeVisible(*strip);
         strips.push_back(std::move(strip));
     }
     master = std::make_unique<MixerStrip>(session, MixerStrip::Kind::master, 0);
+    master->setShowsIO(showIO);
     addAndMakeVisible(*master);
 }
 
@@ -133,6 +135,18 @@ void SessionView::setSendsVisible(bool visible)
     showSends = visible;
     for (auto& s : strips)
         s->setShowsSends(visible);
+    resized();
+}
+
+void SessionView::setIOVisible(bool visible)
+{
+    if (visible == showIO)
+        return;
+    showIO = visible;
+    for (auto& s : strips)
+        s->setShowsIO(visible);
+    if (master != nullptr)
+        master->setShowsIO(visible);
     resized();
 }
 
@@ -157,7 +171,7 @@ void SessionView::resized()
     const int bar = juce::roundToInt(themeOf(*this).spacing * 3.0f);
     horizontal.setBounds(area.removeFromBottom(bar));
     // The mixer: as tall as its strips want, but leaving the grid a few rows.
-    const int mixerHeight = showMixer ? juce::jmin(MixerStrip::heightFor(*this, session.set().numReturns(), showSends),
+    const int mixerHeight = showMixer ? juce::jmin(MixerStrip::heightFor(*this, session.set().numReturns(), showSends, showIO),
                                                    juce::jmax(0, area.getHeight() - juce::roundToInt(m.headerHeight + m.stopRowHeight) -
                                                                      3 * grid.rowHeight()))
                                       : 0;

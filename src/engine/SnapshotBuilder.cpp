@@ -421,6 +421,12 @@ void SnapshotBuilder::rebuildNow()
         ts.solo = trackNode[ids::solo];
         ts.arm = trackNode[ids::arm];
         ts.isGroup = LiveSet::isGroup(trackNode);
+        const auto input = trackNode[ids::midiInput].toString();
+        ts.inputSource = input.isEmpty() ? -1
+                         : input == LiveSet::computerKeyboardInput ? static_cast<int>(computerKeyboardSource)
+                                                                   : static_cast<int>(engine.midiSourceFor(input));
+        ts.inputChannel = juce::jlimit(0, 16, static_cast<int>(trackNode[ids::midiChannel]));
+        ts.monitoring = static_cast<Monitoring>(juce::jlimit(0, 2, static_cast<int>(trackNode[ids::monitoring])));
         ts.parent = set.parentGroupOf(t);
         snapshot->anySolo = snapshot->anySolo || ts.solo;
 

@@ -19,6 +19,7 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <map>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -47,6 +48,9 @@ public:
     /** Live MIDI to the armed tracks (any thread except the audio thread). Enabled MIDI input
         devices are routed here automatically. */
     MidiInputQueue& midiInput() noexcept { return midiQueue; }
+    /** The source number live MIDI from this input carries (by the input's identifier; 1 to 255,
+        given out on first use and kept for the session). Any thread except the audio thread. */
+    std::uint8_t midiSourceFor(const juce::String& inputIdentifier);
     AudioCallbackStats& callbackStats() noexcept { return stats; }
     /** Input latency probe: MIDI arrival to the end of the callback that plays it. */
     LatencyStats& inputLatency() noexcept { return latency; }
@@ -127,6 +131,9 @@ public:
 
 private:
     void handleIncomingMidiMessage(juce::MidiInput* source, const juce::MidiMessage& message) override;
+
+    std::mutex midiSourcesLock;
+    std::map<juce::String, std::uint8_t> midiSources;
 
     juce::String openDeviceNow(const juce::XmlElement* savedState);
     void waitForOpenThread();
