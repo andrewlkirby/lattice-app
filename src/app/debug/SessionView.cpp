@@ -261,6 +261,8 @@ void SessionView::setSelection(const Selection& s)
 void SessionView::selectionChanged()
 {
     content->sessionGrid().repaint();
+    if (onSelectionChanged)
+        onSelectionChanged();
     if (selected.track != lastSelectedTrack)
     {
         lastSelectedTrack = selected.track;

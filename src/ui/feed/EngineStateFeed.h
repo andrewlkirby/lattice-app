@@ -65,6 +65,8 @@ public:
     /** The time since the tick before (0 on the first): meters and blinking advance by it. */
     double frameSeconds() const noexcept { return lastFrameSeconds; }
     std::uint64_t ticks() const noexcept { return tickCount; }
+    /** The clock time of the last tick (blinking follows it). */
+    double now() const noexcept { return lastTickSeconds; }
     /** The time the ticks took since the last call (the shell adds it to the frame's work). */
     double takeTickWorkSeconds() noexcept { return std::exchange(tickWork, 0.0); }
 

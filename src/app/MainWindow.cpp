@@ -222,24 +222,6 @@ void DebugUiPanel::resized()
 
 // --- MainComponent -------------------------------------------------------------------------------------
 
-namespace
-{
-/** The shell's commands act on the debug session view's selection until the new Session view
-    (4b) has its own. */
-ui::SelectionAccess debugSelection(debugui::SessionView& view)
-{
-    using Kind = ui::SessionSelection::Kind;
-    return {[&view] {
-                const auto& s = view.selection();
-                return ui::SessionSelection{s.sceneColumn ? Kind::scene : Kind::slot, s.track, s.scene};
-            },
-            [&view](ui::SessionSelection s) {
-                // The debug view has no selected track header: a track selects its slot in the row.
-                view.setSelection({s.track, s.scene, s.kind == Kind::scene});
-            }};
-}
-} // namespace
-
 MainComponent::MainComponent(AudioEngine& engine, juce::PropertiesFile& settings, TuningRegistry& tunings,
                              SessionController& session, std::function<void()> firstPaint)
     : onFirstPaint(std::move(firstPaint)), debug(engine, settings, tunings, session)
@@ -254,8 +236,10 @@ MainComponent::MainComponent(AudioEngine& engine, juce::PropertiesFile& settings
     actions.saveSet = [&view] { view.saveSet(); };
     actions.saveSetAs = [&view] { view.saveSetAs(); };
     actions.importMidi = [&view] { view.importMidi(view.selection().track, view.selection().scene); };
-    mainShell = std::make_unique<ui::MainShell>(session, engine, settings, debugSelection(view), std::move(actions));
+    mainShell = std::make_unique<ui::MainShell>(session, engine, settings, std::move(actions));
     mainShell->setDebugUi(&debug);
+    mainShell->selection().addListener(this);
+    view.onSelectionChanged = [this] { debugSelectionChanged(); };
     mainShell->controlBar().setComputerKeyboard(&debug.playPanel().computerKeyboard());
     addAndMakeVisible(*mainShell);
 
@@ -264,7 +248,27 @@ MainComponent::MainComponent(AudioEngine& engine, juce::PropertiesFile& settings
 
 MainComponent::~MainComponent()
 {
+    debug.sessionView().onSelectionChanged = nullptr;
+    mainShell->selection().removeListener(this);
     mainShell.reset(); // before the debug UI it shows
+}
+
+void MainComponent::selectionChanged(const ui::SessionSelection& s)
+{
+    if (mirroring)
+        return;
+    const juce::ScopedValueSetter<bool> guard(mirroring, true);
+    // The debug view has no selected track header: a track selects its slot in the row.
+    debug.sessionView().setSelection({s.track, s.scene, s.kind == ui::SessionSelection::Kind::scene});
+}
+
+void MainComponent::debugSelectionChanged()
+{
+    if (mirroring)
+        return;
+    const juce::ScopedValueSetter<bool> guard(mirroring, true);
+    const auto& d = debug.sessionView().selection();
+    mainShell->selection().set({d.sceneColumn ? ui::SessionSelection::Kind::scene : ui::SessionSelection::Kind::slot, d.track, d.scene});
 }
 
 void MainComponent::paint(juce::Graphics& g)

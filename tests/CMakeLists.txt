@@ -42,6 +42,7 @@ add_executable(lattice_tests
     tuning/TrackTuningTests.cpp
     ui/CommandTests.cpp
     ui/FeedTests.cpp
+    ui/SessionViewTests.cpp
     ui/ShellTests.cpp
     ui/ThemeTests.cpp
     ui/WidgetTests.cpp)

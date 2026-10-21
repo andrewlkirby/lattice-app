@@ -80,7 +80,9 @@ private:
 
 /** The window's content: the M4 shell (ui::MainShell), with the debug UI in its Debug UI tab.
     Keys go to the shell's commands first; what no command takes plays the computer MIDI keyboard. */
-class MainComponent final : public juce::Component, public juce::DragAndDropContainer
+class MainComponent final : public juce::Component,
+                            public juce::DragAndDropContainer,
+                            private ui::SessionSelectionModel::Listener
 {
 public:
     MainComponent(AudioEngine& engine, juce::PropertiesFile& settings, TuningRegistry& tunings,
@@ -109,8 +111,13 @@ public:
     void releaseHeldKeys() { debug.playPanel().computerKeyboard().releaseAll(); }
 
 private:
+    /** The debug view (and its device editor) follows the shell's selection, and the other way. */
+    void selectionChanged(const ui::SessionSelection& now) override;
+    void debugSelectionChanged();
+
     std::function<void()> onFirstPaint;
     bool firstPaintDone = false;
+    bool mirroring = false;
 
     DebugUiPanel debug;
     std::unique_ptr<ui::MainShell> mainShell;

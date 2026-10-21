@@ -35,6 +35,8 @@ public:
     void setSelection(const Selection& s);
     /** Called when the selected track changes (the play panel follows it). */
     std::function<void()> onSelectedTrackChanged;
+    /** Called after any change of the selection (the M4 shell mirrors it). */
+    std::function<void()> onSelectionChanged;
 
     /** Handles the session shortcuts; returns false for keys it doesn't use. */
     bool handleKey(const juce::KeyPress& key);

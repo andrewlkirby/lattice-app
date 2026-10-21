@@ -224,6 +224,35 @@ void addSessionCommands(CommandRegistry& registry, SessionController& session, S
                           selection.set({Kind::track, set.addTrack(s.track + 1), s.scene});
                       },
                   .undoable = true});
+    registry.add({.id = "create.group",
+                  .name = "Group Tracks",
+                  .category = "Create",
+                  .description = "Puts the selected track (with everything in it, for a group) into a new group track.",
+                  .defaultKeys = {ctrl('g')},
+                  .perform =
+                      [&set, selection] {
+                          const auto s = selection.get();
+                          if (const int g = set.groupTracks(s.track, set.blockEnd(s.track) - 1); g >= 0)
+                              selection.set({Kind::track, g, s.scene});
+                      },
+                  .isEnabled = [&set, selected] { return selected().kind != Kind::scene && selected().track < set.numTracks(); },
+                  .undoable = true});
+    registry.add({.id = "edit.ungroup",
+                  .name = "Ungroup Tracks",
+                  .category = "Edit",
+                  .description = "Takes the tracks out of the selected group track, and deletes it.",
+                  .defaultKeys = {ctrlShift('g')},
+                  .perform =
+                      [&set, selection] {
+                          const auto s = selection.get();
+                          set.ungroup(s.track);
+                          selection.set({Kind::track, juce::jmin(s.track, set.numTracks() - 1), s.scene});
+                      },
+                  .isEnabled = [&set, selected] {
+                      const auto s = selected();
+                      return s.kind != Kind::scene && s.track < set.numTracks() && set.isGroupTrack(s.track);
+                  },
+                  .undoable = true});
     registry.add({.id = "create.scene",
                   .name = "Insert Scene",
                   .category = "Create",

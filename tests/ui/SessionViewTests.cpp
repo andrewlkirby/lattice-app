@@ -1,0 +1,212 @@
+// The Session view (docs/05-m4-ui.md, 4b), headless: its layout (folded groups hide their tracks,
+// returns follow the tracks), what a click hits, what clicks do (launching reaches the engine, a
+// Gate clip's release too), scrolling, and a snapshot.
+
+#include "support/OfflineRenderer.h"
+#include "support/TestDevices.h"
+#include "ui/commands/SessionCommands.h"
+#include "ui/session/SessionView.h"
+#include "ui/theme/LatticeLookAndFeel.h"
+
+#include <catch2/catch_test_macros.hpp>
+
+using namespace lattice;
+using namespace lattice::ui;
+using namespace lattice::test;
+using Area = SessionView::Hit::Area;
+using Kind = SessionSelection::Kind;
+
+namespace
+{
+struct Fixture
+{
+    explicit Fixture(int tracks = 4, int scenes = 4)
+    {
+        session.newSet(tracks, scenes);
+        session.flush();
+        addSessionCommands(commands, session, {[this] { return selection.get(); }, [this](SessionSelection s) { selection.set(s); }}, {});
+        view = std::make_unique<SessionView>(session, feed, commands, selection);
+        view->setLookAndFeel(&laf);
+        view->setSize(900, 400);
+    }
+    ~Fixture() { view->setLookAndFeel(nullptr); }
+
+    void render(std::int64_t samples)
+    {
+        session.flush();
+        renderer.renderFor(samples);
+        session.processEngineEvents();
+        now += 1.0 / 60.0;
+        feed.tick(now);
+    }
+    /** The centre of a slot's launch button, or its body, on screen. */
+    juce::Point<int> launchOf(int column, int scene) const
+    {
+        return view->layout().launchButton(view->slotOnScreen(column, scene)).getCentre();
+    }
+    juce::Point<int> bodyOf(int column, int scene) const
+    {
+        const auto r = view->slotOnScreen(column, scene);
+        return {r.getRight() - 4, r.getCentreY()};
+    }
+    void rebuildNow() { view->setZoom(1.0f, 1.0f); } // what the async rebuild does
+
+    TuningRegistry tunings;
+    AudioEngine engine;
+    SessionController session{engine, tunings, testRegistry()};
+    OfflineRenderer renderer{engine, BlockPattern::Fixed64};
+    EngineStateFeed feed{session, engine};
+    CommandRegistry commands{&session.undoManager()};
+    SessionSelectionModel selection;
+    LatticeLookAndFeel laf;
+    std::unique_ptr<SessionView> view;
+    double now = 3.0;
+};
+} // namespace
+
+TEST_CASE("Session view: a column per visible track, then the returns; a folded group hides its tracks",
+          "[ui][session]")
+{
+    Fixture f(4);
+    auto& set = f.session.set();
+    const auto returns = set.numReturns();
+    f.rebuildNow();
+    REQUIRE(f.view->layout().columns().size() == static_cast<std::size_t>(4 + returns));
+    CHECK(f.view->layout().columns()[4].kind == SessionLayout::Column::Kind::returnTrack);
+
+    set.groupTracks(1, 2); // A G >B >C D
+    f.rebuildNow();
+    CHECK(f.view->layout().columns().size() == static_cast<std::size_t>(5 + returns));
+    CHECK(f.view->layout().columns()[1].isGroup);
+    CHECK(f.view->layout().columns()[2].depth == 1);
+
+    set.setGroupFolded(1, true);
+    f.rebuildNow();
+    CHECK(f.view->layout().columns().size() == static_cast<std::size_t>(3 + returns));
+    CHECK(f.view->layout().columnOfTrack(2) == -1); // hidden
+    CHECK(f.view->layout().columnOfTrack(4) == 2);
+
+    // Zoom widens the columns and the rows.
+    const int w = f.view->layout().columns()[0].width, h = f.view->layout().rowHeight();
+    f.view->setZoom(2.0f, 1.5f);
+    CHECK(f.view->layout().columns()[0].width == 2 * w);
+    CHECK(f.view->layout().rowHeight() > h);
+}
+
+TEST_CASE("Session view: clicks hit headers, launch buttons, slots, stop buttons and scenes", "[ui][session]")
+{
+    Fixture f;
+    const auto header = f.view->headerArea();
+    const auto stops = f.view->stopArea();
+    const auto scenes = f.view->sceneColumn();
+    CHECK(f.view->hitAt({header.getX() + 30, header.getCentreY()}).area == Area::header);
+    CHECK(f.view->hitAt(f.launchOf(1, 2)).area == Area::launch);
+    const auto body = f.view->hitAt(f.bodyOf(1, 2));
+    CHECK(body.area == Area::slot);
+    CHECK(body.column == 1);
+    CHECK(body.scene == 2);
+    CHECK(f.view->hitAt({f.view->slotOnScreen(2, 0).getCentreX(), stops.getCentreY()}).area == Area::stop);
+    const int sceneRow = f.view->slotOnScreen(0, 3).getCentreY();
+    CHECK(f.view->hitAt({scenes.getX() + 5, sceneRow}).area == Area::sceneLaunch);
+    CHECK(f.view->hitAt({scenes.getRight() - 5, sceneRow}).area == Area::scene);
+    CHECK(f.view->hitAt({scenes.getCentreX(), stops.getCentreY()}).area == Area::stopAll);
+}
+
+TEST_CASE("Session view: a launch button launches (a Gate clip until released); the body selects",
+          "[ui][session]")
+{
+    Fixture f;
+    auto& set = f.session.set();
+    auto clip = set.createClip(1, 0, 4.0);
+    clip.setProperty(ids::launchMode, static_cast<int>(LaunchMode::Gate), nullptr);
+    f.render(480);
+
+    f.view->press(f.view->hitAt(f.bodyOf(1, 0)));
+    CHECK(f.selection.get() == SessionSelection{Kind::slot, 1, 0});
+    f.view->release();
+    f.render(48000 * 3);
+    CHECK(f.session.slotState(1, 0) == SlotState::Stopped); // selecting doesn't launch
+
+    f.view->press(f.view->hitAt(f.launchOf(1, 0)));
+    f.render(48000 * 3);
+    CHECK(f.session.slotState(1, 0) == SlotState::Playing);
+    f.view->release(); // a Gate clip stops when its button is let go
+    f.render(4800);
+    CHECK(f.session.slotState(1, 0) != SlotState::Playing);
+}
+
+TEST_CASE("Session view: double-clicks create clips and rename; the fold button folds; Stop All stops",
+          "[ui][session]")
+{
+    Fixture f;
+    auto& set = f.session.set();
+    f.view->doubleClick(f.view->hitAt(f.bodyOf(2, 1)));
+    CHECK(set.clip(2, 1).isValid());
+    CHECK(f.selection.get() == SessionSelection{Kind::slot, 2, 1});
+    f.session.undoManager().undo();
+    CHECK(!set.clip(2, 1).isValid());
+
+    set.groupTracks(0, 1);
+    f.rebuildNow();
+    const auto fold = f.view->layout().foldButton(0).translated(f.view->slotsArea().getX(), f.view->headerArea().getY()).getCentre();
+    REQUIRE(f.view->hitAt(fold).area == Area::fold);
+    f.view->press(f.view->hitAt(fold));
+    CHECK(static_cast<bool>(set.track(0)[ids::folded]));
+    f.rebuildNow();
+    CHECK(f.view->layout().columnOfTrack(1) == -1);
+
+    set.createClip(4, 0, 4.0);
+    f.session.launchSlot(4, 0);
+    f.render(48000 * 3);
+    REQUIRE(f.session.slotState(4, 0) == SlotState::Playing);
+    const auto stopAll = juce::Point<int>(f.view->sceneColumn().getCentreX(), f.view->stopArea().getCentreY());
+    f.view->press(f.view->hitAt(stopAll));
+    f.render(48000 * 3);
+    CHECK(f.session.slotState(4, 0) == SlotState::Stopped);
+}
+
+TEST_CASE("Session view: the selection stays in view as it moves", "[ui][session]")
+{
+    Fixture f(20, 40);
+    f.rebuildNow();
+    CHECK(f.view->scrollPosition() == juce::Point<int>());
+    f.selection.set({Kind::slot, 19, 39});
+    const auto r = f.view->slotOnScreen(f.view->layout().columnOfTrack(19), 39);
+    CHECK(f.view->slotsArea().contains(r));
+    CHECK(f.view->scrollPosition().x > 0);
+    CHECK(f.view->scrollPosition().y > 0);
+    f.view->setScrollPosition({-50, 1000000}); // clamped
+    CHECK(f.view->scrollPosition().x == 0);
+    CHECK(f.view->scrollPosition().y == f.view->layout().rowsHeight() - f.view->slotsArea().getHeight());
+}
+
+TEST_CASE("Session view: a snapshot, for looking at", "[.ui-snapshot]")
+{
+    Fixture f(6, 6);
+    auto& set = f.session.set();
+    for (const auto& [t, s] : {std::pair{0, 0}, {0, 1}, {1, 0}, {3, 2}, {4, 0}})
+    {
+        auto c = set.createClip(t, s, 4.0);
+        c.setProperty(ids::name, "Clip " + juce::String(t + 1) + "-" + juce::String(s + 1), nullptr);
+    }
+    set.groupTracks(3, 4);
+    set.setTrackArm(2, true, false);
+    set.setSceneName(0, "Intro");
+    set.setSceneTempo(1, 98.0);
+    f.rebuildNow();
+    f.session.launchSlot(0, 0);
+    f.session.launchSlot(1, 0);
+    f.render(48000 * 3);
+    f.session.launchSlot(0, 1);
+    f.render(4800);
+    f.selection.set({Kind::slot, 1, 0});
+    const auto dir = juce::File(juce::SystemStats::getEnvironmentVariable(
+        "LATTICE_SNAPSHOT_DIR", juce::File::getSpecialLocation(juce::File::tempDirectory).getFullPathName()));
+    const auto image = f.view->createComponentSnapshot(f.view->getLocalBounds(), true, 1.0f);
+    juce::PNGImageFormat png;
+    const auto file = dir.getChildFile("session-view.png");
+    file.deleteFile();
+    juce::FileOutputStream out(file);
+    REQUIRE(png.writeImageToStream(image, out));
+    WARN("Wrote " << file.getFullPathName());
+}

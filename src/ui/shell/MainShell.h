@@ -2,6 +2,8 @@
 
 #include "core/JobPool.h"
 #include "ui/commands/SessionCommands.h"
+#include "ui/session/SessionSelectionModel.h"
+#include "ui/session/SessionView.h"
 #include "ui/feed/EngineStateFeed.h"
 #include "ui/shell/CommandMenus.h"
 #include "ui/shell/ControlBar.h"
@@ -31,8 +33,8 @@ class MainShell final : public juce::Component,
                         private juce::AsyncUpdater
 {
 public:
-    MainShell(SessionController& session, AudioEngine& engine, juce::PropertiesFile& settings, SelectionAccess selection,
-              ShellActions actions);
+    /** actions: the dialogs the window provides (a missing rename is the Session view's prompt). */
+    MainShell(SessionController& session, AudioEngine& engine, juce::PropertiesFile& settings, ShellActions actions);
     ~MainShell() override;
 
     CommandRegistry& commands() noexcept { return registry; }
@@ -46,8 +48,11 @@ public:
     InfoView& infoView() noexcept { return info; }
     StatusBar& statusBar() noexcept { return *status; }
     juce::TabbedComponent& mainArea() noexcept { return tabs; }
+    /** What's selected in the Session view; the commands act on it. */
+    SessionSelectionModel& selection() noexcept { return selected; }
+    SessionView& sessionView() noexcept { return *session_; }
 
-    /** The old views, in a "Debug UI" tab (shown first until the new Session view exists). */
+    /** The old views, in a "Debug UI" tab, until the new ones cover everything they do. */
     void setDebugUi(juce::Component* debugUi);
 
     void setTheme(const Theme& theme);
@@ -96,13 +101,15 @@ private:
     juce::PropertiesFile& settings;
     LatticeLookAndFeel lookAndFeel;
     CommandRegistry registry;
+    SessionSelectionModel selected;
     ControlRegistry controls; // before the views, so it outlives their widgets
     EngineStateFeed stateFeed;
     JobPool jobPool;
 
     std::unique_ptr<CommandMenus> menuModel;
     std::unique_ptr<ControlBar> bar;
-    std::unique_ptr<Placeholder> browser, detail, sessionPlaceholder, arrangementPlaceholder;
+    std::unique_ptr<Placeholder> browser, detail, arrangementPlaceholder;
+    std::unique_ptr<SessionView> session_;
     juce::TabbedComponent tabs{juce::TabbedButtonBar::TabsAtTop};
     InfoView info;
     std::unique_ptr<StatusBar> status;

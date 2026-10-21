@@ -28,9 +28,7 @@ struct Fixture
         settings = std::make_unique<juce::PropertiesFile>(settingsFile, options);
         session.newSet(2, 2);
         session.flush();
-        shell = std::make_unique<MainShell>(session, engine, *settings,
-                                            SelectionAccess{[this] { return selection; }, [this](SessionSelection s) { selection = s; }},
-                                            ShellActions{});
+        shell = std::make_unique<MainShell>(session, engine, *settings, ShellActions{});
         shell->setSize(1280, 900);
     }
     ~Fixture()
@@ -59,7 +57,6 @@ struct Fixture
     OfflineRenderer renderer{engine, BlockPattern::Fixed64};
     juce::File settingsFile;
     std::unique_ptr<juce::PropertiesFile> settings;
-    SessionSelection selection;
     std::unique_ptr<MainShell> shell;
     double now = 5.0;
 };
@@ -109,10 +106,11 @@ TEST_CASE("Shell: the control bar, main area, info view and status bar are laid 
     CHECK(!shell.infoView().isVisible());
     CHECK(shell.commands().find("view.browser")->isTicked());
 
-    // A debug UI tab goes last and is shown.
+    // A debug UI tab goes last; the Session view stays in front.
     juce::Component debugUi;
     shell.setDebugUi(&debugUi);
-    CHECK(shell.mainArea().getCurrentTabName() == "Debug UI");
+    CHECK(shell.mainArea().getTabNames()[2] == "Debug UI");
+    CHECK(shell.mainArea().getCurrentTabName() == "Session");
     CHECK(shell.commands().conflicts().empty()); // the view commands too
 }
 
@@ -125,7 +123,7 @@ TEST_CASE("Shell: keys reach the commands through the key mappings", "[ui][shell
     CHECK(f.press(juce::KeyPress('z', juce::ModifierKeys::commandModifier, 0)));
     CHECK(f.session.set().numTracks() == tracks);
     CHECK(f.press(juce::KeyPress(juce::KeyPress::downKey)));
-    CHECK(f.selection.scene == 1);
+    CHECK(f.shell->selection().get().scene == 1);
     // Letters are left for the computer keyboard.
     CHECK(!f.press(juce::KeyPress('a')));
 }

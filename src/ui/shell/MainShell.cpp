@@ -30,15 +30,20 @@ private:
     juce::String title, message;
 };
 
-MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile& settingsFile, SelectionAccess selection,
-                     ShellActions actions)
+MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile& settingsFile, ShellActions actions)
     : session(s), engine(e), settings(settingsFile), registry(&s.undoManager()), stateFeed(s, e)
 {
     setLookAndFeel(&lookAndFeel);
     if (const auto* saved = Theme::builtIn(settings.getValue(themeKey, "Dark")))
         lookAndFeel.setTheme(*saved);
 
-    addSessionCommands(registry, session, std::move(selection), std::move(actions));
+    if (!actions.rename)
+        actions.rename = [this] {
+            if (session_ != nullptr)
+                session_->renameSelection();
+        };
+    addSessionCommands(registry, session, {[this] { return selected.get(); }, [this](SessionSelection sel) { selected.set(sel); }},
+                       std::move(actions));
     addViewCommands();
     addKeyListener(&registry.keyMappings());
     menuModel = std::make_unique<CommandMenus>(registry);
@@ -52,8 +57,7 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
                                                        "device list is in the Debug UI tab.");
     detail = std::make_unique<Placeholder>("Detail view", "The Clip view with the piano roll (4c) and the Device view with "
                                                           "device panels (4d). Shift+Tab will switch between them.");
-    sessionPlaceholder = std::make_unique<Placeholder>(
-        "Session", "The new Session view and mixer arrive in 4b. Until then, the Debug UI tab has every feature.");
+    session_ = std::make_unique<SessionView>(session, stateFeed, registry, selected);
     arrangementPlaceholder = std::make_unique<Placeholder>("Arrangement", "After the MVP.");
     addChildComponent(*browser);
     addChildComponent(*detail);
@@ -61,7 +65,7 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
     tabs.setWantsKeyboardFocus(false);
     tabs.getTabbedButtonBar().setWantsKeyboardFocus(false);
     tabs.setOutline(0);
-    tabs.addTab("Session", lookAndFeel.theme().background, sessionPlaceholder.get(), false);
+    tabs.addTab("Session", lookAndFeel.theme().background, session_.get(), false);
     tabs.addTab("Arrangement", lookAndFeel.theme().background, arrangementPlaceholder.get(), false);
     if (auto* arrangement = tabs.getTabbedButtonBar().getTabButton(1))
         arrangement->setEnabled(false);
@@ -92,6 +96,7 @@ MainShell::~MainShell()
     stateFeed.detach();
     removeKeyListener(&registry.keyMappings());
     tabs.clearTabs();
+    session_.reset();
     bar.reset();
     menuModel.reset();
     setLookAndFeel(nullptr);
@@ -145,7 +150,6 @@ void MainShell::setDebugUi(juce::Component* debugUi)
     if (debugUi == nullptr)
         return;
     tabs.addTab("Debug UI", lookAndFeel.theme().background, debugUi, false);
-    tabs.setCurrentTabIndex(tabs.getNumTabs() - 1);
 }
 
 void MainShell::setTheme(const Theme& t)
