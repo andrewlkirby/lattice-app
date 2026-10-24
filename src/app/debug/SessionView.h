@@ -31,6 +31,11 @@ public:
     ~SessionView() override;
 
     const Selection& selection() const noexcept { return selected; }
+    /** The device editor, and showing a chain in it (what clicking a strip does; tests too). */
+    DetailView& detailView() noexcept { return detail; }
+    void showChainOf(ChainOwner owner) { showChain(owner); }
+    /** What the refresh timer does, now (tests). */
+    void flushForTests() { timerCallback(); }
     /** Selects a slot or a scene (clamped to the set), as clicking it would. */
     void setSelection(const Selection& s);
     /** Called when the selected track changes (the play panel follows it). */

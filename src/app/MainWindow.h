@@ -102,6 +102,7 @@ public:
 
     debugui::SessionView& sessionView() noexcept { return debug.sessionView(); }
     ui::MainShell& shell() noexcept { return *mainShell; }
+    DebugUiPanel& debugUi() noexcept { return debug; }
 
     void paint(juce::Graphics& g) override;
     void resized() override;

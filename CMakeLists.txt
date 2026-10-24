@@ -299,6 +299,21 @@ target_include_directories(lattice_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(lattice_ui PUBLIC lattice_core)
 lattice_set_warnings(lattice_ui)
 
+# --- The window's content (M4): a library, so the tests can drive the whole app headless ----------
+add_library(lattice_app STATIC
+    src/app/MainWindow.cpp
+    src/app/PlayPanel.cpp)
+target_include_directories(lattice_app PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(lattice_app PUBLIC lattice_core lattice_debug_ui lattice_ui)
+if(LATTICE_RT_CHECKS STREQUAL "ON")
+    target_compile_definitions(lattice_app PRIVATE LATTICE_RT_CHECKS_ENABLED=1)
+elseif(LATTICE_RT_CHECKS STREQUAL "AUTO")
+    target_compile_definitions(lattice_app PRIVATE LATTICE_RT_CHECKS_ENABLED=$<CONFIG:Debug>)
+else()
+    target_compile_definitions(lattice_app PRIVATE LATTICE_RT_CHECKS_ENABLED=0)
+endif()
+lattice_set_warnings(lattice_app)
+
 # --- App -----------------------------------------------------------------------------------------
 if(LATTICE_BUILD_APP)
     juce_add_gui_app(Lattice
@@ -308,13 +323,11 @@ if(LATTICE_BUILD_APP)
         VERSION ${PROJECT_VERSION})
     target_sources(Lattice PRIVATE
         src/app/Main.cpp
-        src/app/MainWindow.cpp
-        src/app/PlayPanel.cpp
         src/app/SoakTest.cpp)
     target_compile_definitions(Lattice PRIVATE
         JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:Lattice,JUCE_PRODUCT_NAME>"
         JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:Lattice,JUCE_VERSION>")
-    target_link_libraries(Lattice PRIVATE lattice_core lattice_debug_ui lattice_ui)
+    target_link_libraries(Lattice PRIVATE lattice_app)
     if(LATTICE_RT_CHECKS STREQUAL "ON")
         target_link_libraries(Lattice PRIVATE lattice_alloc_hooks)
         target_compile_definitions(Lattice PRIVATE LATTICE_RT_CHECKS_ENABLED=1)
