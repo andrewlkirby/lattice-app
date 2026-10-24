@@ -78,6 +78,9 @@ public:
     };
     Hit hitAt(juce::Point<int> local) const;
 
+    /** What a right-click selects before its menu opens: what was clicked, unless it's inside the
+        selection, which then stays. */
+    void selectForMenu(const Hit& hit);
     /** What a click, its release and a double-click do (the mouse handlers call these; tests too).
         Shift extends the selection to what was clicked. */
     void press(const Hit& hit, juce::ModifierKeys mods = {});

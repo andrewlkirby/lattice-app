@@ -512,3 +512,32 @@ TEST_CASE("Session view: the computer keyboard follows a Drum Rack's pads, and c
     racks::addDrumPad(set, rack, 70); // lowest pad now 55: the page from 52
     CHECK(drumPadPageStart(set, 1) == 52);
 }
+
+TEST_CASE("Session view: a header Shift+clicked to another groups both, from the keys or the right-click menu", "[ui][session][editing]")
+{
+    Fixture f(4, 2);
+    auto& set = f.session.set();
+    f.rebuildNow();
+    const auto header = [&](int column) {
+        const auto& c = f.view->layout().columns()[static_cast<std::size_t>(column)];
+        return f.view->hitAt({f.view->slotOnScreen(column, 0).getX() + c.width / 3, f.view->slotOnScreen(column, 0).getY() - 6});
+    };
+    f.view->press(header(1));
+    f.view->release();
+    f.view->press(header(2), juce::ModifierKeys::shiftModifier);
+    f.view->release();
+    CHECK(f.selection.get() == SessionSelection{Kind::track, 1, 0, 2, -1});
+    // A right-click inside the range keeps it, so the menu's Group Tracks takes both (the M4 4b
+    // hands-on checks: it grouped only the track clicked); outside, it selects what was clicked.
+    f.view->selectForMenu(header(2));
+    CHECK(f.selection.get() == SessionSelection{Kind::track, 1, 0, 2, -1});
+    f.view->selectForMenu(f.view->hitAt(f.bodyOf(2, 1)));
+    CHECK(f.selection.get() == SessionSelection{Kind::slot, 2, 1});
+    f.view->selectForMenu(header(1));
+    CHECK(f.selection.get() == SessionSelection{Kind::track, 1, 1});
+    f.view->press(header(2), juce::ModifierKeys::shiftModifier);
+    f.view->release();
+    REQUIRE(f.commands.perform("create.group"));
+    REQUIRE(set.isGroupTrack(1));
+    CHECK(set.groupMembers(1).size() == 2);
+}

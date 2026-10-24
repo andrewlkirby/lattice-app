@@ -580,12 +580,41 @@ void SessionView::renameSelection()
     });
 }
 
+void SessionView::selectForMenu(const Hit& hit)
+{
+    // A right-click inside the selection keeps it (the menu's commands act on all of it, as in
+    // Live); anywhere else it selects what was clicked.
+    const int track = trackOf(hit.column);
+    const auto current = selection.get();
+    switch (hit.area)
+    {
+    case Area::launch:
+    case Area::slot:
+        if (track >= 0 && !current.containsSlot(track, hit.scene))
+            selection.set({Kind::slot, track, hit.scene});
+        break;
+    case Area::header:
+    case Area::fold:
+        if (track >= 0 && (current.kind != Kind::track || !current.containsTrack(track)))
+            selection.set({Kind::track, track, current.scene});
+        break;
+    case Area::scene:
+    case Area::sceneLaunch:
+        if (current.kind != Kind::scene || !current.containsScene(hit.scene))
+            selection.set({Kind::scene, current.track, hit.scene});
+        break;
+    default:
+        break;
+    }
+}
+
 void SessionView::showMenu(const Hit& hit)
 {
     auto& manager = commands.manager();
     const auto add = [&](juce::PopupMenu& menu, const char* id) { menu.addCommandItem(&manager, commands.numericIdOf(id)); };
     juce::PopupMenu menu;
     const int track = trackOf(hit.column);
+    selectForMenu(hit);
     switch (hit.area)
     {
     case Area::launch:
@@ -593,7 +622,6 @@ void SessionView::showMenu(const Hit& hit)
     {
         if (track < 0)
             return;
-        selection.set({Kind::slot, track, hit.scene});
         for (const auto* id : {"create.midiClip", "file.importMidi", "edit.duplicate", "edit.delete", "edit.rename"})
             add(menu, id);
         menu.addSeparator();
@@ -609,13 +637,11 @@ void SessionView::showMenu(const Hit& hit)
     case Area::fold:
         if (track < 0)
             return;
-        selection.set({Kind::track, track, selection.get().scene});
         for (const auto* id : {"create.midiTrack", "create.group", "edit.ungroup", "edit.duplicate", "edit.delete", "edit.rename"})
             add(menu, id);
         break;
     case Area::scene:
     case Area::sceneLaunch:
-        selection.set({Kind::scene, selection.get().track, hit.scene});
         for (const auto* id : {"session.launch", "create.scene", "edit.duplicate", "edit.delete", "edit.rename"})
             add(menu, id);
         break;
