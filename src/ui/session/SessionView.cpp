@@ -840,11 +840,32 @@ void SessionView::paintHeaders(juce::Graphics& g)
         const bool isTrack = col.kind == SessionLayout::Column::Kind::track;
         const auto node = isTrack ? set.track(col.index) : set.returnTrack(col.index);
         const bool selected = isTrack && sel.kind == Kind::track && sel.containsTrack(col.index);
-        g.setColour(selected ? t.surfaceRaised.brighter(0.1f) : col.isGroup ? t.surfaceRaised : t.surface);
-        g.fillRect(r.reduced(1, 0));
+        // The groups it's in, outermost first.
+        std::vector<int> groups;
+        if (isTrack)
+            for (int p = set.parentGroupOf(col.index); p >= 0; p = set.parentGroupOf(p))
+                groups.insert(groups.begin(), p);
+        // The background: inside a group (or for a group itself) it's tinted with the innermost
+        // group's colour, edge to edge, so a group and its tracks read as one block.
+        const int tintGroup = col.isGroup ? col.index : groups.empty() ? -1 : groups.back();
+        auto background = selected ? t.surfaceRaised.brighter(0.1f) : col.isGroup ? t.surfaceRaised : t.surface;
+        if (tintGroup >= 0)
+            background = background.interpolatedWith(colourOf(set.track(tintGroup)), col.isGroup ? 0.3f : 0.18f);
+        g.setColour(background);
+        g.fillRect(tintGroup >= 0 ? r : r.reduced(1, 0));
+        // The colour bar, under a stripe for each group it's in that runs unbroken across the
+        // group's header and all its tracks', like a bracket; a gap sets it off from the track's own.
+        auto bars = r;
+        const int stripe = juce::jmax(3, juce::roundToInt(t.spacing));
+        for (const int group : groups)
+        {
+            g.setColour(colourOf(set.track(group)));
+            g.fillRect(bars.removeFromTop(stripe));
+            bars.removeFromTop(1);
+        }
         g.setColour(colourOf(node));
-        g.fillRect(r.reduced(1, 0).removeFromTop(3));
-        auto text = r.reduced(juce::roundToInt(t.padding), 0).withTrimmedTop(3);
+        g.fillRect((col.isGroup ? bars : bars.reduced(1, 0)).removeFromTop(col.isGroup ? stripe : 3));
+        auto text = r.reduced(juce::roundToInt(t.padding), 0).withTrimmedTop(r.getHeight() - bars.getHeight() + 3);
         text.removeFromLeft(juce::roundToInt(t.spacing * 2.0f) * col.depth); // inside groups: indented
         if (col.isGroup)
         {
