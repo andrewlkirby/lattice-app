@@ -272,6 +272,11 @@ void MainComponent::debugSelectionChanged()
         return;
     const juce::ScopedValueSetter<bool> guard(mirroring, true);
     const auto& d = debug.sessionView().selection();
+    // The debug view re-announces its selection after the set changes (it clamps it): when it
+    // still matches, the Session view's selection (a range, a track) stays as it is.
+    const auto& now = mainShell->selection().get();
+    if (d.track == now.track && d.scene == now.scene && d.sceneColumn == (now.kind == ui::SessionSelection::Kind::scene))
+        return;
     mainShell->selection().set({d.sceneColumn ? ui::SessionSelection::Kind::scene : ui::SessionSelection::Kind::slot, d.track, d.scene});
 }
 

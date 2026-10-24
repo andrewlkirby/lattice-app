@@ -541,3 +541,43 @@ TEST_CASE("Session view: a header Shift+clicked to another groups both, from the
     REQUIRE(set.isGroupTrack(1));
     CHECK(set.groupMembers(1).size() == 2);
 }
+
+TEST_CASE("Session view: after grouping the first two tracks, every strip controls and meters its own track",
+          "[ui][session][mixer]")
+{
+    Fixture f(4, 2);
+    auto& set = f.session.set();
+    for (int t = 0; t < 2; ++t)
+    {
+        auto chain = LiveSet::chainOf(set.track(t));
+        while (chain.getNumChildren() > 0)
+            set.removeDevice(chain.getChild(0));
+        set.insertDevice(chain, -1, TestSineDevice::typeId);
+        set.addNote(set.createClip(t, 0, 4.0), {60, 0.0, 4.0, 100, false});
+    }
+    set.setTrackArm(0, false, false);
+    f.rebuildNow();
+    f.session.play();
+    f.session.launchSlot(0, 0);
+    f.session.launchSlot(1, 0);
+    f.render(48000);
+
+    f.selection.set({Kind::track, 0, 0, 1, -1});
+    REQUIRE(f.commands.perform("create.group")); // G >1 >2 3 4
+    f.view->flushUpdates();
+    REQUIRE(set.isGroupTrack(0));
+    f.render(48000);
+    for (int column : {0, 1, 2})
+    {
+        INFO("column " << column);
+        auto* strip = f.view->stripForColumn(column);
+        REQUIRE(strip != nullptr);
+        const auto peaks = f.feed.trackPeaks(column);
+        CHECK(peaks[0] > 0.0f);
+        strip->volumeBox()->commitTypeIn("-6");
+        for (int t = 0; t < set.numTracks(); ++t)
+            CHECK(static_cast<double>(set.track(t)[ids::volumeDb]) == Catch::Approx(t == column ? -6.0 : 0.0));
+        strip->volumeBox()->commitTypeIn("0");
+        f.render(4800);
+    }
+}

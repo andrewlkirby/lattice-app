@@ -226,3 +226,26 @@ TEST_CASE("Groups: a group's slot launches the clips in its row, stops them, and
     f.set().setTrackArm(0, true, false);
     CHECK(!static_cast<bool>(f.set().track(0)[ids::arm]));
 }
+
+TEST_CASE("Groups: grouping the first tracks of a running set keeps every member's fader in charge",
+          "[engine][groups]")
+{
+    // The M4 4b hands-on checks: after grouping tracks 1 and 2, track 1's fader did nothing.
+    Fixture f(3);
+    f.noteOn();
+    f.render(4800);
+    const float all = f.last();
+    REQUIRE(all != 0.0f);
+    f.set().groupTracks(0, 1); // G >A >B C
+    f.render(4800);
+    CHECK(f.last() == Catch::Approx(all).epsilon(1e-5));
+    for (int member : {1, 2, 3})
+    {
+        f.set().setTrackVolumeDb(member, LiveSet::minVolumeDb);
+        f.render(4800);
+        INFO("track " << member);
+        CHECK(f.last() == Catch::Approx(all * 2.0f / 3.0f).epsilon(1e-3));
+        f.set().setTrackVolumeDb(member, 0.0);
+        f.render(4800);
+    }
+}

@@ -83,6 +83,10 @@ public:
     void tick()
     {
         grid.poll();
+        // Taking the peaks resets them: while the Session view shows the meters instead, they're
+        // left for it.
+        if (!isShowing())
+            return;
         for (auto& s : strips)
             s->updateMeter();
         for (auto& s : returns)
