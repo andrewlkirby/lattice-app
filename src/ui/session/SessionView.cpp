@@ -57,6 +57,9 @@ SessionView::SessionView(SessionController& s, EngineStateFeed& f, CommandRegist
 {
     setTitle("Session view");
     setOpaque(true);
+    // A click in the view takes the keys back (from a text field, say), so the arrows move the
+    // selection and Enter launches. It handles no keys itself: they go on to the shell's commands.
+    setWantsKeyboardFocus(true);
     for (auto* bar : {&vertical, &horizontal})
     {
         bar->setAutoHide(false);

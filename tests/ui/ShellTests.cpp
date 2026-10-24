@@ -346,3 +346,28 @@ TEST_CASE("Shell: auto-arm follows the selected MIDI track, and can be turned of
     CHECK(!f.session.isArmed(1));
     CHECK(!f.settings->getBoolValue(MainShell::autoArmKey, true));
 }
+
+TEST_CASE("Shell: a click on a control leaves the keys with the view; a click in the Session view takes them", "[ui][shell]")
+{
+    // The M4 4b hands-on checks: after a click on a mixer box, the arrows stepped its value and
+    // Enter opened its type-in, instead of moving the selection and launching.
+    Fixture f;
+    auto& view = f.shell->sessionView();
+    CHECK(view.getWantsKeyboardFocus());
+    CHECK(view.getMouseClickGrabsKeyboardFocus());
+    int controls = 0;
+    std::function<void(juce::Component&)> visit = [&](juce::Component& c) {
+        for (auto* child : c.getChildren())
+        {
+            if (auto* bound = dynamic_cast<BoundControl*>(child))
+            {
+                ++controls;
+                CHECK(bound->getWantsKeyboardFocus()); // Tab still reaches it
+                CHECK(!bound->getMouseClickGrabsKeyboardFocus());
+            }
+            visit(*child);
+        }
+    };
+    visit(*f.shell);
+    CHECK(controls > 10); // the control bar's and the mixer's
+}

@@ -87,6 +87,7 @@ private:
     float lastY = 0.0f;
     bool stepping = false;
     std::unique_ptr<juce::TextEditor> editor;
+    juce::Component::SafePointer<juce::Component> focusBeforeEditor; // gets the keys back when the editor closes
     ControlRegistry* registry = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BoundControl)

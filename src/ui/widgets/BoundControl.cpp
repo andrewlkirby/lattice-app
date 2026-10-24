@@ -36,7 +36,8 @@ private:
 BoundControl::BoundControl(std::unique_ptr<ValueBinding> b) : bound(std::move(b))
 {
     jassert(bound != nullptr);
-    setWantsKeyboardFocus(true);
+    setWantsKeyboardFocus(true);            // Tab reaches it,
+    setMouseClickGrabsKeyboardFocus(false); // but a click doesn't take the arrows, Enter and Space from the view
     setTitle(bound->spec().name);
     setHelpText(bound->spec().group.isNotEmpty() ? bound->spec().group + " > " + bound->spec().name : bound->spec().name);
     bound->onChange = [this] {
@@ -239,6 +240,7 @@ void BoundControl::showTypeInEditor()
         area = area.withSizeKeepingCentre(area.getWidth(), static_cast<int>(theme.controlHeight));
     editor->setBounds(area.getIntersection(getLocalBounds()));
     addAndMakeVisible(*editor);
+    focusBeforeEditor = juce::Component::getCurrentlyFocusedComponent();
     editor->grabKeyboardFocus();
 }
 
@@ -256,6 +258,9 @@ void BoundControl::closeEditor(bool commit)
     auto* closing = editor.release();
     removeChildComponent(closing);
     juce::MessageManager::callAsync([closing] { delete closing; });
+    if (auto* before = focusBeforeEditor.getComponent(); before != nullptr && before->isShowing())
+        before->grabKeyboardFocus();
+    focusBeforeEditor = nullptr;
     if (commit)
         commitTypeIn(text);
     repaint();
