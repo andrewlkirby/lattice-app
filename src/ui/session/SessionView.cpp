@@ -951,17 +951,23 @@ void SessionView::paintSlot(juce::Graphics& g, int column, int scene, juce::Rect
         {
             g.setColour(state == SlotState::QueuedStop && blink ? t.textDim : t.play);
             triangle(g, button);
-            // Progress round the button: where the playing clip is in its loop.
+            // Progress round the button: where the playing clip is in its loop, drawn over a faint
+            // full ring in the clip's text colour so it reads on any clip colour.
             if (!group)
             {
                 const auto& play = feed.trackPlay(track);
                 const double length = play.loopEnd - play.loopStart;
                 const float done = length > 0.0 ? static_cast<float>(juce::jlimit(0.0, 1.0, (play.position - play.loopStart) / length)) : 0.0f;
-                juce::Path ring;
+                const auto ink = textOn(colourOf(clip).interpolatedWith(t.surface, 0.25f), t);
                 const auto c = button.getCentre();
-                const float radius = button.getWidth() * 0.95f;
+                const float radius = static_cast<float>(r.getHeight()) * 0.36f;
+                const float thickness = juce::jmax(2.0f, static_cast<float>(r.getHeight()) * 0.08f);
+                g.setColour(ink.withMultipliedAlpha(0.25f));
+                g.drawEllipse(juce::Rectangle<float>(radius * 2.0f, radius * 2.0f).withCentre(c), thickness);
+                juce::Path ring;
                 ring.addCentredArc(c.x, c.y, radius, radius, 0.0f, 0.0f, juce::MathConstants<float>::twoPi * done, true);
-                g.strokePath(ring, juce::PathStrokeType(1.5f));
+                g.setColour(ink);
+                g.strokePath(ring, juce::PathStrokeType(thickness, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             }
             break;
         }
