@@ -258,7 +258,7 @@ void SessionController::previewNote(int trackIndex, int pitch, int velocity)
 
 void SessionController::endPreviews()
 {
-    for (const auto [id, pitch] : std::exchange(previews, {}))
+    for (const auto& [id, pitch] : std::exchange(previews, {}))
     {
         EngineCommand c;
         c.type = CommandType::PreviewNote;
