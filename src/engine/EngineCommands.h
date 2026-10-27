@@ -19,7 +19,8 @@ enum class CommandType : std::uint8_t
     StartRecording,   // trackId, scene, clipId (created by the controller), flag = open-ended
     EndRecording,     // trackId: ends an open-ended recording at the launch quantization
     SetSessionRecord, // flag
-    SetRandomSeed     // value (follow actions)
+    SetRandomSeed,    // value (follow actions)
+    PreviewNote       // trackId, value = pitch, scene = velocity (0: the note's end): auditioning a note
 };
 
 struct EngineCommand

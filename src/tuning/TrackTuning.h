@@ -51,6 +51,7 @@ public:
     int getNoteOffset() const noexcept { return noteOffset.load(); }
     BendMode getBendMode() const noexcept { return bendMode.load(); }
     HighNotePolicy getHighNotePolicy() const noexcept { return highNotePolicy.load(); }
+    double getSampleRate() const noexcept { return sampleRate.load(); } // 0: unknown
 
     /** Frequency for a MIDI note with a pitch bend in -1..1 (scaled by the bend range of the
         current mode). Applies the note offset, then the bend, then the high-note policy.

@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <functional>
 #include <utility>
 
@@ -44,6 +45,8 @@ enum class ParamUnit : std::uint8_t
 struct ParameterSpec
 {
     using Formatter = std::function<juce::String(float plainValue)>;
+    /** Reads typed text as a plain value, or nullopt when it can't (the default is then used). */
+    using Parser = std::function<std::optional<float>(const juce::String& text)>;
 
     juce::String id;
     juce::String name;
@@ -59,6 +62,7 @@ struct ParameterSpec
     juce::StringArray choices; // Choice parameters: one name per value 0..n-1
     bool modulatable = true;   // macros and (later) automation may drive it
     Formatter formatter;       // optional; the default shows the value with its unit
+    Parser parser;             // optional, for a formatter whose text the default can't read
 
     // --- Builders ---------------------------------------------------------------------------------
     static ParameterSpec continuous(juce::String id, juce::String name, float min, float max, float def,
@@ -122,6 +126,11 @@ struct ParameterSpec
     ParameterSpec&& withFormatter(Formatter f) &&
     {
         formatter = std::move(f);
+        return std::move(*this);
+    }
+    ParameterSpec&& withParser(Parser p) &&
+    {
+        parser = std::move(p);
         return std::move(*this);
     }
     ParameterSpec&& notModulatable() &&

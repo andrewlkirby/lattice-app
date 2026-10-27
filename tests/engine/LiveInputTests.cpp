@@ -142,3 +142,27 @@ TEST_CASE("Live input: an auto-armed track plays and records while nothing is ar
     f.session.setAutoArmTrack(0);
     CHECK(!f.session.isArmed(1));
 }
+
+TEST_CASE("Live input: an auditioned note plays on its track whatever its arm and monitoring", "[engine][input]")
+{
+    Fixture f(3);
+    f.set().setTrackMonitoring(1, Monitoring::Off);
+    f.render(480);
+    f.renderer.attach(f.session);
+    f.session.previewNote(1, 67, 90);
+    f.render(480);
+    const auto ons = f.renderer.noteOns(f.set().trackId(1));
+    REQUIRE(ons.size() == 1);
+    CHECK(ons[0].data1 == 67);
+    CHECK(ons[0].data2 == 90);
+    CHECK(f.renderer.noteOns(f.set().trackId(0)).empty()); // only its own track
+    f.session.previewNote(1, 70, 90);
+    f.session.endPreviews(); // ends both
+    f.render(480);
+    CHECK(f.renderer.unbalancedNotes(f.set().trackId(1)).empty());
+    // Ending a note that isn't sounding sends nothing.
+    const auto events = f.renderer.events.size();
+    f.session.previewNote(1, 50, 0);
+    f.render(480);
+    CHECK(f.renderer.events.size() == events);
+}

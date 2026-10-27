@@ -273,6 +273,15 @@ lattice_set_warnings(lattice_debug_ui)
 
 # --- UI (M4, docs/05-m4-ui.md): a library, so the tests can drive the views headless ---------------
 add_library(lattice_ui STATIC
+    src/ui/clip/ClipCommands.cpp
+    src/ui/clip/ClipNotes.cpp
+    src/ui/clip/ClipPropertiesPanel.cpp
+    src/ui/clip/ClipView.cpp
+    src/ui/clip/NoteEdits.cpp
+    src/ui/clip/NoteGrid.cpp
+    src/ui/clip/PianoRoll.cpp
+    src/ui/clip/PianoRollLayout.cpp
+    src/ui/clip/TuningRows.cpp
     src/ui/commands/CommandRegistry.cpp
     src/ui/commands/SessionCommands.cpp
     src/ui/feed/EngineStateFeed.cpp
@@ -282,6 +291,7 @@ add_library(lattice_ui STATIC
     src/ui/session/SessionView.cpp
     src/ui/shell/CommandMenus.cpp
     src/ui/shell/ControlBar.cpp
+    src/ui/shell/DetailView.cpp
     src/ui/shell/InfoView.cpp
     src/ui/shell/MainShell.cpp
     src/ui/shell/StatusBar.cpp

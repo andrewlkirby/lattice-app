@@ -1,7 +1,9 @@
 #include "engine/SessionController.h"
 
+#include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <utility>
 
 namespace lattice
 {
@@ -232,6 +234,39 @@ void SessionController::stopTrack(int trackIndex)
     c.type = CommandType::StopTrack;
     c.trackId = trackIdOf(trackIndex);
     send(c);
+}
+
+void SessionController::previewNote(int trackIndex, int pitch, int velocity)
+{
+    if (trackIndex < 0 || trackIndex >= liveSet.numTracks() || pitch < 0 || pitch > 127)
+        return;
+    const auto id = trackIdOf(trackIndex);
+    const auto sounding = std::find(previews.begin(), previews.end(), std::pair{id, pitch});
+    if (velocity <= 0 && sounding == previews.end())
+        return;
+    EngineCommand c;
+    c.type = CommandType::PreviewNote;
+    c.trackId = id;
+    c.value = static_cast<std::uint64_t>(pitch);
+    c.scene = juce::jlimit(0, 127, velocity);
+    send(c);
+    if (velocity <= 0)
+        previews.erase(sounding);
+    else if (sounding == previews.end())
+        previews.emplace_back(id, pitch);
+}
+
+void SessionController::endPreviews()
+{
+    for (const auto [id, pitch] : std::exchange(previews, {}))
+    {
+        EngineCommand c;
+        c.type = CommandType::PreviewNote;
+        c.trackId = id;
+        c.value = static_cast<std::uint64_t>(pitch);
+        c.scene = 0;
+        send(c);
+    }
 }
 
 void SessionController::stopAllClips()
@@ -513,6 +548,7 @@ void SessionController::afterReplacingSet()
 {
     captures.clear();
     newRecordings.clear();
+    previews.clear(); // the tracks they sounded on are gone
     builder.forgetAll();
     builder.rebuildNow();
     savedState = liveSet.state().createCopy();

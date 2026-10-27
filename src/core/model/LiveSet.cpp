@@ -1,5 +1,6 @@
 #include "core/model/LiveSet.h"
 
+#include <algorithm>
 #include <array>
 #include <functional>
 #include <map>
@@ -1196,6 +1197,63 @@ void LiveSet::setClipLoop(juce::ValueTree c, double newLoopStart, double newLoop
     newLoopEnd = std::max(newLoopEnd, newLoopStart + minLoopLength);
     c.setProperty(ids::loopStart, newLoopStart, um(undoable));
     c.setProperty(ids::loopEnd, newLoopEnd, um(undoable));
+}
+
+std::pair<int, int> LiveSet::clipTimeSignature(const juce::ValueTree& c) const
+{
+    const int num = c.getProperty(ids::clipTimeSigNum, 0);
+    const int den = c.getProperty(ids::clipTimeSigDen, 0);
+    if (num > 0 && den > 0)
+        return {num, den};
+    return {timeSigNumerator(), timeSigDenominator()};
+}
+
+void LiveSet::setClipTimeSignature(juce::ValueTree c, int numerator, int denominator)
+{
+    if (numerator <= 0)
+    {
+        c.removeProperty(ids::clipTimeSigNum, undo);
+        c.removeProperty(ids::clipTimeSigDen, undo);
+        return;
+    }
+    if (numerator > 99 || !isValidDenominator(denominator)) // the set's limits
+        return;
+    c.setProperty(ids::clipTimeSigNum, numerator, undo);
+    c.setProperty(ids::clipTimeSigDen, denominator, undo);
+}
+
+std::vector<int> LiveSet::highlightOf(const juce::ValueTree& node)
+{
+    std::vector<int> out;
+    juce::StringArray tokens;
+    tokens.addTokens(node[ids::highlight].toString(), " ", {});
+    for (const auto& t : tokens)
+        if (t.isNotEmpty() && t.containsOnly("0123456789") && t.getIntValue() < 128)
+            out.push_back(t.getIntValue());
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
+std::vector<int> LiveSet::effectiveHighlight(const juce::ValueTree& c)
+{
+    if (c.hasProperty(ids::highlight))
+        return highlightOf(c);
+    return highlightOf(c.getParent().getParent().getParent()); // CLIP -> SLOT -> SLOTS -> TRACK
+}
+
+void LiveSet::setHighlight(juce::ValueTree node, std::vector<int> indices)
+{
+    std::sort(indices.begin(), indices.end());
+    indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+    juce::StringArray tokens;
+    for (const int i : indices)
+        if (i >= 0 && i < 128)
+            tokens.add(juce::String(i));
+    if (tokens.isEmpty())
+        node.removeProperty(ids::highlight, undo);
+    else
+        node.setProperty(ids::highlight, tokens.joinIntoString(" "), undo);
 }
 
 // --- Notes ------------------------------------------------------------------------------------------------

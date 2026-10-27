@@ -689,6 +689,20 @@ void SessionProcessor::applyCommand(const EngineSnapshot& snapshot, const Engine
     case CommandType::SetRandomSeed:
         randomState = command.value != 0 ? command.value : 0x9e3779b97f4a7c15ull;
         return;
+
+    case CommandType::PreviewNote:
+    {
+        // Played on the track's instrument whatever its arm and monitoring, and never recorded.
+        if (track == nullptr || track->isGroup || command.value > 127)
+            return;
+        TimedMidi m;
+        m.bytes[0] = noteOn;
+        m.bytes[1] = static_cast<std::uint8_t>(command.value);
+        m.bytes[2] = static_cast<std::uint8_t>(juce::jlimit(0, 127, static_cast<int>(command.scene)));
+        m.size = 3;
+        track->processor->events().add(sample, m);
+        return;
+    }
     }
 }
 

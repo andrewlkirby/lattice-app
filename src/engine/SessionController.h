@@ -73,6 +73,12 @@ public:
     bool isSessionRecordOn() const noexcept { return transport().sessionRecord; }
     void setRandomSeed(std::uint64_t seed);
 
+    /** Auditions a note on a track's instrument (clicking a note or a key in the piano roll), whatever
+        the track's arm and monitoring; it isn't recorded. velocity 0 ends it. */
+    void previewNote(int trackIndex, int pitch, int velocity);
+    /** Ends every note previewNote() started and hasn't ended. */
+    void endPreviews();
+
     /** Tap tempo: the average of the last 4 intervals; a pause of more than 2 s starts over.
         nowSeconds is for tests; by default the current time is used. */
     void tapTempo(double nowSeconds = -1.0);
@@ -141,6 +147,7 @@ private:
     std::map<std::int64_t, Capture> captures;   // by clip ID
     std::map<std::int64_t, bool> newRecordings; // clip ID -> open-ended; clips created to record into
     std::deque<double> taps;
+    std::vector<std::pair<std::int64_t, int>> previews; // (track ID, pitch) sounding
 };
 
 } // namespace lattice

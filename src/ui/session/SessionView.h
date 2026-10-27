@@ -104,6 +104,8 @@ public:
     void fileDragMove(const juce::StringArray& files, int x, int y) override;
     void fileDragExit(const juce::StringArray& files) override;
     void filesDropped(const juce::StringArray& files, int x, int y) override;
+    /** Called when a double-click asks to see the selected clip (on a clip, or making one). */
+    std::function<void()> onOpenClip;
     /** Renames what's selected (a prompt), for the Rename command. */
     void renameSelection();
 

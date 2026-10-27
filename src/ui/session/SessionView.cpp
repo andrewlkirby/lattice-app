@@ -538,10 +538,13 @@ void SessionView::doubleClick(const Hit& hit)
     {
         renameSelection();
     }
-    else if (hit.area == Area::slot && track >= 0 && !set.isGroupTrack(track) && !set.clip(track, hit.scene).isValid())
+    else if (hit.area == Area::slot && track >= 0 && !set.isGroupTrack(track))
     {
         selection.set({Kind::slot, track, hit.scene});
-        commands.perform("create.midiClip");
+        if (!set.clip(track, hit.scene).isValid())
+            commands.perform("create.midiClip");
+        if (set.clip(track, hit.scene).isValid() && onOpenClip)
+            onOpenClip();
     }
 }
 

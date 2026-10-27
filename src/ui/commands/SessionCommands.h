@@ -2,6 +2,7 @@
 
 #include "engine/SessionController.h"
 #include "ui/commands/CommandRegistry.h"
+#include "ui/commands/EditTarget.h"
 #include "ui/session/SessionSelection.h"
 
 #include <functional>
@@ -26,6 +27,9 @@ struct SelectionAccess
 {
     std::function<SessionSelection()> get;
     std::function<void(SessionSelection)> set;
+    /** The view with the keyboard focus that takes the Edit commands (the piano roll), or nullptr
+        for the Session view's selection. Empty: always the selection. */
+    std::function<EditTarget*()> editTarget = {};
 };
 
 /** The transport, file, edit, create and Session commands: every action the M2/M3 debug UI has,

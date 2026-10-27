@@ -42,6 +42,24 @@ void addSessionCommands(CommandRegistry& registry, SessionController& session, S
         s.scene = juce::jlimit(0, juce::jmax(0, set.numScenes() - 1), s.scene);
         return s;
     };
+    // Duplicate, Delete, Copy, Cut, Paste and Select All act on the view with the keys when it
+    // takes them (the piano roll's notes), and on the Session view's selection otherwise.
+    const auto routed = [target = selection.editTarget](Command c) {
+        if (!target)
+            return c;
+        c.perform = [target, perform = std::move(c.perform), id = c.id] {
+            if (auto* t = target())
+                t->edit(id);
+            else if (perform)
+                perform();
+        };
+        c.isEnabled = [target, enabled = std::move(c.isEnabled), id = c.id] {
+            if (auto* t = target())
+                return t->canEdit(id);
+            return !enabled || enabled();
+        };
+        return c;
+    };
     const auto hasClip = [&set, selected] {
         const auto s = selected();
         return s.kind == Kind::slot && set.clip(s.track, s.scene).isValid();
@@ -159,7 +177,7 @@ void addSessionCommands(CommandRegistry& registry, SessionController& session, S
         }
         selection.set(clamp({s.kind, s.firstTrack(), s.firstScene()}));
     };
-    registry.add({.id = "edit.duplicate",
+    registry.add(routed({.id = "edit.duplicate",
                   .name = "Duplicate",
                   .category = "Edit",
                   .description = "Duplicates the selected clips (into new scenes below them), scenes or tracks (after the last one).",
@@ -211,8 +229,8 @@ void addSessionCommands(CommandRegistry& registry, SessionController& session, S
                           }
                       },
                   .isEnabled = [selected, rangeHasClip] { return selected().kind != Kind::slot || rangeHasClip(); },
-                  .undoable = true});
-    registry.add({.id = "edit.delete",
+                  .undoable = true}));
+    registry.add(routed({.id = "edit.delete",
                   .name = "Delete",
                   .category = "Edit",
                   .description = "Deletes the selected clips, scenes or tracks (a set always keeps one scene and one track).",
@@ -225,15 +243,15 @@ void addSessionCommands(CommandRegistry& registry, SessionController& session, S
                                  : s.kind == Kind::scene ? set.numScenes() > 1
                                                          : set.numTracks() > 1;
                       },
-                  .undoable = true});
-    registry.add({.id = "edit.copy",
+                  .undoable = true}));
+    registry.add(routed({.id = "edit.copy",
                   .name = "Copy",
                   .category = "Edit",
                   .description = "Copies the selected clips.",
                   .defaultKeys = {ctrl('c')},
                   .perform = copyRange,
-                  .isEnabled = rangeHasClip});
-    registry.add({.id = "edit.cut",
+                  .isEnabled = rangeHasClip}));
+    registry.add(routed({.id = "edit.cut",
                   .name = "Cut",
                   .category = "Edit",
                   .description = "Copies the selected clips and deletes them.",
@@ -244,8 +262,8 @@ void addSessionCommands(CommandRegistry& registry, SessionController& session, S
                           deleteRange();
                       },
                   .isEnabled = rangeHasClip,
-                  .undoable = true});
-    registry.add({.id = "edit.paste",
+                  .undoable = true}));
+    registry.add(routed({.id = "edit.paste",
                   .name = "Paste",
                   .category = "Edit",
                   .description = "Pastes the copied clips with their top-left one at the selected slot, replacing what's there.",
@@ -266,7 +284,16 @@ void addSessionCommands(CommandRegistry& registry, SessionController& session, S
                           selection.set({Kind::slot, s.firstTrack(), s.firstScene(), lastTrack, lastScene});
                       },
                   .isEnabled = [selected, clipboard] { return selected().kind == Kind::slot && !clipboard->empty(); },
-                  .undoable = true});
+                  .undoable = true}));
+    registry.add(routed({.id = "edit.selectAll",
+                         .name = "Select All",
+                         .category = "Edit",
+                         .description = "Selects every clip in the Session view, or every note in the piano roll.",
+                         .defaultKeys = {ctrl('a')},
+                         .perform =
+                             [&set, selection] {
+                                 selection.set({Kind::slot, 0, 0, juce::jmax(0, set.numTracks() - 1), juce::jmax(0, set.numScenes() - 1)});
+                             }}));
     registry.add({.id = "edit.rename",
                   .name = "Rename",
                   .category = "Edit",

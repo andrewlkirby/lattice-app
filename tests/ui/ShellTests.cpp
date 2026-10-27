@@ -309,7 +309,7 @@ TEST_CASE("Shell: the menu bar has every command, once, by category", "[ui][shel
     Fixture f;
     auto& menus = f.shell->menus();
     const auto names = menus.getMenuBarNames();
-    CHECK(names == juce::StringArray{"File", "Edit", "Create", "Session", "Transport", "View"});
+    CHECK(names == juce::StringArray{"File", "Edit", "Create", "Session", "Clip", "Transport", "View"});
     int items = 0;
     for (int i = 0; i < names.size(); ++i)
     {

@@ -61,6 +61,7 @@ struct App
         view().flushUpdates();
         window->debugUi().sessionView().flushForTests();
         window->debugUi().sessionView().detailView().flushUpdates();
+        shell().clipView().flushUpdates();
     }
     bool key(const juce::KeyPress& k)
     {
@@ -359,4 +360,37 @@ TEST_CASE("Hands-on 4b: the window in every theme, at 200%", "[app][handson]")
         app.frame();
         app.snap("theme-" + theme->name.removeCharacters(" ").toLowerCase() + "-200", 2.0f);
     }
+}
+
+TEST_CASE("Hands-on 4c: double-clicking a clip opens it in the Clip view and Shift+Tab switches pages", "[app][handson]")
+{
+    App app;
+    auto& set = app.set();
+    set.setTrackTuning(0, TuningRegistry::colundiId);
+    const auto clip = set.createClip(0, 1, 4.0, "Riff");
+    for (int i = 0; i < 4; ++i)
+        set.addNote(clip, {40 + i * 3, i * 1.0, 0.5, 100, false});
+    app.settle();
+    REQUIRE(!app.shell().isDetailVisible());
+
+    auto& view = app.view();
+    view.doubleClick(view.hitAt(view.slotOnScreen(0, 1).getCentre()));
+    app.settle();
+    CHECK(app.shell().isDetailVisible());
+    CHECK(app.shell().detailView().page() == ui::DetailView::Page::clip);
+    CHECK(app.shell().clipView().clip() == clip);
+    CHECK(app.shell().clipView().pianoRoll().notes().size() == 4);
+    app.snap("4c-clip-view-colundi");
+
+    // Shift+Tab: the Device view, and back.
+    CHECK(app.key(juce::KeyPress(juce::KeyPress::tabKey, juce::ModifierKeys::shiftModifier, 0)));
+    CHECK(app.shell().detailView().page() == ui::DetailView::Page::device);
+    CHECK(app.key(juce::KeyPress(juce::KeyPress::tabKey, juce::ModifierKeys::shiftModifier, 0)));
+    CHECK(app.shell().detailView().page() == ui::DetailView::Page::clip);
+
+    // Double-clicking an empty slot makes a clip and shows it.
+    view.doubleClick(view.hitAt(view.slotOnScreen(1, 2).getCentre()));
+    app.settle();
+    CHECK(set.clip(1, 2).isValid());
+    CHECK(app.shell().clipView().clip() == set.clip(1, 2));
 }

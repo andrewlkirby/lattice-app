@@ -46,6 +46,27 @@ int TuningTable::nearestNoteTo(double targetHz) const noexcept
     return best;
 }
 
+double TuningTable::baseHz() const noexcept
+{
+    for (const double f : hz)
+        if (f > 0.0)
+            return f;
+    return 0.0;
+}
+
+bool TuningTable::isAnchor(int note) const noexcept
+{
+    if (usesNoteNames || note < 0 || note >= numNotes)
+        return false;
+    const double base = baseHz();
+    const double f = hz[static_cast<std::size_t>(note)];
+    if (base <= 0.0 || f <= 0.0)
+        return false;
+    // The table holds frequencies to a thousandth of a hertz (59.9 Hz is not 2 x 30 Hz).
+    const double multiple = std::round(f / base);
+    return multiple >= 1.0 && std::abs(f - multiple * base) < 0.0005;
+}
+
 int TuningTable::defaultKeyboardBase() const noexcept
 {
     const int page = std::max(1, keyboardPageSize);

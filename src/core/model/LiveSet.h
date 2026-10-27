@@ -97,6 +97,9 @@ inline const juce::Identifier followA{"followA"};
 inline const juce::Identifier followB{"followB"};
 inline const juce::Identifier followChanceA{"followChanceA"};
 inline const juce::Identifier followTime{"followTime"};
+inline const juce::Identifier clipTimeSigNum{"timeSigNum"}; // the clip's own grid signature (absent: the set's)
+inline const juce::Identifier clipTimeSigDen{"timeSigDen"};
+inline const juce::Identifier highlight{"highlight"}; // on a CLIP or a TRACK: table indices the piano roll marks
 
 // Note
 inline const juce::Identifier pitch{"pitch"};
@@ -372,6 +375,21 @@ public:
     void setClipProperty(juce::ValueTree clip, const juce::Identifier& property, const juce::var& value,
                          bool undoable = true);
     void setClipLoop(juce::ValueTree clip, double loopStart, double loopEnd, bool undoable = true);
+    /** The clip's time signature, which its piano roll's bars follow: its own, or the set's.
+        Launching and quantizing follow the set's (as in Live). */
+    std::pair<int, int> clipTimeSignature(const juce::ValueTree& clip) const;
+    /** numerator 0 goes back to the set's. */
+    void setClipTimeSignature(juce::ValueTree clip, int numerator, int denominator);
+
+    // --- Highlighted rows (docs/05-m4-ui.md, 4c) -------------------------------------------------
+    // Table indices a piano roll marks, like Live's scale highlighting but for any tuning. A clip
+    // can have its own; otherwise it shows its track's. M5's pads read the same sets.
+    /** The node's own set (a CLIP or a TRACK), sorted; empty if it has none. */
+    static std::vector<int> highlightOf(const juce::ValueTree& node);
+    /** What a clip's piano roll shows: its own set, or its track's. */
+    static std::vector<int> effectiveHighlight(const juce::ValueTree& clip);
+    /** Sets a clip's or track's set (empty removes it). One undo action. */
+    void setHighlight(juce::ValueTree node, std::vector<int> tableIndices);
 
     // --- Notes -----------------------------------------------------------------------------------
     juce::ValueTree addNote(const juce::ValueTree& clip, const NoteData& note, bool undoable = true);

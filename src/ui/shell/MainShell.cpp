@@ -1,5 +1,7 @@
 #include "ui/shell/MainShell.h"
 
+#include "ui/clip/ClipCommands.h"
+
 namespace lattice::ui
 {
 
@@ -43,7 +45,9 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
             if (session_ != nullptr)
                 session_->renameSelection();
         };
-    addSessionCommands(registry, session, {[this] { return selected.get(); }, [this](SessionSelection sel) { selected.set(sel); }},
+    addSessionCommands(registry, session,
+                       {[this] { return selected.get(); }, [this](SessionSelection sel) { selected.set(sel); },
+                        [this]() -> EditTarget* { return clip != nullptr ? clip->editTargetIfFocused() : nullptr; }},
                        std::move(actions));
     addViewCommands();
     addKeyListener(&registry.keyMappings());
@@ -56,12 +60,18 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
 
     browser = std::make_unique<Placeholder>("Browser", "Devices, presets, samples and tunings, with search (4e). For now the "
                                                        "device list is in the Debug UI tab.");
-    detail = std::make_unique<Placeholder>("Detail view", "The Clip view with the piano roll (4c) and the Device view with "
-                                                          "device panels (4d). Shift+Tab will switch between them.");
+    devicePlaceholder = std::make_unique<Placeholder>("Device view", "Device panels come with 4d. For now the device editor is in "
+                                                                     "the Debug UI tab. Shift+Tab switches back to the Clip view.");
+    clip = std::make_unique<ClipView>(session, stateFeed, tunings, selected);
+    detail = std::make_unique<DetailView>(*clip, *devicePlaceholder);
+    addClipCommands(registry, clip->pianoRoll());
+    clip->pianoRoll().setCommands(&registry);
+    clip->pianoRoll().onHover = [this](const juce::String&) { showInfoFor(&clip->pianoRoll()); };
     session_ = std::make_unique<SessionView>(session, stateFeed, registry, selected, tunings);
     session_->setMixerVisible(settings.getBoolValue(mixerKey, true));
     session_->setSendsVisible(settings.getBoolValue(sendsKey, true));
     session_->setIOVisible(settings.getBoolValue(ioKey, true));
+    session_->onOpenClip = [this] { showClipView(); };
     arrangementPlaceholder = std::make_unique<Placeholder>("Arrangement", "After the MVP.");
     addChildComponent(*browser);
     addChildComponent(*detail);
@@ -84,6 +94,7 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
 
     showBrowser = settings.getBoolValue(browserKey, false);
     showDetail = settings.getBoolValue(detailKey, false);
+    detailHeight = settings.getIntValue(detailHeightKey, 0);
     showInfo = settings.getBoolValue(infoKey, true);
     browser->setVisible(showBrowser);
     detail->setVisible(showDetail);
@@ -130,6 +141,18 @@ void MainShell::addViewCommands()
                   .defaultKeys = {ctrlAlt('l')},
                   .perform = [this] { setDetailVisible(!showDetail); },
                   .isTicked = [this] { return showDetail; }});
+    registry.add({.id = "view.detailPage",
+                  .name = "Clip/Device View",
+                  .category = "View",
+                  .description = "Switches the detail view between the Clip view and the Device view (and shows it).",
+                  .defaultKeys = {KeyPress(KeyPress::tabKey, ModifierKeys::shiftModifier, 0)},
+                  .perform =
+                      [this] {
+                          if (!showDetail)
+                              setDetailVisible(true);
+                          else
+                              detail->toggle();
+                      }});
     registry.add({.id = "view.info",
                   .name = "Show Info View",
                   .category = "View",
@@ -242,6 +265,36 @@ void MainShell::setDetailVisible(bool visible)
     resized();
 }
 
+void MainShell::showClipView()
+{
+    clip->flushUpdates();
+    if (!showDetail)
+        setDetailVisible(true);
+    detail->show(DetailView::Page::clip);
+    if (clip->pianoRoll().isShowing())
+        clip->pianoRoll().grabKeyboardFocus();
+}
+
+void MainShell::mouseDown(const juce::MouseEvent& e)
+{
+    dragStartHeight = showDetail && detailDivider.contains(e.getEventRelativeTo(this).getPosition()) ? detail->getHeight() : -1;
+}
+
+void MainShell::mouseDrag(const juce::MouseEvent& e)
+{
+    if (dragStartHeight < 0)
+        return;
+    detailHeight = dragStartHeight - e.getDistanceFromDragStartY();
+    resized();
+}
+
+void MainShell::mouseUp(const juce::MouseEvent&)
+{
+    if (dragStartHeight >= 0)
+        settings.setValue(detailHeightKey, detail->getHeight());
+    dragStartHeight = -1;
+}
+
 void MainShell::setInfoVisible(bool visible)
 {
     showInfo = visible;
@@ -260,6 +313,9 @@ void MainShell::mouseMove(const juce::MouseEvent& e)
 {
     if (e.eventComponent != nullptr && (e.eventComponent == this || isParentOf(e.eventComponent)))
         showInfoFor(e.eventComponent);
+    if (e.eventComponent == this)
+        setMouseCursor(showDetail && detailDivider.contains(e.getPosition()) ? juce::MouseCursor::UpDownResizeCursor
+                                                                              : juce::MouseCursor::NormalCursor);
 }
 
 void MainShell::handleAsyncUpdate()
@@ -304,10 +360,15 @@ void MainShell::resized()
         if (showBrowser)
             browser->setBounds(side);
     }
+    detailDivider = {};
     if (showDetail)
     {
-        detail->setBounds(area.removeFromBottom(juce::jmax(120, area.getHeight() * 3 / 10)));
-        area.removeFromBottom(gap);
+        // The Clip view needs room for its controls; the Session view keeps at least as much.
+        const int minimum = juce::roundToInt(t.controlHeight * 8.0f);
+        const int wanted = detailHeight > 0 ? detailHeight : area.getHeight() * 2 / 5;
+        const int height = juce::jlimit(juce::jmin(minimum, area.getHeight() / 2), juce::jmax(minimum, area.getHeight() - minimum), wanted);
+        detail->setBounds(area.removeFromBottom(height));
+        detailDivider = area.removeFromBottom(gap);
     }
     tabs.setBounds(area);
 }

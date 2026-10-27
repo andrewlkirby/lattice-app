@@ -7,6 +7,7 @@
 #include "ui/feed/EngineStateFeed.h"
 #include "ui/shell/CommandMenus.h"
 #include "ui/shell/ControlBar.h"
+#include "ui/shell/DetailView.h"
 #include "ui/shell/InfoView.h"
 #include "ui/shell/StatusBar.h"
 #include "ui/theme/LatticeLookAndFeel.h"
@@ -53,6 +54,10 @@ public:
     /** What's selected in the Session view; the commands act on it. */
     SessionSelectionModel& selection() noexcept { return selected; }
     SessionView& sessionView() noexcept { return *session_; }
+    DetailView& detailView() noexcept { return *detail; }
+    ClipView& clipView() noexcept { return *clip; }
+    /** Shows the Clip view with the selected clip, and gives it the keys (double-clicking a clip). */
+    void showClipView();
 
     /** The old views, in a "Debug UI" tab, until the new ones cover everything they do. */
     void setDebugUi(juce::Component* debugUi);
@@ -84,6 +89,7 @@ public:
     static constexpr auto themeKey = "theme";
     static constexpr auto browserKey = "view.browser";
     static constexpr auto detailKey = "view.detail";
+    static constexpr auto detailHeightKey = "view.detailHeight";
     static constexpr auto infoKey = "view.info";
     static constexpr auto mixerKey = "view.mixer";
     static constexpr auto sendsKey = "view.sends";
@@ -104,6 +110,10 @@ private:
     void selectionChanged(const SessionSelection& now) override;
     /** Also the global mouse listener's: every move anywhere, shown if it's inside this window. */
     void mouseMove(const juce::MouseEvent&) override;
+    /** Dragging the gap above the detail view resizes it. */
+    void mouseDown(const juce::MouseEvent&) override;
+    void mouseDrag(const juce::MouseEvent&) override;
+    void mouseUp(const juce::MouseEvent&) override;
     void valueTreePropertyChanged(juce::ValueTree&, const juce::Identifier&) override { triggerAsyncUpdate(); }
     void valueTreeChildAdded(juce::ValueTree&, juce::ValueTree&) override { triggerAsyncUpdate(); }
     void valueTreeChildRemoved(juce::ValueTree&, juce::ValueTree&, int) override { triggerAsyncUpdate(); }
@@ -121,8 +131,13 @@ private:
 
     std::unique_ptr<CommandMenus> menuModel;
     std::unique_ptr<ControlBar> bar;
-    std::unique_ptr<Placeholder> browser, detail, arrangementPlaceholder;
+    std::unique_ptr<Placeholder> browser, devicePlaceholder, arrangementPlaceholder;
     std::unique_ptr<SessionView> session_;
+    std::unique_ptr<ClipView> clip;
+    std::unique_ptr<DetailView> detail; // after what it shows, so it goes first
+    juce::Rectangle<int> detailDivider;
+    int detailHeight = 0; // 0: the default share of the window
+    int dragStartHeight = -1;
     juce::TabbedComponent tabs{juce::TabbedButtonBar::TabsAtTop};
     InfoView info;
     std::unique_ptr<StatusBar> status;
