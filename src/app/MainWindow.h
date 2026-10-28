@@ -83,7 +83,8 @@ private:
     Keys go to the shell's commands first; what no command takes plays the computer MIDI keyboard. */
 class MainComponent final : public juce::Component,
                             public juce::DragAndDropContainer,
-                            private ui::SessionSelectionModel::Listener
+                            private ui::SessionSelectionModel::Listener,
+                            private juce::ValueTree::Listener
 {
 public:
     MainComponent(AudioEngine& engine, juce::PropertiesFile& settings, TuningRegistry& tunings,
@@ -116,6 +117,8 @@ private:
     /** The debug view (and its device editor) follows the shell's selection, and the other way. */
     void selectionChanged(const ui::SessionSelection& now) override;
     void debugSelectionChanged();
+    /** A Drum Rack's page scrolled in the Device view: the keyboard follows it (M3 finding 5). */
+    void valueTreePropertyChanged(juce::ValueTree& tree, const juce::Identifier& property) override;
 
     std::function<void()> onFirstPaint;
     bool firstPaintDone = false;

@@ -24,11 +24,21 @@ Knob::Knob(std::unique_ptr<ValueBinding> b) : BoundControl(std::move(b))
 {
     bipolar = isSymmetricAroundZero(binding().spec());
     labelText = binding().spec().name;
+    // A knob draws arcs and text: kept as an image, so a view painted again (scrolling, another
+    // control moving) copies the knobs that didn't change instead of drawing them again. Its own
+    // repaint (a new value, focus, a theme) draws it afresh.
+    setBufferedToImage(true);
 }
 
 void Knob::setBipolar(bool shouldBeBipolar)
 {
     bipolar = shouldBeBipolar;
+    repaint();
+}
+
+void Knob::setArcColour(juce::Colour c)
+{
+    arcColour = c;
     repaint();
 }
 
@@ -94,7 +104,7 @@ void Knob::paint(juce::Graphics& g)
             juce::Path fill;
             fill.addCentredArc(centre.x, centre.y, arcRadius, arcRadius, 0.0f, juce::jmin(from, angle),
                                juce::jmax(from, angle), true);
-            g.setColour(enabled ? t.accent : t.textDisabled);
+            g.setColour(!enabled ? t.textDisabled : arcColour.isTransparent() ? t.accent : arcColour);
             g.strokePath(fill, arcStroke);
         }
 

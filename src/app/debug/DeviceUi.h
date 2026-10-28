@@ -7,6 +7,7 @@
 #include "core/model/LiveSet.h"
 #include "devices/framework/DeviceParameter.h"
 #include "devices/framework/DeviceRegistry.h"
+#include "devices/framework/DeviceSpecs.h"
 #include "devices/framework/StudioDevice.h"
 #include "engine/SessionController.h"
 
@@ -46,32 +47,7 @@ inline bool isSampleFile(const juce::File& f)
     return f.hasFileExtension("wav;aif;aiff;flac;ogg;mp3");
 }
 
-/** Parameter specs and groups for device types, from one spec-only instance per type (never
-    prepared, never processed). The live instances belong to the engine. Message thread. */
-class DeviceSpecs
-{
-public:
-    explicit DeviceSpecs(const DeviceRegistry& r) : registry(r) {}
-
-    const StudioDevice* forType(const juce::String& typeId)
-    {
-        auto& entry = cache[typeId];
-        if (entry == nullptr)
-        {
-            DeviceCreateContext context;
-            context.tuning = &tuning;
-            entry = registry.create(typeId, context);
-        }
-        return entry.get();
-    }
-
-    const DeviceRegistry& devices() const noexcept { return registry; }
-
-private:
-    const DeviceRegistry& registry;
-    TrackTuning tuning;
-    std::map<juce::String, std::unique_ptr<StudioDevice>> cache;
-};
+using lattice::DeviceSpecs; // devices/framework/DeviceSpecs.h
 
 /** One device parameter as an on-screen control: a knob for numbers, a menu for choices, a
     button for toggles. Edits go through the document (one undo step per drag); refresh() reads

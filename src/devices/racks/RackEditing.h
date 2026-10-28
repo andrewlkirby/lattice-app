@@ -38,6 +38,11 @@ juce::ValueTree addDrumPad(LiveSet& set, const juce::ValueTree& drumRack, int no
 /** The pad chain for a note, or an invalid tree. */
 juce::ValueTree padFor(const juce::ValueTree& drumRack, int note);
 void setChokeGroup(LiveSet& set, juce::ValueTree pad, int group);
+/** The note a pad's chain plays (60 plays its sample at its root): the pad's tuning. */
+void setPadPlayNote(LiveSet& set, juce::ValueTree pad, int note);
+/** Moves the pad on `fromNote` to `toNote`; a pad already there moves to `fromNote` (a swap).
+    Returns false if there's no pad on fromNote. */
+bool movePad(LiveSet& set, const juce::ValueTree& drumRack, int fromNote, int toNote);
 void setTunedPads(LiveSet& set, juce::ValueTree drumRack, bool tuned);
 
 // --- Macros ---------------------------------------------------------------------------------------
@@ -47,6 +52,9 @@ void setMacroCount(LiveSet& set, const juce::ValueTree& rack, int count);
 void setMacroName(LiveSet& set, juce::ValueTree rack, int macro, const juce::String& name);
 /** The macro's name, or "Macro N" if it has none. */
 juce::String macroName(const juce::ValueTree& rack, int macro);
+/** A macro's colour (ARGB; 0 for none, which draws in the theme's accent). */
+void setMacroColour(LiveSet& set, juce::ValueTree rack, int macro, juce::uint32 argb);
+juce::uint32 macroColour(const juce::ValueTree& rack, int macro);
 /** The MAPPING nodes of one macro, or of every macro (macro = -1). */
 std::vector<juce::ValueTree> mappingsOf(const juce::ValueTree& rack, int macro = -1);
 /** Maps a macro (0-based) to a parameter of a device inside the rack, over [minimum, maximum] of
@@ -55,6 +63,9 @@ juce::ValueTree addMapping(LiveSet& set, juce::ValueTree rack, int macro, const 
                            const juce::String& parameterId, double minimum = 0.0, double maximum = 1.0,
                            double curve = 0.0);
 void removeMapping(LiveSet& set, const juce::ValueTree& mapping);
+/** A mapping's range over its parameter's normalised range (0..1 each; minimum may be above
+    maximum, which turns the macro's direction around). */
+void setMappingRange(LiveSet& set, juce::ValueTree mapping, double minimum, double maximum);
 int numMappings(const juce::ValueTree& rack);
 
 /** Stores the current macro values as a variation; returns its index. */

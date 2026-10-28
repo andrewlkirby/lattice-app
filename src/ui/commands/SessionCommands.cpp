@@ -60,6 +60,24 @@ void addSessionCommands(CommandRegistry& registry, SessionController& session, S
         };
         return c;
     };
+    // Rename goes to the view with the keys when it renames something (a device), and to the
+    // Session view's selection otherwise (the piano roll's clip is the selected one).
+    const auto routedIfTaken = [target = selection.editTarget](Command c) {
+        if (!target)
+            return c;
+        c.perform = [target, perform = std::move(c.perform), id = c.id] {
+            if (auto* t = target(); t != nullptr && t->canEdit(id))
+                t->edit(id);
+            else if (perform)
+                perform();
+        };
+        c.isEnabled = [target, enabled = std::move(c.isEnabled), id = c.id] {
+            if (auto* t = target(); t != nullptr && t->canEdit(id))
+                return true;
+            return !enabled || enabled();
+        };
+        return c;
+    };
     const auto hasClip = [&set, selected] {
         const auto s = selected();
         return s.kind == Kind::slot && set.clip(s.track, s.scene).isValid();
@@ -294,15 +312,15 @@ void addSessionCommands(CommandRegistry& registry, SessionController& session, S
                              [&set, selection] {
                                  selection.set({Kind::slot, 0, 0, juce::jmax(0, set.numTracks() - 1), juce::jmax(0, set.numScenes() - 1)});
                              }}));
-    registry.add({.id = "edit.rename",
-                  .name = "Rename",
-                  .category = "Edit",
-                  .description = "Renames the selected clip, scene or track.",
-                  .defaultKeys = {ctrl('r')},
-                  .perform = call(shell.rename),
-                  .isEnabled = [has = shell.rename != nullptr, selected, hasClip] {
-                      return has && (selected().kind != Kind::slot || hasClip());
-                  }});
+    registry.add(routedIfTaken({.id = "edit.rename",
+                                .name = "Rename",
+                                .category = "Edit",
+                                .description = "Renames the selected clip, scene or track, or the selected device in the Device view.",
+                                .defaultKeys = {ctrl('r')},
+                                .perform = call(shell.rename),
+                                .isEnabled = [has = shell.rename != nullptr, selected, hasClip] {
+                                    return has && (selected().kind != Kind::slot || hasClip());
+                                }}));
 
     // --- File -----------------------------------------------------------------------------------
     registry.add({.id = "file.new",

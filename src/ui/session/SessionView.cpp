@@ -276,6 +276,8 @@ SessionView::Hit SessionView::hitAt(juce::Point<int> p) const
         }
         else if (p.y >= stops.getY() && p.y < stops.getBottom())
             hit.area = Area::stopAll;
+        else if (p.y >= headers.getY() && p.y < headers.getBottom())
+            hit.area = Area::master;
         return hit;
     }
     if (p.x >= slots.getRight())
@@ -327,6 +329,15 @@ void SessionView::press(const Hit& hit, juce::ModifierKeys mods)
     case Area::header:
         if (track >= 0)
             selection.set({Kind::track, track, selection.get().scene});
+        else if (hit.column >= 0) // a return's header: its devices
+            selection.showDevicesOf({DeviceOwner::Kind::returnTrack, grid.columns()[static_cast<std::size_t>(hit.column)].index});
+        if (onShowDevices)
+            onShowDevices();
+        break;
+    case Area::master:
+        selection.showDevicesOf({DeviceOwner::Kind::master, 0});
+        if (onShowDevices)
+            onShowDevices();
         break;
     case Area::tuning:
         if (track < 0)
@@ -868,7 +879,9 @@ void SessionView::paintHeaders(juce::Graphics& g)
             continue;
         const bool isTrack = col.kind == SessionLayout::Column::Kind::track;
         const auto node = isTrack ? set.track(col.index) : set.returnTrack(col.index);
-        const bool selected = isTrack && sel.kind == Kind::track && sel.containsTrack(col.index);
+        const auto& owner = selection.deviceOwner();
+        const bool selected = (isTrack && sel.kind == Kind::track && sel.containsTrack(col.index)) ||
+                              (!isTrack && owner.kind == DeviceOwner::Kind::returnTrack && owner.index == col.index);
         // The groups it's in, outermost first.
         std::vector<int> groups;
         if (isTrack)
@@ -1094,7 +1107,13 @@ void SessionView::paintScenes(juce::Graphics& g)
     g.fillRect(scenes);
     // The corner above: "Master".
     const auto corner = juce::Rectangle<int>(scenes.getX(), headers.getY(), scenes.getWidth(), headers.getHeight());
-    g.setColour(t.textDim);
+    const bool masterShown = selection.deviceOwner().kind == DeviceOwner::Kind::master;
+    if (masterShown)
+    {
+        g.setColour(t.surfaceRaised.brighter(0.1f));
+        g.fillRect(corner.reduced(1, 0));
+    }
+    g.setColour(masterShown ? t.text : t.textDim);
     g.setFont(juce::Font(t.font(t.fontNormal)).boldened());
     g.drawFittedText("Master", corner.reduced(juce::roundToInt(t.padding), 0), juce::Justification::centredLeft, 1);
     // Stop All, under the scenes.

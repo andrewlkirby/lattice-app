@@ -70,7 +70,8 @@ public:
             stop,
             sceneLaunch,
             scene,
-            stopAll
+            stopAll,
+            master // the corner above the scenes: the master's devices
         };
         Area area = Area::none;
         int column = -1; // into layout().columns()
@@ -106,6 +107,9 @@ public:
     void filesDropped(const juce::StringArray& files, int x, int y) override;
     /** Called when a double-click asks to see the selected clip (on a clip, or making one). */
     std::function<void()> onOpenClip;
+    /** Called when a click on a track's, a return's or the master's header asks to see its
+        devices (the shell switches the detail view to the Device view, as Live does). */
+    std::function<void()> onShowDevices;
     /** Renames what's selected (a prompt), for the Rename command. */
     void renameSelection();
 
@@ -142,6 +146,7 @@ public:
 private:
     void engineStateChanged(std::uint32_t aspects) override;
     void selectionChanged(const SessionSelection& now) override;
+    void deviceOwnerChanged(const DeviceOwner&) override { repaint(); }
     void valueTreePropertyChanged(juce::ValueTree&, const juce::Identifier&) override;
     void valueTreeChildAdded(juce::ValueTree&, juce::ValueTree&) override;
     void valueTreeChildRemoved(juce::ValueTree&, juce::ValueTree&, int) override;

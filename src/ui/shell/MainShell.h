@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/JobPool.h"
+#include "ui/device/DeviceView.h"
 #include "ui/commands/SessionCommands.h"
 #include "ui/session/SessionSelectionModel.h"
 #include "ui/session/SessionView.h"
@@ -56,6 +57,10 @@ public:
     SessionView& sessionView() noexcept { return *session_; }
     DetailView& detailView() noexcept { return *detail; }
     ClipView& clipView() noexcept { return *clip; }
+    DeviceView& deviceView() noexcept { return *devices; }
+    DeviceContext& deviceContext() noexcept { return *deviceShared; }
+    /** Shows the Device view (with the selected track's devices). */
+    void showDeviceView();
     /** Shows the Clip view with the selected clip, and gives it the keys (double-clicking a clip). */
     void showClipView();
 
@@ -131,9 +136,14 @@ private:
 
     std::unique_ptr<CommandMenus> menuModel;
     std::unique_ptr<ControlBar> bar;
-    std::unique_ptr<Placeholder> browser, devicePlaceholder, arrangementPlaceholder;
+    std::unique_ptr<Placeholder> browser, arrangementPlaceholder;
     std::unique_ptr<SessionView> session_;
     std::unique_ptr<ClipView> clip;
+    DeviceSpecs deviceSpecs;
+    std::unique_ptr<presets::PresetLibrary> presetLibrary;
+    std::unique_ptr<DeviceContext> deviceShared;
+    std::unique_ptr<DeviceView> devices;
+    std::unique_ptr<juce::FileChooser> chooser;
     std::unique_ptr<DetailView> detail; // after what it shows, so it goes first
     juce::Rectangle<int> detailDivider;
     int detailHeight = 0; // 0: the default share of the window

@@ -19,6 +19,8 @@ public:
     static float angleFor(float normalised) noexcept { return startAngle + normalised * (endAngle - startAngle); }
 
     void setBipolar(bool shouldBeBipolar);
+    /** The value arc's colour (a rack macro's own); transparent: the theme's accent. */
+    void setArcColour(juce::Colour c);
     bool isBipolar() const noexcept { return bipolar; }
     /** The name shown above the knob (a macro's own name); the parameter's name by default. */
     void setLabel(const juce::String& text);
@@ -39,6 +41,7 @@ private:
 
     bool bipolar = false;
     juce::String labelText;
+    juce::Colour arcColour;
 };
 
 } // namespace lattice::ui

@@ -284,6 +284,22 @@ add_library(lattice_ui STATIC
     src/ui/clip/TuningRows.cpp
     src/ui/commands/CommandRegistry.cpp
     src/ui/commands/SessionCommands.cpp
+    src/ui/device/ChainView.cpp
+    src/ui/device/DeviceBody.cpp
+    src/ui/device/DeviceCommands.cpp
+    src/ui/device/DeviceDisplays.cpp
+    src/ui/device/DeviceFrame.cpp
+    src/ui/device/DeviceView.cpp
+    src/ui/device/ParameterControls.cpp
+    src/ui/device/RackMath.cpp
+    src/ui/device/panels/EffectPanels.cpp
+    src/ui/device/panels/MidiPanels.cpp
+    src/ui/device/panels/PanelFactory.cpp
+    src/ui/device/panels/PanelKit.cpp
+    src/ui/device/panels/RackPanel.cpp
+    src/ui/device/panels/SampleLoading.cpp
+    src/ui/device/panels/SamplerPanel.cpp
+    src/ui/device/panels/SynthPanel.cpp
     src/ui/feed/EngineStateFeed.cpp
     src/ui/session/KeyboardFollow.cpp
     src/ui/session/MixerStrip.cpp
@@ -300,6 +316,7 @@ add_library(lattice_ui STATIC
     src/ui/widgets/BoundControl.cpp
     src/ui/widgets/ControlRegistry.cpp
     src/ui/widgets/Fader.cpp
+    src/ui/widgets/Icons.cpp
     src/ui/widgets/Knob.cpp
     src/ui/widgets/Meter.cpp
     src/ui/widgets/NumberBox.cpp

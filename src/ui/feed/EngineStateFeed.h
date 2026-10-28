@@ -3,9 +3,11 @@
 #include "core/AudioCallbackStats.h"
 #include "engine/SessionController.h"
 
+#include <juce_dsp/juce_dsp.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <array>
+#include <map>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -31,6 +33,7 @@ public:
         metersAspect = 1u << 2,    // track, return and master levels (every tick while any is moving)
         notesAspect = 1u << 3,     // a track's last note
         loadAspect = 1u << 4,      // the audio callback's load and dropouts (every loadIntervalSeconds)
+        devicesAspect = 1u << 5,   // a watched device's readout (gain reduction, spectrum)
         allAspects = 0xffffffffu
     };
 
@@ -83,8 +86,39 @@ public:
     /** The slots whose state changed in the last tick (track, scene). */
     const std::vector<std::pair<int, int>>& changedSlots() const noexcept { return slotChanges; }
 
+    // --- Devices the Device view shows live (docs/05-m4-ui.md, 4d) ------------------------------
+    /** What a device shows while it plays: its gain reduction (Compressor, Limiter) and the
+        spectrum of its output (EQ Eight, from the device's FIFO). */
+    struct DeviceReadout
+    {
+        float gainReductionDb = 0.0f;  // <= 0: the deepest seen in the tick
+        std::vector<float> spectrumDb; // EQ Eight: per FFT bin, smoothed (empty until it has played)
+        double sampleRate = 48000.0;   // the bins' sample rate
+        std::uint64_t updates = 0;     // counts the ticks that changed it
+    };
+    static constexpr int spectrumOrder = 12; // a 4096-point FFT: 11.7 Hz bins at 48 kHz
+    static constexpr int spectrumSize = 1 << spectrumOrder;
+    /** Reads a device every tick from now on (counted: each watch needs its unwatch). */
+    void watchDevice(std::int64_t deviceId);
+    void unwatchDevice(std::int64_t deviceId);
+    /** The last tick's readout of a watched device, or nullptr. */
+    const DeviceReadout* device(std::int64_t deviceId) const;
+
 private:
     void tickBody(double nowSeconds);
+    /** Reads the watched devices; true if any readout changed. */
+    bool readDevices();
+
+    struct Watched
+    {
+        int count = 0;
+        DeviceReadout readout;
+        std::vector<float> ring;  // the last spectrumSize samples, oldest at ringPos
+        int ringPos = 0;
+        int fresh = 0;            // samples since the last transform
+        bool wasReducing = false; // so the meter falls back to 0 once
+        bool quiet = true;        // the spectrum has fallen to the floor
+    };
 
     struct Track
     {
@@ -116,6 +150,9 @@ private:
     std::uint64_t tickCount = 0;
     double tickWork = 0.0;
     bool metersWereMoving = false;
+    std::map<std::int64_t, Watched> watched;
+    juce::dsp::FFT fft{spectrumOrder};
+    std::vector<float> window, fftScratch;
 };
 
 } // namespace lattice::ui

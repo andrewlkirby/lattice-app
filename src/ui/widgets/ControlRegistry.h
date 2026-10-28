@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <functional>
+#include <unordered_map>
 #include <vector>
 
 namespace lattice::ui
@@ -35,8 +36,21 @@ public:
         virtual ControlRegistry& controlRegistry() = 0;
     };
 
+    /** A component that says where the controls inside it live (a device's frame: "Synth ·
+        2 MIDI", and how to bring it into view). The nearest one above a control describes it. */
+    struct Locator
+    {
+        virtual ~Locator() = default;
+        /** Fills in the entry's owner and reveal (and may refine its name or group). */
+        virtual void describe(Entry& entry) const = 0;
+    };
+
     /** The registry of the nearest provider above `component`, or nullptr. */
     static ControlRegistry* findFor(const juce::Component& component);
+    /** What a widget calls when its place in the window changes: (re)registers it with the
+        registry it's in now, described by the nearest Locator, and leaves the one it was in.
+        `current` is the widget's own record of where it's registered. */
+    static void place(juce::Component& control, const ValueBinding* binding, ControlRegistry*& current);
 
     void add(Entry entry);
     void remove(const juce::Component* component);
@@ -48,7 +62,7 @@ public:
     std::vector<const Entry*> search(const juce::String& text) const;
 
 private:
-    std::vector<Entry> list;
+    std::unordered_map<const juce::Component*, Entry> list;
 };
 
 } // namespace lattice::ui

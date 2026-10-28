@@ -22,6 +22,12 @@ void DetailView::show(Page p)
     repaint();
 }
 
+void DetailView::setDeviceTitle(const juce::String& title)
+{
+    deviceTitle = title;
+    repaint();
+}
+
 void DetailView::resized()
 {
     const auto& t = themeOf(*this);
@@ -53,6 +59,12 @@ void DetailView::paint(juce::Graphics& g)
         }
         g.setColour(on ? t.text : t.textDim);
         g.drawText(name, r, juce::Justification::centred, false);
+    }
+    if (shown == Page::device && deviceTitle.isNotEmpty())
+    {
+        g.setColour(t.textDim);
+        g.drawText(deviceTitle, strip.withLeft(deviceButton.getRight()).reduced(juce::roundToInt(t.padding), 0),
+                   juce::Justification::centredLeft, true);
     }
     g.setColour(t.border);
     g.fillRect(strip.getX(), strip.getBottom() - 1, strip.getWidth(), 1);

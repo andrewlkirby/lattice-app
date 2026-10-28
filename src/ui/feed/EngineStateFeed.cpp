@@ -1,6 +1,11 @@
 #include "ui/feed/EngineStateFeed.h"
 
+#include "devices/effects/Compressor.h"
+#include "devices/effects/EqEight.h"
+#include "devices/effects/Limiter.h"
+
 #include <algorithm>
+#include <cmath>
 
 namespace lattice::ui
 {
@@ -169,6 +174,9 @@ void EngineStateFeed::tickBody(double nowSeconds)
         changed |= metersAspect;
     metersWereMoving = anyMeterMoving;
 
+    if (readDevices())
+        changed |= devicesAspect;
+
     if (nowSeconds - lastLoadSeconds >= loadIntervalSeconds)
     {
         lastLoadSeconds = nowSeconds;
@@ -195,6 +203,107 @@ void EngineStateFeed::tickBody(double nowSeconds)
         if (stillThere)
             s.listener->engineStateChanged(aspects);
     }
+}
+
+// --- Devices --------------------------------------------------------------------------------------
+
+void EngineStateFeed::watchDevice(std::int64_t deviceId)
+{
+    ++watched[deviceId].count;
+}
+
+void EngineStateFeed::unwatchDevice(std::int64_t deviceId)
+{
+    if (const auto it = watched.find(deviceId); it != watched.end() && --it->second.count <= 0)
+        watched.erase(it);
+}
+
+const EngineStateFeed::DeviceReadout* EngineStateFeed::device(std::int64_t deviceId) const
+{
+    const auto it = watched.find(deviceId);
+    return it != watched.end() ? &it->second.readout : nullptr;
+}
+
+bool EngineStateFeed::readDevices()
+{
+    bool any = false;
+    for (auto& [id, w] : watched)
+    {
+        auto* device = session.snapshots().deviceFor(id);
+        if (device == nullptr)
+            continue;
+        auto& r = w.readout;
+        float reduction = 0.0f;
+        bool reduces = false;
+        if (const auto* comp = dynamic_cast<const CompressorDevice*>(device))
+            reduction = comp->gainReductionDb(), reduces = true;
+        else if (const auto* limiter = dynamic_cast<const LimiterDevice*>(device))
+            reduction = limiter->gainReductionDb(), reduces = true;
+        if (reduces && (reduction != r.gainReductionDb || (reduction < 0.0f) != w.wasReducing))
+        {
+            r.gainReductionDb = reduction;
+            w.wasReducing = reduction < 0.0f;
+            ++r.updates;
+            any = true;
+        }
+
+        auto* eq = dynamic_cast<EqEightDevice*>(device);
+        if (eq == nullptr)
+            continue;
+        // Take everything the device wrote since the last tick; keep the latest window of it.
+        if (w.ring.empty())
+            w.ring.assign(static_cast<std::size_t>(spectrumSize), 0.0f);
+        float sample = 0.0f, loudest = 0.0f;
+        while (eq->analyzer().pop(sample))
+        {
+            w.ring[static_cast<std::size_t>(w.ringPos)] = sample;
+            w.ringPos = (w.ringPos + 1) % spectrumSize;
+            loudest = std::max(loudest, std::abs(sample));
+            ++w.fresh;
+        }
+        // Silence after the display has fallen to the floor changes nothing: no work, no repaint.
+        const bool nothingNew = w.fresh == 0 || (w.quiet && loudest < 1.0e-6f);
+        w.fresh = 0;
+        if (nothingNew)
+            continue;
+        if (window.empty())
+        {
+            window.resize(static_cast<std::size_t>(spectrumSize));
+            for (int i = 0; i < spectrumSize; ++i) // Hann
+                window[static_cast<std::size_t>(i)] =
+                    0.5f - 0.5f * std::cos(2.0f * juce::MathConstants<float>::pi * static_cast<float>(i) / spectrumSize);
+            fftScratch.resize(static_cast<std::size_t>(spectrumSize) * 2);
+        }
+        for (int i = 0; i < spectrumSize; ++i)
+            fftScratch[static_cast<std::size_t>(i)] =
+                w.ring[static_cast<std::size_t>((w.ringPos + i) % spectrumSize)] * window[static_cast<std::size_t>(i)];
+        std::fill(fftScratch.begin() + spectrumSize, fftScratch.end(), 0.0f);
+        fft.performFrequencyOnlyForwardTransform(fftScratch.data(), true);
+
+        // dB of a sine at full scale reads 0: the Hann window halves the amplitude, the FFT sums N.
+        const int bins = spectrumSize / 2 + 1;
+        const float scale = 4.0f / static_cast<float>(spectrumSize);
+        const bool first = static_cast<int>(r.spectrumDb.size()) != bins;
+        if (first)
+            r.spectrumDb.assign(static_cast<std::size_t>(bins), -120.0f);
+        // Rises at once, falls with a time constant, so the display reads like Live's.
+        const float fall = 1.0f - std::exp(-static_cast<float>(lastFrameSeconds) / 0.25f);
+        float top = -120.0f;
+        for (int b = 0; b < bins; ++b)
+        {
+            const float db = juce::Decibels::gainToDecibels(fftScratch[static_cast<std::size_t>(b)] * scale, -120.0f);
+            auto& shown = r.spectrumDb[static_cast<std::size_t>(b)];
+            shown = first || db > shown ? db : shown + (db - shown) * fall;
+            if (shown < -119.0f)
+                shown = -120.0f;
+            top = std::max(top, shown);
+        }
+        w.quiet = top <= -120.0f;
+        r.sampleRate = device->preparedSampleRate();
+        ++r.updates;
+        any = true;
+    }
+    return any;
 }
 
 } // namespace lattice::ui

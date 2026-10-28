@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ui/theme/Theme.h"
+#include "ui/widgets/ControlRegistry.h"
 #include "ui/widgets/ValueBinding.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -37,6 +38,8 @@ public:
     juce::Colour onColour(const Theme& theme) const;
 
     juce::Rectangle<int> preferredSize() const;
+    /** A bound toggle registers with the control registry of the window it's in. */
+    void parentHierarchyChanged() override;
 
 protected:
     void clicked() override;
@@ -47,6 +50,7 @@ private:
 
     std::unique_ptr<ValueBinding> bound;
     Role colourRole;
+    ControlRegistry* registry = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Toggle)
 };

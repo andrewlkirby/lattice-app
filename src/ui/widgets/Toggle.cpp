@@ -30,8 +30,17 @@ Toggle::Toggle(std::unique_ptr<ValueBinding> b, Role role, const juce::String& c
 
 Toggle::~Toggle()
 {
+    if (registry != nullptr)
+        registry->remove(this);
     if (bound != nullptr)
         bound->onChange = nullptr;
+}
+
+void Toggle::parentHierarchyChanged()
+{
+    juce::Button::parentHierarchyChanged();
+    if (bound != nullptr)
+        ControlRegistry::place(*this, bound.get(), registry);
 }
 
 void Toggle::readBinding()

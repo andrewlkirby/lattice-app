@@ -15,6 +15,9 @@ int drumPadPageStart(const LiveSet& set, int track)
     {
         if (device[ids::deviceType].toString() != RackDevice::drumRackId)
             continue;
+        // The page the Device view shows, once it has shown one.
+        if (device.hasProperty(ids::padStart))
+            return juce::jlimit(0, 127, static_cast<int>(device[ids::padStart]));
         int lowest = 128;
         for (const auto& pad : device.getChildWithName(ids::rackChains))
             lowest = juce::jmin(lowest, static_cast<int>(pad.getProperty(ids::receiveNote, 128)));

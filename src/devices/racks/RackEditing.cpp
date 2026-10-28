@@ -133,6 +133,23 @@ void setChokeGroup(LiveSet& set, juce::ValueTree pad, int group)
     pad.setProperty(ids::chokeGroup, juce::jlimit(0, 16, group), set.undoManager());
 }
 
+void setPadPlayNote(LiveSet& set, juce::ValueTree pad, int note)
+{
+    pad.setProperty(ids::playNote, juce::jlimit(0, 127, note), set.undoManager());
+}
+
+bool movePad(LiveSet& set, const juce::ValueTree& drumRack, int fromNote, int toNote)
+{
+    auto pad = padFor(drumRack, fromNote);
+    if (!pad.isValid() || fromNote == toNote || toNote < 0 || toNote > 127)
+        return pad.isValid() && fromNote == toNote;
+    auto* um = set.undoManager();
+    if (auto other = padFor(drumRack, toNote); other.isValid())
+        other.setProperty(ids::receiveNote, fromNote, um);
+    pad.setProperty(ids::receiveNote, toNote, um);
+    return true;
+}
+
 void setTunedPads(LiveSet& set, juce::ValueTree drumRack, bool tuned)
 {
     stateOf(std::move(drumRack)).setProperty("tunedPads", tuned, set.undoManager());
@@ -154,20 +171,37 @@ void setMacroCount(LiveSet& set, const juce::ValueTree& rack, int count)
     stateOf(rack).setProperty("macroCount", count, um);
 }
 
-void setMacroName(LiveSet& set, juce::ValueTree rack, int macro, const juce::String& name)
+namespace
+{
+juce::ValueTree macroNode(LiveSet& set, juce::ValueTree rack, int macro)
 {
     auto state = stateOf(std::move(rack));
-    juce::ValueTree node;
     for (const auto& m : state)
         if (m.hasType("MACRO") && static_cast<int>(m["index"]) == macro)
-            node = m;
-    if (!node.isValid())
-    {
-        node = juce::ValueTree("MACRO");
-        node.setProperty("index", macro, nullptr);
-        state.appendChild(node, set.undoManager());
-    }
-    node.setProperty(ids::name, name, set.undoManager());
+            return m;
+    juce::ValueTree node("MACRO");
+    node.setProperty("index", macro, nullptr);
+    state.appendChild(node, set.undoManager());
+    return node;
+}
+} // namespace
+
+void setMacroName(LiveSet& set, juce::ValueTree rack, int macro, const juce::String& name)
+{
+    macroNode(set, std::move(rack), macro).setProperty(ids::name, name, set.undoManager());
+}
+
+void setMacroColour(LiveSet& set, juce::ValueTree rack, int macro, juce::uint32 argb)
+{
+    macroNode(set, std::move(rack), macro).setProperty(ids::colour, static_cast<juce::int64>(argb), set.undoManager());
+}
+
+juce::uint32 macroColour(const juce::ValueTree& rack, int macro)
+{
+    for (const auto& m : rack.getChildWithName(ids::deviceState))
+        if (m.hasType("MACRO") && static_cast<int>(m["index"]) == macro)
+            return static_cast<juce::uint32>(static_cast<juce::int64>(m.getProperty(ids::colour, 0)));
+    return 0;
 }
 
 juce::ValueTree addMapping(LiveSet& set, juce::ValueTree rack, int macro, const juce::ValueTree& device,
@@ -190,6 +224,13 @@ void removeMapping(LiveSet& set, const juce::ValueTree& mapping)
     auto parent = mapping.getParent();
     if (parent.isValid())
         parent.removeChild(mapping, set.undoManager());
+}
+
+void setMappingRange(LiveSet& set, juce::ValueTree mapping, double minimum, double maximum)
+{
+    auto* um = set.undoManager();
+    mapping.setProperty(ids::minimum, juce::jlimit(0.0, 1.0, minimum), um);
+    mapping.setProperty(ids::maximum, juce::jlimit(0.0, 1.0, maximum), um);
 }
 
 int numMappings(const juce::ValueTree& rack)

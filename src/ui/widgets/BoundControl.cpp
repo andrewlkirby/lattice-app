@@ -70,14 +70,7 @@ float BoundControl::pixelsForFullTravel(bool fine) const
 
 void BoundControl::parentHierarchyChanged()
 {
-    auto* now = ControlRegistry::findFor(*this);
-    if (now == registry)
-        return;
-    if (registry != nullptr)
-        registry->remove(this);
-    registry = now;
-    if (registry != nullptr)
-        registry->add({.component = this, .binding = bound.get(), .name = getTitle(), .group = bound->spec().group});
+    ControlRegistry::place(*this, bound.get(), registry);
 }
 
 void BoundControl::beginDrag()

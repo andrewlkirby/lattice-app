@@ -501,6 +501,30 @@ void LiveSet::setDeviceEnabled(juce::ValueTree device, bool on)
     device.setProperty(ids::enabled, on, undo);
 }
 
+void LiveSet::setDeviceName(juce::ValueTree device, const juce::String& newName)
+{
+    if (newName.trim().isEmpty())
+        device.removeProperty(ids::name, undo);
+    else
+        device.setProperty(ids::name, newName.trim(), undo);
+}
+
+void LiveSet::setDeviceFolded(juce::ValueTree device, bool fold)
+{
+    if (fold)
+        device.setProperty(ids::folded, true, nullptr);
+    else
+        device.removeProperty(ids::folded, nullptr);
+}
+
+void LiveSet::setDeviceShowsAll(juce::ValueTree device, bool all)
+{
+    if (all)
+        device.setProperty(ids::showAll, true, nullptr);
+    else
+        device.removeProperty(ids::showAll, nullptr);
+}
+
 void LiveSet::setDeviceParameter(juce::ValueTree device, const juce::String& parameterId, double value)
 {
     auto values = device.getChildWithName(ids::params);

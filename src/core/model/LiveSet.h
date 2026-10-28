@@ -108,9 +108,13 @@ inline const juce::Identifier length{"length"};
 inline const juce::Identifier velocity{"velocity"};
 inline const juce::Identifier muted{"muted"};
 
-// Device
+// Device (also name: the user's name for it, absent for the type's; folded: shown as a narrow
+// strip in the Device view, not undoable)
 inline const juce::Identifier deviceType{"type"};
 inline const juce::Identifier enabled{"enabled"};
+inline const juce::Identifier showAll{"showAll"}; // the Device view shows every parameter (not undoable)
+inline const juce::Identifier padStart{"padStart"}; // a Drum Rack's first pad on show (not undoable)
+inline const juce::Identifier padPage{"padPage"};   // a Drum Rack's pads per page: 16, 32, 64; 0 fits (not undoable)
 
 // Rack chain (also volumeDb, pan, mute, solo, name)
 inline const juce::Identifier keyLow{"keyLow"};
@@ -409,6 +413,12 @@ public:
     void removeDevice(const juce::ValueTree& device);
     void moveDevice(const juce::ValueTree& device, juce::ValueTree toChain, int toIndex);
     void setDeviceEnabled(juce::ValueTree device, bool on);
+    /** The user's name for a device (an empty name goes back to its type's). */
+    void setDeviceName(juce::ValueTree device, const juce::String& name);
+    /** How the Device view shows a device: folded to a strip, or with every parameter instead of
+        its own panel. Saved with the set, but not undoable (like a group's fold). */
+    static void setDeviceFolded(juce::ValueTree device, bool folded);
+    static void setDeviceShowsAll(juce::ValueTree device, bool all);
     /** Sets a parameter's plain value. Consecutive changes of one parameter within one transaction
         become one undo step (dragging a knob). */
     void setDeviceParameter(juce::ValueTree device, const juce::String& parameterId, double value);

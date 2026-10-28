@@ -99,6 +99,11 @@ void SnapshotBuilder::valueTreePropertyChanged(juce::ValueTree& tree, const juce
         forwardParameter(tree, property);
         return;
     }
+    // Names and the Device view's state don't change the sound.
+    if ((tree.hasType(ids::device) && (property == ids::name || property == ids::folded || property == ids::showAll ||
+                                       property == ids::padStart || property == ids::padPage)) ||
+        (tree.hasType(ids::rackChain) && property == ids::name))
+        return;
     if (tree.hasType(ids::device) && property == ids::enabled)
     {
         if (auto* device = deviceFor(LiveSet::idOf(tree)))

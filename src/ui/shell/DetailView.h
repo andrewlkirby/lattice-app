@@ -12,7 +12,7 @@ namespace lattice::ui
 class DetailView final : public juce::Component
 {
 public:
-    /** device: what shows for the Device view (a placeholder until 4d). */
+    /** device: what shows for the Device view. */
     DetailView(ClipView& clipView, juce::Component& device);
 
     enum class Page
@@ -23,6 +23,8 @@ public:
     Page page() const noexcept { return shown; }
     void show(Page p);
     void toggle() { show(shown == Page::clip ? Page::device : Page::clip); }
+    /** Whose devices the Device view shows ("2 MIDI"), named beside the switch on its page. */
+    void setDeviceTitle(const juce::String& title);
 
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -36,6 +38,7 @@ private:
     ClipView& clip;
     juce::Component& device;
     Page shown = Page::clip;
+    juce::String deviceTitle;
     juce::Rectangle<int> clipButton, deviceButton;
 };
 

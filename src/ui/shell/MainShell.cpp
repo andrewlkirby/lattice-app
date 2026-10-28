@@ -1,6 +1,8 @@
 #include "ui/shell/MainShell.h"
 
+#include "platform/Platform.h"
 #include "ui/clip/ClipCommands.h"
+#include "ui/device/DeviceCommands.h"
 
 namespace lattice::ui
 {
@@ -34,7 +36,7 @@ private:
 
 MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile& settingsFile, TuningRegistry& tunings,
                      ShellActions actions)
-    : session(s), engine(e), settings(settingsFile), registry(&s.undoManager()), stateFeed(s, e)
+    : session(s), engine(e), settings(settingsFile), registry(&s.undoManager()), stateFeed(s, e), deviceSpecs(s.deviceRegistry())
 {
     setLookAndFeel(&lookAndFeel);
     if (const auto* saved = Theme::builtIn(settings.getValue(themeKey, "Dark")))
@@ -47,7 +49,11 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
         };
     addSessionCommands(registry, session,
                        {[this] { return selected.get(); }, [this](SessionSelection sel) { selected.set(sel); },
-                        [this]() -> EditTarget* { return clip != nullptr ? clip->editTargetIfFocused() : nullptr; }},
+                        [this]() -> EditTarget* {
+                            if (auto* t = clip != nullptr ? clip->editTargetIfFocused() : nullptr)
+                                return t;
+                            return devices != nullptr ? devices->editTargetIfFocused() : nullptr;
+                        }},
                        std::move(actions));
     addViewCommands();
     addKeyListener(&registry.keyMappings());
@@ -60,10 +66,44 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
 
     browser = std::make_unique<Placeholder>("Browser", "Devices, presets, samples and tunings, with search (4e). For now the "
                                                        "device list is in the Debug UI tab.");
-    devicePlaceholder = std::make_unique<Placeholder>("Device view", "Device panels come with 4d. For now the device editor is in "
-                                                                     "the Debug UI tab. Shift+Tab switches back to the Clip view.");
     clip = std::make_unique<ClipView>(session, stateFeed, tunings, selected);
-    detail = std::make_unique<DetailView>(*clip, *devicePlaceholder);
+    presetLibrary = std::make_unique<presets::PresetLibrary>(presets::PresetLibrary::defaultUserRoot(platform::defaultPaths().userData),
+                                                             session.deviceRegistry());
+    deviceShared = std::make_unique<DeviceContext>(DeviceContext{.session = session,
+                                                                 .feed = stateFeed,
+                                                                 .specs = deviceSpecs,
+                                                                 .presets = *presetLibrary,
+                                                                 .tunings = tunings,
+                                                                 .jobs = jobPool});
+    deviceShared->chooseFile = [this](const juce::String& title, const juce::String& patterns,
+                                      std::function<void(const juce::File&)> chosen) {
+        chooser = std::make_unique<juce::FileChooser>(title, juce::File::getSpecialLocation(juce::File::userMusicDirectory), patterns);
+        chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                             [chosen = std::move(chosen)](const juce::FileChooser& fc) {
+                                 if (fc.getResult().existsAsFile())
+                                     chosen(fc.getResult());
+                             });
+    };
+    deviceShared->confirm = [this](const juce::String& title, const juce::String& question, const juce::String& yesText,
+                                   std::function<void()> yes) {
+        auto options = juce::MessageBoxOptions().withTitle(title).withMessage(question).withAssociatedComponent(this);
+        if (yesText.isEmpty())
+        {
+            juce::AlertWindow::showAsync(options.withIconType(juce::MessageBoxIconType::InfoIcon).withButton("OK"), nullptr);
+            return;
+        }
+        juce::AlertWindow::showAsync(options.withIconType(juce::MessageBoxIconType::QuestionIcon).withButton(yesText).withButton("Cancel"),
+                                     [yes = std::move(yes)](int result) {
+                                         if (result == 1 && yes)
+                                             yes();
+                                     });
+    };
+    devices = std::make_unique<DeviceView>(*deviceShared, selected);
+    detail = std::make_unique<DetailView>(*clip, *devices);
+    devices->onTitleChanged = [this](const juce::String& title) { detail->setDeviceTitle(title); };
+    detail->setDeviceTitle(devices->ownerName());
+    devices->onShowRequested = [this] { showDeviceView(); };
+    addDeviceCommands(registry, *devices);
     addClipCommands(registry, clip->pianoRoll());
     clip->pianoRoll().setCommands(&registry);
     clip->pianoRoll().onHover = [this](const juce::String&) { showInfoFor(&clip->pianoRoll()); };
@@ -72,6 +112,11 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
     session_->setSendsVisible(settings.getBoolValue(sendsKey, true));
     session_->setIOVisible(settings.getBoolValue(ioKey, true));
     session_->onOpenClip = [this] { showClipView(); };
+    session_->onShowDevices = [this] {
+        // As in Live: a track's header shows its devices, if the detail view is open.
+        if (showDetail)
+            detail->show(DetailView::Page::device);
+    };
     arrangementPlaceholder = std::make_unique<Placeholder>("Arrangement", "After the MVP.");
     addChildComponent(*browser);
     addChildComponent(*detail);
@@ -273,6 +318,13 @@ void MainShell::showClipView()
     detail->show(DetailView::Page::clip);
     if (clip->pianoRoll().isShowing())
         clip->pianoRoll().grabKeyboardFocus();
+}
+
+void MainShell::showDeviceView()
+{
+    if (!showDetail)
+        setDetailVisible(true);
+    detail->show(DetailView::Page::device);
 }
 
 void MainShell::mouseDown(const juce::MouseEvent& e)

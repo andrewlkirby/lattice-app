@@ -239,6 +239,7 @@ MainComponent::MainComponent(AudioEngine& engine, juce::PropertiesFile& settings
     mainShell = std::make_unique<ui::MainShell>(session, engine, settings, tunings, std::move(actions));
     mainShell->setDebugUi(&debug);
     mainShell->selection().addListener(this);
+    session.set().state().addListener(this);
     view.onSelectionChanged = [this] { debugSelectionChanged(); };
     mainShell->controlBar().setComputerKeyboard(&debug.playPanel().computerKeyboard());
     addAndMakeVisible(*mainShell);
@@ -249,6 +250,7 @@ MainComponent::MainComponent(AudioEngine& engine, juce::PropertiesFile& settings
 MainComponent::~MainComponent()
 {
     debug.sessionView().onSelectionChanged = nullptr;
+    sessionController.set().state().removeListener(this);
     mainShell->selection().removeListener(this);
     mainShell.reset(); // before the debug UI it shows
 }
@@ -264,6 +266,16 @@ void MainComponent::selectionChanged(const ui::SessionSelection& s)
     // After the play panel has taken the track (it sets the keyboard's range for the track's
     // tuning): a Drum Rack's pads take over the range.
     keyboardFollow.trackSelected(sessionController.set(), s.track, debug.playPanel().computerKeyboard());
+}
+
+void MainComponent::valueTreePropertyChanged(juce::ValueTree& tree, const juce::Identifier& property)
+{
+    if (property != ids::padStart)
+        return;
+    const auto& s = mainShell->selection().get();
+    auto& set = sessionController.set();
+    if (s.track >= 0 && s.track < set.numTracks() && LiveSet::chainOwnerOf(tree) == set.track(s.track))
+        keyboardFollow.trackSelected(set, s.track, debug.playPanel().computerKeyboard());
 }
 
 void MainComponent::debugSelectionChanged()

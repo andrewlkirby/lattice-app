@@ -1,5 +1,7 @@
 #include "ui/widgets/ControlRegistry.h"
 
+#include "ui/widgets/ValueBinding.h"
+
 #include <algorithm>
 
 namespace lattice::ui
@@ -13,21 +15,44 @@ ControlRegistry* ControlRegistry::findFor(const juce::Component& component)
     return nullptr;
 }
 
+void ControlRegistry::place(juce::Component& control, const ValueBinding* binding, ControlRegistry*& current)
+{
+    auto* now = findFor(control);
+    if (current != nullptr && current != now)
+        current->remove(&control);
+    current = now;
+    if (now == nullptr)
+        return;
+    Entry entry{.component = &control,
+                .binding = binding,
+                .name = control.getTitle(),
+                .group = binding != nullptr ? binding->spec().group : juce::String()};
+    for (auto* c = control.getParentComponent(); c != nullptr; c = c->getParentComponent())
+        if (const auto* locator = dynamic_cast<const Locator*>(c))
+        {
+            locator->describe(entry);
+            break;
+        }
+    now->add(std::move(entry));
+}
+
 void ControlRegistry::add(Entry entry)
 {
-    remove(entry.component.getComponent());
-    list.push_back(std::move(entry));
+    const auto* key = entry.component.getComponent();
+    if (key != nullptr)
+        list.insert_or_assign(key, std::move(entry));
 }
 
 void ControlRegistry::remove(const juce::Component* component)
 {
-    std::erase_if(list, [component](const Entry& e) { return e.component == nullptr || e.component.getComponent() == component; });
+    list.erase(component);
 }
 
 std::vector<const ControlRegistry::Entry*> ControlRegistry::entries() const
 {
     std::vector<const Entry*> out;
-    for (const auto& e : list)
+    out.reserve(list.size());
+    for (const auto& [key, e] : list)
         if (e.component != nullptr)
             out.push_back(&e);
     return out;
@@ -35,10 +60,8 @@ std::vector<const ControlRegistry::Entry*> ControlRegistry::entries() const
 
 const ControlRegistry::Entry* ControlRegistry::find(const juce::Component* component) const
 {
-    for (const auto& e : list)
-        if (e.component != nullptr && e.component.getComponent() == component)
-            return &e;
-    return nullptr;
+    const auto it = list.find(component);
+    return it != list.end() && it->second.component != nullptr ? &it->second : nullptr;
 }
 
 std::vector<const ControlRegistry::Entry*> ControlRegistry::search(const juce::String& text) const
