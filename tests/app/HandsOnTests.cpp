@@ -394,3 +394,24 @@ TEST_CASE("Hands-on 4c: double-clicking a clip opens it in the Clip view and Shi
     CHECK(set.clip(1, 2).isValid());
     CHECK(app.shell().clipView().clip() == set.clip(1, 2));
 }
+
+TEST_CASE("Hands-on 4d, A4: with the focus on the window itself, Ctrl+Z still undoes", "[app][handson]")
+{
+    // After the "Replace the instrument?" alert closed, Windows gave the focus to the window, above
+    // the shell's key mappings: keys only travel up from the focused component, so Ctrl+Z did
+    // nothing. The window's own key handling gives the commands the key first.
+    App app;
+    const auto chain = LiveSet::chainOf(app.set().track(0));
+    const int before = chain.getNumChildren();
+    app.session.undoManager().beginNewTransaction("Insert");
+    app.set().insertDevice(chain, -1, "lattice.reverb");
+    app.settle();
+    REQUIRE(chain.getNumChildren() == before + 1);
+
+    CHECK(app.window->keyPressed(juce::KeyPress('z', juce::ModifierKeys::commandModifier, 0)));
+    app.settle();
+    CHECK(chain.getNumChildren() == before);
+    // Letters still play the computer keyboard.
+    CHECK(app.window->keyPressed(juce::KeyPress('a', 0, 'a')));
+    app.keyboard().releaseAll();
+}

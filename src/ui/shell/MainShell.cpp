@@ -79,23 +79,27 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
                                       std::function<void(const juce::File&)> chosen) {
         chooser = std::make_unique<juce::FileChooser>(title, juce::File::getSpecialLocation(juce::File::userMusicDirectory), patterns);
         chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-                             [chosen = std::move(chosen)](const juce::FileChooser& fc) {
+                             [this, chosen = std::move(chosen), before = focusToRestore()](const juce::FileChooser& fc) {
                                  if (fc.getResult().existsAsFile())
                                      chosen(fc.getResult());
+                                 restoreFocusLater(before);
                              });
     };
     deviceShared->confirm = [this](const juce::String& title, const juce::String& question, const juce::String& yesText,
                                    std::function<void()> yes) {
         auto options = juce::MessageBoxOptions().withTitle(title).withMessage(question).withAssociatedComponent(this);
+        auto refocus = [this, before = focusToRestore()] { restoreFocusLater(before); };
         if (yesText.isEmpty())
         {
-            juce::AlertWindow::showAsync(options.withIconType(juce::MessageBoxIconType::InfoIcon).withButton("OK"), nullptr);
+            juce::AlertWindow::showAsync(options.withIconType(juce::MessageBoxIconType::InfoIcon).withButton("OK"),
+                                         [refocus](int) { refocus(); });
             return;
         }
         juce::AlertWindow::showAsync(options.withIconType(juce::MessageBoxIconType::QuestionIcon).withButton(yesText).withButton("Cancel"),
-                                     [yes = std::move(yes)](int result) {
+                                     [yes = std::move(yes), refocus](int result) {
                                          if (result == 1 && yes)
                                              yes();
+                                         refocus();
                                      });
     };
     devices = std::make_unique<DeviceView>(*deviceShared, selected);
@@ -318,6 +322,31 @@ void MainShell::showClipView()
     detail->show(DetailView::Page::clip);
     if (clip->pianoRoll().isShowing())
         clip->pianoRoll().grabKeyboardFocus();
+}
+
+juce::Component::SafePointer<juce::Component> MainShell::focusToRestore() const
+{
+    return juce::Component::getCurrentlyFocusedComponent();
+}
+
+void MainShell::restoreFocusLater(juce::Component::SafePointer<juce::Component> before)
+{
+    // An asynchronous dialog doesn't give the focus back when it closes (only a modal loop would),
+    // and Windows may hand it to the window itself, above the shell's key mappings. Once the
+    // dialog has gone, put it back where it was, or on the Device view.
+    juce::Component::SafePointer<MainShell> safe(this);
+    juce::MessageManager::callAsync([before, safe] {
+        if (safe == nullptr)
+            return;
+        if (auto* now = juce::Component::getCurrentlyFocusedComponent(); now != nullptr && safe->isParentOf(now))
+            return; // the answer moved it already (an inserted device selects itself)
+        if (before != nullptr && before->isShowing() && safe->isParentOf(before))
+            before->grabKeyboardFocus();
+        else if (safe->devices != nullptr && safe->devices->isShowing())
+            safe->devices->grabKeyboardFocus();
+        else
+            safe->grabKeyboardFocus();
+    });
 }
 
 void MainShell::showDeviceView()

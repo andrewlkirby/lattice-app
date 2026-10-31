@@ -311,8 +311,11 @@ void MainComponent::resized()
 
 bool MainComponent::keyPressed(const juce::KeyPress& key)
 {
-    // The shell's commands have had the key already (its key mappings); what's left is the
-    // computer MIDI keyboard's.
+    // With the focus inside the shell, its commands have had the key already (its key mappings).
+    // Keys only travel up from the focused component, so with the focus here (at startup, or
+    // after a dialog closes) the commands get it first; what's left is the computer MIDI keyboard's.
+    if (!mainShell->hasKeyboardFocus(true) && mainShell->commands().keyMappings().keyPressed(key, mainShell.get()))
+        return true;
     if (dynamic_cast<juce::TextEditor*>(juce::Component::getCurrentlyFocusedComponent()) != nullptr)
         return false; // typing in a text field
 
@@ -349,6 +352,9 @@ MainWindow::MainWindow(const juce::String& name, AudioEngine& engine, juce::Prop
     markStage("content created");
     setContentOwned(component, true);
     setMenuBar(&component->shell().menus());
+    // The window itself can have the focus (when a dialog closes, Windows may give it back here):
+    // its keys still reach the commands.
+    addKeyListener(&component->shell().commands().keyMappings());
     setResizable(true, true);
     centreWithSize(getWidth(), getHeight());
     markStage("window laid out");

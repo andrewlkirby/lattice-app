@@ -108,6 +108,10 @@ public:
     void setAutoArm(bool on);
 
 private:
+    /** The focus a dialog about to open should give back (restoreFocusLater). */
+    juce::Component::SafePointer<juce::Component> focusToRestore() const;
+    void restoreFocusLater(juce::Component::SafePointer<juce::Component> before);
+
     /** A panel that a later phase fills, saying which. */
     class Placeholder;
 

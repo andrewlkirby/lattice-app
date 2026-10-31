@@ -334,6 +334,10 @@ TEST_CASE("Shell: auto-arm follows the selected MIDI track, and can be turned of
         set.setTrackArm(t, false, true);
     f.shell->selection().set({SessionSelection::Kind::slot, 1, 0});
     CHECK(f.session.isAutoArmed(1));
+    auto chain = LiveSet::chainOf(f.session.set().track(0));
+    while (chain.getNumChildren() > 0)
+        f.session.set().removeDevice(chain.getChild(0));
+    f.session.flush();
     f.shell->selection().set({SessionSelection::Kind::track, 0, 0});
     CHECK(f.session.isAutoArmed(0));
     CHECK(!f.session.isArmed(1));
@@ -371,3 +375,61 @@ TEST_CASE("Shell: a click on a control leaves the keys with the view; a click in
     visit(*f.shell);
     CHECK(controls > 10); // the control bar's and the mixer's
 }
+
+#if JUCE_WINDOWS
+namespace juce::detail
+{
+bool dispatchNextMessageOnSystemQueue(bool returnIfNoPendingMessages); // juce_events' own message pump
+}
+
+namespace
+{
+/** Delivers the messages waiting (an alert opens and calls back through them). */
+void pumpMessages()
+{
+    for (int i = 0; i < 1000 && juce::detail::dispatchNextMessageOnSystemQueue(true); ++i)
+    {
+    }
+}
+} // namespace
+
+TEST_CASE("Shell: an instrument replaced after the question undoes with one Ctrl+Z", "[ui][shell][device]")
+{
+    Fixture f;
+    auto chain = LiveSet::chainOf(f.session.set().track(0));
+    while (chain.getNumChildren() > 0)
+        f.session.set().removeDevice(chain.getChild(0));
+    f.session.flush();
+    f.shell->selection().set({SessionSelection::Kind::track, 0, 0});
+    f.shell->showDeviceView();
+    auto& view = f.shell->deviceView();
+    view.flushUpdates();
+    REQUIRE(view.insertHere(drag::device("lattice.synth")));
+    REQUIRE(view.insertHere(drag::device("lattice.reverb")));
+    f.session.flush();
+    REQUIRE(chain.getNumChildren() == 2);
+
+    // The question is a real asynchronous alert: answer Replace, as a click would.
+    CHECK_FALSE(view.insertHere(drag::device("lattice.sampler")));
+    pumpMessages();
+    auto* alert = juce::ModalComponentManager::getInstance()->getModalComponent(0);
+    REQUIRE(alert != nullptr);
+    alert->exitModalState(1);
+    view.flushUpdates();
+    pumpMessages();
+    f.session.flush();
+    CHECK(chain.getChild(0)[ids::deviceType].toString() == "lattice.sampler");
+
+    CHECK(f.press(juce::KeyPress('z', juce::ModifierKeys::commandModifier, 0)));
+    f.session.flush();
+    CHECK(chain.getChild(0)[ids::deviceType].toString() == "lattice.synth");
+    CHECK(chain.getNumChildren() == 2);
+    pumpMessages();
+    view.flushUpdates();
+    auto* synthFrame = view.frameFor(chain.getChild(0));
+    REQUIRE(synthFrame != nullptr);
+    CHECK(synthFrame->isVisible());
+    CHECK(synthFrame->getWidth() > 0);
+    CHECK(view.frameFor(chain.getChild(1)) != nullptr);
+}
+#endif
