@@ -34,6 +34,7 @@ public:
         notesAspect = 1u << 3,     // a track's last note
         loadAspect = 1u << 4,      // the audio callback's load and dropouts (every loadIntervalSeconds)
         devicesAspect = 1u << 5,   // a watched device's readout (gain reduction, spectrum)
+        previewAspect = 1u << 6,   // the browser's preview: playing or not, and where
         allAspects = 0xffffffffu
     };
 
@@ -83,6 +84,10 @@ public:
     std::array<float, 2> returnPeaks(int returnIndex) const;
     std::array<float, 2> masterPeaks() const noexcept { return master; }
     const Load& load() const noexcept { return loadState; }
+    /** The browser's preview: the frame of the sound playing (-1: none, or waiting for its bar),
+        and which play() it is. */
+    std::int64_t previewFrame() const noexcept { return previewAt; }
+    std::uint64_t previewGeneration() const noexcept { return previewGen; }
     /** The slots whose state changed in the last tick (track, scene). */
     const std::vector<std::pair<int, int>>& changedSlots() const noexcept { return slotChanges; }
 
@@ -106,6 +111,8 @@ public:
 
 private:
     void tickBody(double nowSeconds);
+    std::int64_t previewAt = -1;
+    std::uint64_t previewGen = 0;
     /** Reads the watched devices; true if any readout changed. */
     bool readDevices();
 

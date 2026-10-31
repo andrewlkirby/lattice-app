@@ -9,6 +9,7 @@
 #include "engine/EngineSnapshot.h"
 #include "engine/MidiInputQueue.h"
 #include "engine/WorkerPool.h"
+#include "engine/PreviewPlayer.h"
 #include "engine/TestToneSource.h"
 #include "devices/racks/RackLayout.h"
 #include "engine/session/SessionProcessor.h"
@@ -44,6 +45,8 @@ public:
 
     juce::AudioDeviceManager& getDeviceManager() noexcept { return deviceManager; }
     TestToneSource& testTone() noexcept { return tone; }
+    /** The browser's preview bus, mixed after the master. */
+    PreviewPlayer& preview() noexcept { return previewPlayer; }
 
     /** Live MIDI to the armed tracks (any thread except the audio thread). Enabled MIDI input
         devices are routed here automatically. */
@@ -65,6 +68,7 @@ public:
     {
         snapshots.collect();
         workers.collect();
+        previewPlayer.collectGarbage();
     }
 
     /** Any thread except the audio thread. Returns false if the queue was full. */
@@ -140,6 +144,7 @@ private:
 
     juce::AudioDeviceManager deviceManager;
     TestToneSource tone;
+    PreviewPlayer previewPlayer;
     AudioCallbackStats stats;
     LatencyStats latency;
     MidiInputQueue midiQueue;

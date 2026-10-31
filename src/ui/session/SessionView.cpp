@@ -1,5 +1,7 @@
 #include "ui/session/SessionView.h"
 
+#include "ui/device/DeviceContext.h"
+
 #include "ui/theme/LatticeLookAndFeel.h"
 #include "ui/widgets/Toggle.h"
 
@@ -508,6 +510,78 @@ void SessionView::importMidiFiles(const juce::StringArray& files, const Hit& at)
         if (isMidiFile(f) && scene < session.set().numScenes())
             session.importMidiFile(juce::File(f), track, scene++);
     selection.set({Kind::slot, track, at.scene});
+}
+
+// --- Drops from the browser ---------------------------------------------------------------------------
+
+bool SessionView::isInterestedInDragSource(const SourceDetails& details)
+{
+    const auto& d = details.description;
+    return drag::is(d, "device") || drag::is(d, "preset") || drag::is(d, "sample") || drag::is(d, "tuning");
+}
+
+SessionView::Hit SessionView::browserDropAt(juce::Point<int> local, const juce::String& description) const
+{
+    auto hit = hitAt(local);
+    if (hit.area == Area::master)
+        return drag::is(description, "tuning") ? Hit{} : hit;
+    const auto& columns = grid.columns();
+    if (hit.column < 0 || hit.column >= static_cast<int>(columns.size()) || hit.area == Area::none)
+        return {};
+    const auto& c = columns[static_cast<std::size_t>(hit.column)];
+    // A tuning is for a MIDI track: not a group or a return.
+    if (drag::is(description, "tuning") && (c.kind != SessionLayout::Column::Kind::track || c.isGroup))
+        return {};
+    hit.area = Area::header; // the whole column means the track
+    hit.scene = -1;
+    return hit;
+}
+
+juce::Rectangle<int> SessionView::browserTargetArea() const
+{
+    if (browserTarget.area == Area::master)
+        return {scenes.getX(), headers.getY(), scenes.getWidth(), headers.getHeight()};
+    if (browserTarget.area == Area::none || browserTarget.column < 0)
+        return {};
+    const auto slot = slotOnScreen(browserTarget.column, 0);
+    return juce::Rectangle<int>(slot.getX(), headers.getY(), slot.getWidth(), getHeight() - headers.getY()).getIntersection(
+        juce::Rectangle<int>(slots.getX(), 0, slots.getWidth(), getHeight()));
+}
+
+void SessionView::itemDragMove(const SourceDetails& details)
+{
+    const auto hit = browserDropAt(details.localPosition, details.description.toString());
+    if (hit.area == browserTarget.area && hit.column == browserTarget.column)
+        return;
+    repaint(browserTargetArea().expanded(2));
+    browserTarget = hit;
+    repaint(browserTargetArea().expanded(2));
+}
+
+void SessionView::itemDragExit(const SourceDetails&)
+{
+    repaint(browserTargetArea().expanded(2));
+    browserTarget = {};
+}
+
+void SessionView::itemDropped(const SourceDetails& details)
+{
+    repaint(browserTargetArea().expanded(2));
+    browserTarget = {};
+    const auto description = details.description.toString();
+    const auto hit = browserDropAt(details.localPosition, description);
+    if (hit.area != Area::none && onBrowserDrop)
+        onBrowserDrop(hit, description);
+}
+
+void SessionView::paintOverChildren(juce::Graphics& g)
+{
+    const auto area = browserTargetArea();
+    if (area.isEmpty())
+        return;
+    const auto& t = themeOf(*this);
+    g.setColour(t.focus);
+    g.drawRect(area.toFloat().reduced(1.0f), juce::jmax(2.0f, t.stroke * 2.0f));
 }
 
 bool SessionView::isInterestedInFileDrag(const juce::StringArray& files)

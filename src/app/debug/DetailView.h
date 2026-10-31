@@ -22,44 +22,9 @@ struct ChainOwner
     bool operator==(const ChainOwner&) const = default;
 };
 
-/** The device list (docs/04-m3-devices.md, "3f", "Device list"): devices by category, presets by
-    device (factory and user), and sample folders the user adds. Double-click inserts an item on
-    the chain the detail view shows; drag it to put it somewhere particular (a chain, a Drum Rack
-    pad, a Sampler). The full browser is M4. */
-class DeviceBrowser final : public juce::Component
-{
-public:
-    DeviceBrowser(EditorContext& context, juce::PropertiesFile& settings);
-    ~DeviceBrowser() override;
-
-    /** Called with a drag description (drag::) when an item is double-clicked. */
-    std::function<void(const juce::String&)> onInsert;
-
-    /** Re-reads presets (after one was saved) and sample folders. */
-    void refresh();
-
-    void paint(juce::Graphics& g) override;
-    void resized() override;
-
-private:
-    class Item;
-    class FolderItem;
-
-    void addSampleFolder();
-    juce::StringArray sampleFolders() const;
-
-    EditorContext& context;
-    juce::PropertiesFile& settings;
-    juce::TreeView tree;
-    std::unique_ptr<juce::TreeViewItem> root;
-    juce::TextButton addFolder{"+ Folder"};
-    std::unique_ptr<juce::FileChooser> chooser;
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DeviceBrowser)
-};
-
-/** The bottom of the session view, as Live's Detail View: the device list on the left and the
-    selected track's (or return's, or the master's) device chain. */
+/** The bottom of the session view, as Live's Detail View: the selected track's (or return's, or
+    the master's) device chain. (Its device list went in M4 4e: the browser has every device,
+    preset and sample.) */
 class DetailView final : public juce::Component, private juce::ValueTree::Listener, private juce::AsyncUpdater
 {
 public:
@@ -70,7 +35,6 @@ public:
     const ChainOwner& owner() const noexcept { return shown; }
     /** The shown chain's row (null while there is none). */
     ChainRow* chainRow() const noexcept { return row.get(); }
-    DeviceBrowser& deviceList() noexcept { return browser; }
     presets::PresetLibrary& presetLibrary() noexcept { return library; }
     /** Applies pending rebuilds now (tests; the UI gets them on the next message-loop turn). */
     void flushUpdates();
@@ -104,7 +68,6 @@ private:
     ChainOwner shown;
     juce::ValueTree shownChain;
 
-    DeviceBrowser browser;
     juce::Viewport rowView;
     std::unique_ptr<ChainRow> row;
     std::unique_ptr<juce::FileChooser> chooser;

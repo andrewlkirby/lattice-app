@@ -71,6 +71,10 @@ public:
     juce::PopupMenu insertMenu(const juce::ValueTree& chain, int index);
 
     // --- Hot-swap ------------------------------------------------------------------------------------
+    /** Replaces a device, in its place, with what a description names (hot-swap; a browser row
+        dropped on a device's title bar). One undo step; false if it can't go there. */
+    bool replaceDevice(const juce::ValueTree& target, const juce::String& description);
+
     /** The device the next insert replaces (an invalid tree: hot-swap is off). */
     void setHotSwapTarget(const juce::ValueTree& device);
     const juce::ValueTree& hotSwapTarget() const noexcept { return swapTarget; }
@@ -126,7 +130,6 @@ private:
     void valueTreeChildOrderChanged(juce::ValueTree&, int, int) override;
     void valueTreePropertyChanged(juce::ValueTree&, const juce::Identifier&) override;
     void valueTreeRedirected(juce::ValueTree&) override;
-    bool replaceDevice(const juce::ValueTree& target, const juce::String& description);
     bool insertNow(const juce::String& description, const juce::ValueTree& chain, int index);
     void scrollIntoView(juce::Component& c);
     void moveSelection(int delta);

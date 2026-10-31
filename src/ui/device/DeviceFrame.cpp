@@ -258,6 +258,12 @@ void DeviceFrame::paint(juce::Graphics& g)
 void DeviceFrame::paintOverChildren(juce::Graphics& g)
 {
     const auto& t = themeOf(*this);
+    if (swapHover)
+    {
+        // What's dropped here replaces this device.
+        g.setColour(t.focus);
+        g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(1.0f), t.radius, juce::jmax(2.0f, t.stroke * 2.0f));
+    }
     const bool on = node.getProperty(ids::enabled, true);
     if (!on && !isFolded() && content != nullptr)
     {
@@ -448,13 +454,44 @@ void DeviceFrame::loadSample(const juce::File& file)
         panels::loadSampleInto(context, node, file);
 }
 
+bool DeviceFrame::dropReplaces(const SourceDetails& details) const
+{
+    const auto& d = details.description;
+    return (drag::is(d, "device") || drag::is(d, "preset")) && titleBar().contains(details.localPosition);
+}
+
 bool DeviceFrame::isInterestedInDragSource(const SourceDetails& details)
 {
-    return isSampler() && drag::is(details.description, "sample");
+    // Anywhere else, the chain takes the drop and inserts beside.
+    return (isSampler() && drag::is(details.description, "sample")) || dropReplaces(details);
+}
+
+void DeviceFrame::itemDragMove(const SourceDetails& details)
+{
+    const bool replaces = dropReplaces(details);
+    if (replaces != swapHover)
+    {
+        swapHover = replaces;
+        repaint();
+    }
+}
+
+void DeviceFrame::itemDragExit(const SourceDetails&)
+{
+    swapHover = false;
+    repaint();
 }
 
 void DeviceFrame::itemDropped(const SourceDetails& details)
 {
+    swapHover = false;
+    repaint();
+    if (dropReplaces(details))
+    {
+        if (context.view != nullptr)
+            context.view->replaceDevice(node, details.description.toString());
+        return;
+    }
     loadSample(juce::File(drag::payload(details.description)));
 }
 

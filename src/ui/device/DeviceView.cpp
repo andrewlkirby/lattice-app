@@ -35,11 +35,14 @@ juce::String typeOfDescription(const DeviceContext& context, const juce::String&
         return samplerType;
     if (drag::is(description, "preset"))
     {
-        const int i = payload.getIntValue();
-        const auto& all = context.presets.all();
         presets::Preset p;
-        if (i < 0 || i >= static_cast<int>(all.size()) || context.presets.load(all[static_cast<std::size_t>(i)], p).failed())
-            return {};
+        if (const auto* info = context.presets.find(payload); info != nullptr)
+        {
+            if (context.presets.load(*info, p).failed())
+                return {};
+        }
+        else if (!juce::File::isAbsolutePath(payload) || presets::read(juce::File(payload), p).failed())
+            return {}; // a preset file the library hasn't listed (yet) reads straight from disk
         const auto type = p.device[ids::deviceType].toString();
         if (preset != nullptr)
             *preset = std::move(p);

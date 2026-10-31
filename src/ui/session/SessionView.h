@@ -37,6 +37,7 @@ namespace lattice::ui
     layout and the strips; anything else only repaints, so a fader being dragged stays put. */
 class SessionView final : public juce::Component,
                           public juce::FileDragAndDropTarget,
+                          public juce::DragAndDropTarget,
                           private EngineStateFeed::Listener,
                           private SessionSelectionModel::Listener,
                           private juce::ValueTree::Listener,
@@ -105,6 +106,19 @@ public:
     void fileDragMove(const juce::StringArray& files, int x, int y) override;
     void fileDragExit(const juce::StringArray& files) override;
     void filesDropped(const juce::StringArray& files, int x, int y) override;
+    // juce::DragAndDropTarget: the browser's rows (docs/05-m4-ui.md, 4e). Devices, presets and
+    // samples dropped on a track (anywhere in its column), a return or the master corner go into
+    // its chain; a tuning dropped on a MIDI track sets its tuning.
+    bool isInterestedInDragSource(const SourceDetails& details) override;
+    void itemDragMove(const SourceDetails& details) override;
+    void itemDragExit(const SourceDetails& details) override;
+    void itemDropped(const SourceDetails& details) override;
+    /** What a browser drop at a point would go to: a column or the master corner (area none: nothing). */
+    Hit browserDropAt(juce::Point<int> local, const juce::String& description) const;
+    /** Called with where a browser row was dropped and its description (ui::drag). */
+    std::function<bool(const Hit&, const juce::String&)> onBrowserDrop;
+    void paintOverChildren(juce::Graphics&) override;
+
     /** Called when a double-click asks to see the selected clip (on a clip, or making one). */
     std::function<void()> onOpenClip;
     /** Called when a click on a track's, a return's or the master's header asks to see its
@@ -185,6 +199,8 @@ private:
     Hit dragFrom, dragTo; // a clip drag in progress (dragFrom.area none: none)
     bool dragging = false;
     Hit dropTarget; // a file drag hovering over a slot
+    Hit browserTarget; // a browser drag hovering over a column or the master corner
+    juce::Rectangle<int> browserTargetArea() const;
     bool structureChanged = true;
     bool showMixer = true, showSends = true, showIO = true;
     juce::Component stripArea; // clips the strips to the scrolling part

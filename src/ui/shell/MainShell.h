@@ -1,6 +1,8 @@
 #pragma once
 
 #include "core/JobPool.h"
+#include "library/Library.h"
+#include "ui/browser/BrowserView.h"
 #include "ui/device/DeviceView.h"
 #include "ui/commands/SessionCommands.h"
 #include "ui/session/SessionSelectionModel.h"
@@ -21,7 +23,7 @@ namespace lattice::ui
 {
 
 /** The main window's layout (docs/05-m4-ui.md, 4a): the control bar along the top, the browser on
-    the left with the info view under it, the main area (Session; Arrangement, disabled for now;
+    the left (4e; its width dragged at its right edge) with the info view under it, the main area (Session; Arrangement, disabled for now;
     and, until the new views cover everything, the Debug UI), the detail view along the bottom, and
     the status bar. The browser, detail view and info view can each be shown or hidden.
 
@@ -58,6 +60,16 @@ public:
     DetailView& detailView() noexcept { return *detail; }
     ClipView& clipView() noexcept { return *clip; }
     DeviceView& deviceView() noexcept { return *devices; }
+    BrowserView& browserView() noexcept { return *browser; }
+    library::Library& library() noexcept { return *libraryService; }
+    /** Inserts what the browser names (a drag description) where the Device view is looking; a
+        tuning goes to the selected track. False if nothing was inserted (or a question was asked). */
+    bool insertFromBrowser(const juce::String& description);
+    /** Gives a track a tuning: a TuningRegistry ID, or a tuning file (loaded first). One undo step. */
+    bool setTrackTuningFrom(int track, const juce::String& idOrPath);
+    /** Something from the browser dropped on the Session view: onto a track (or a return, or the
+        master corner) it goes at the end of that chain; a tuning sets a track's tuning. */
+    bool dropFromBrowser(const SessionView::Hit& hit, const juce::String& description);
     DeviceContext& deviceContext() noexcept { return *deviceShared; }
     /** Shows the Device view (with the selected track's devices). */
     void showDeviceView();
@@ -95,6 +107,7 @@ public:
     static constexpr auto browserKey = "view.browser";
     static constexpr auto detailKey = "view.detail";
     static constexpr auto detailHeightKey = "view.detailHeight";
+    static constexpr auto browserWidthKey = "view.browserWidth";
     static constexpr auto infoKey = "view.info";
     static constexpr auto mixerKey = "view.mixer";
     static constexpr auto sendsKey = "view.sends";
@@ -140,18 +153,22 @@ private:
 
     std::unique_ptr<CommandMenus> menuModel;
     std::unique_ptr<ControlBar> bar;
-    std::unique_ptr<Placeholder> browser, arrangementPlaceholder;
+    std::unique_ptr<Placeholder> arrangementPlaceholder;
     std::unique_ptr<SessionView> session_;
     std::unique_ptr<ClipView> clip;
     DeviceSpecs deviceSpecs;
     std::unique_ptr<presets::PresetLibrary> presetLibrary;
+    std::unique_ptr<library::Library> libraryService; // after the presets and the job pool it uses
+    std::unique_ptr<BrowserView> browser;
     std::unique_ptr<DeviceContext> deviceShared;
     std::unique_ptr<DeviceView> devices;
     std::unique_ptr<juce::FileChooser> chooser;
     std::unique_ptr<DetailView> detail; // after what it shows, so it goes first
-    juce::Rectangle<int> detailDivider;
+    juce::Rectangle<int> detailDivider, browserDivider;
     int detailHeight = 0; // 0: the default share of the window
     int dragStartHeight = -1;
+    int browserWidth = 0; // 0: the default
+    int dragStartWidth = -1;
     juce::TabbedComponent tabs{juce::TabbedButtonBar::TabsAtTop};
     InfoView info;
     std::unique_ptr<StatusBar> status;

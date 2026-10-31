@@ -37,11 +37,13 @@ add_executable(lattice_tests
     engine/SessionEngineTests.cpp
     engine/SnapshotStressTests.cpp
     engine/TestToneTests.cpp
+    library/LibraryTests.cpp
     platform/PathsTests.cpp
     resources/ResourceTests.cpp
     tuning/ColundiParserTests.cpp
     tuning/ScalaAndRegistryTests.cpp
     tuning/TrackTuningTests.cpp
+    ui/BrowserTests.cpp
     ui/ClipViewTests.cpp
     ui/DeviceViewTests.cpp
     ui/CommandTests.cpp

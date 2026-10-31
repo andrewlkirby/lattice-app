@@ -78,6 +78,37 @@ if(LATTICE_PROFILE)
         OPTIONS "TRACY_ENABLE ON" "TRACY_ON_DEMAND ON")
 endif()
 
+# SQLite, for the browser's library index (docs/05-m4-ui.md, 4e): the amalgamation, built in.
+CPMAddPackage(
+    NAME sqlite
+    VERSION 3.54.1
+    URL https://www.sqlite.org/2026/sqlite-amalgamation-3540100.zip
+    URL_HASH SHA256=0a9c8e34352dad46006aa82836d5383bff9dc6bc9ce5a60553c05aa30e6ad1f9
+    DOWNLOAD_ONLY YES)
+add_library(lattice_sqlite STATIC "${sqlite_SOURCE_DIR}/sqlite3.c")
+target_include_directories(lattice_sqlite SYSTEM PUBLIC "${sqlite_SOURCE_DIR}")
+# One connection per thread at a time (the index guards its connection), full-text search, and
+# nothing the library doesn't use.
+target_compile_definitions(lattice_sqlite
+    PRIVATE
+        SQLITE_THREADSAFE=2
+        SQLITE_ENABLE_FTS5
+        SQLITE_DQS=0
+        SQLITE_DEFAULT_MEMSTATUS=0
+        SQLITE_DEFAULT_WAL_SYNCHRONOUS=1
+        SQLITE_OMIT_LOAD_EXTENSION
+        SQLITE_OMIT_DEPRECATED
+        SQLITE_OMIT_SHARED_CACHE
+        SQLITE_USE_ALLOCA)
+if(MSVC)
+    target_compile_options(lattice_sqlite PRIVATE /W0)
+else()
+    target_compile_options(lattice_sqlite PRIVATE -w)
+    find_package(Threads REQUIRED)
+    target_link_libraries(lattice_sqlite PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+endif()
+set_target_properties(lattice_sqlite PROPERTIES FOLDER "Dependencies" POSITION_INDEPENDENT_CODE ON)
+
 # --- lattice_juce: every JUCE module, compiled exactly once ---------------------------------------
 # JUCE modules are INTERFACE libraries that add their sources to whatever links them. Linking them
 # PRIVATE here and re-exporting only their include paths and definitions means the app and the
@@ -204,6 +235,7 @@ add_library(lattice_core STATIC
     src/engine/AudioEngine.cpp
     src/engine/Metronome.cpp
     src/engine/MidiInputQueue.cpp
+    src/engine/PreviewPlayer.cpp
     src/engine/SessionController.cpp
     src/engine/SnapshotBuilder.cpp
     src/engine/TestToneSource.cpp
@@ -213,6 +245,11 @@ add_library(lattice_core STATIC
     src/engine/session/ClipData.cpp
     src/engine/session/ClipPlayer.cpp
     src/engine/session/SessionProcessor.cpp
+    src/library/Library.cpp
+    src/library/LibraryIndex.cpp
+    src/library/PresetPreviews.cpp
+    src/library/Sqlite.cpp
+    src/library/WaveformPeaks.cpp
     src/platform/PathsCommon.cpp
     src/tuning/TrackTuning.cpp
     src/tuning/Tet12.cpp
@@ -222,15 +259,15 @@ add_library(lattice_core STATIC
     src/tuning/parsers/NumberParsing.cpp
     src/tuning/parsers/ScalaParser.cpp)
 if(WIN32)
-    target_sources(lattice_core PRIVATE src/platform/windows/PlatformWindows.cpp)
+    target_sources(lattice_core PRIVATE src/platform/windows/PlatformWindows.cpp src/platform/windows/FileWatcherWindows.cpp)
     target_link_libraries(lattice_core PRIVATE avrt) # MMCSS for the audio worker threads
 elseif(APPLE)
-    target_sources(lattice_core PRIVATE src/platform/macos/PlatformMacOS.cpp)
+    target_sources(lattice_core PRIVATE src/platform/macos/PlatformMacOS.cpp src/platform/macos/FileWatcherMacOS.cpp)
 else()
-    target_sources(lattice_core PRIVATE src/platform/linux/PlatformLinux.cpp)
+    target_sources(lattice_core PRIVATE src/platform/linux/PlatformLinux.cpp src/platform/linux/FileWatcherLinux.cpp)
 endif()
 target_include_directories(lattice_core PUBLIC src)
-target_link_libraries(lattice_core PUBLIC lattice_juce PRIVATE lattice_binary_data)
+target_link_libraries(lattice_core PUBLIC lattice_juce PRIVATE lattice_binary_data lattice_sqlite)
 target_compile_definitions(lattice_core PUBLIC LATTICE_PROFILE=$<BOOL:${LATTICE_PROFILE}>)
 if(LATTICE_PROFILE)
     target_link_libraries(lattice_core PUBLIC Tracy::TracyClient)
@@ -273,6 +310,8 @@ lattice_set_warnings(lattice_debug_ui)
 
 # --- UI (M4, docs/05-m4-ui.md): a library, so the tests can drive the views headless ---------------
 add_library(lattice_ui STATIC
+    src/ui/browser/BrowserModel.cpp
+    src/ui/browser/BrowserView.cpp
     src/ui/clip/ClipCommands.cpp
     src/ui/clip/ClipNotes.cpp
     src/ui/clip/ClipPropertiesPanel.cpp

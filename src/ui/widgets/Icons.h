@@ -21,7 +21,11 @@ enum class Icon
     up,         // ▴ scroll up
     map,        // a macro mapped to a parameter
     plus,
-    cross
+    cross,
+    speaker, // the browser's preview
+    sync,    // a preview waits for the next bar
+    folder,
+    search
 };
 
 /** The icon's path in the unit square (0..1 both ways). */

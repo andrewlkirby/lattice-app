@@ -177,6 +177,13 @@ void EngineStateFeed::tickBody(double nowSeconds)
     if (readDevices())
         changed |= devicesAspect;
 
+    const auto at = engine.preview().position();
+    const auto gen = engine.preview().playingGeneration();
+    if (at != previewAt || gen != previewGen)
+        changed |= previewAspect;
+    previewAt = at;
+    previewGen = gen;
+
     if (nowSeconds - lastLoadSeconds >= loadIntervalSeconds)
     {
         lastLoadSeconds = nowSeconds;

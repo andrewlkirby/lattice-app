@@ -25,6 +25,13 @@ struct Paths
 /** The folders for the current user on this OS. Folders are not created here. */
 Paths defaultPaths();
 
+/** Where the app keeps the user's library (presets, the browser's index, caches): defaultPaths()'s
+    userData, unless the tests have put it somewhere of their own. */
+juce::File userDataFolder();
+/** Tests: every userDataFolder() from now on is this one (an empty File goes back to the default),
+    so no test reads or writes the real user's library. */
+void setUserDataFolderForTests(const juce::File& folder);
+
 /** Seconds since the OS created this process (not since main()), so startup measurements include
     loader and static-initialisation time. */
 double secondsSinceProcessStart();

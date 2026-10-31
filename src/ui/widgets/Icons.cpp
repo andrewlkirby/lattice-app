@@ -77,6 +77,41 @@ juce::Path iconPath(Icon icon)
         p.startNewSubPath(0.82f, 0.18f);
         p.lineTo(0.18f, 0.82f);
         break;
+    case Icon::speaker:
+        p.startNewSubPath(0.1f, 0.38f);
+        p.lineTo(0.28f, 0.38f);
+        p.lineTo(0.5f, 0.16f);
+        p.lineTo(0.5f, 0.84f);
+        p.lineTo(0.28f, 0.62f);
+        p.lineTo(0.1f, 0.62f);
+        p.closeSubPath();
+        p.addCentredArc(0.5f, 0.5f, 0.2f, 0.2f, 0.0f, 0.75f, 2.4f, true);
+        p.addCentredArc(0.5f, 0.5f, 0.36f, 0.36f, 0.0f, 0.75f, 2.4f, true);
+        break;
+    case Icon::sync:
+        // A bar line with a beat about to land on it.
+        p.startNewSubPath(0.7f, 0.12f);
+        p.lineTo(0.7f, 0.88f);
+        p.startNewSubPath(0.1f, 0.5f);
+        p.lineTo(0.55f, 0.5f);
+        p.startNewSubPath(0.4f, 0.32f);
+        p.lineTo(0.58f, 0.5f);
+        p.lineTo(0.4f, 0.68f);
+        break;
+    case Icon::folder:
+        p.startNewSubPath(0.08f, 0.24f);
+        p.lineTo(0.38f, 0.24f);
+        p.lineTo(0.46f, 0.34f);
+        p.lineTo(0.92f, 0.34f);
+        p.lineTo(0.92f, 0.82f);
+        p.lineTo(0.08f, 0.82f);
+        p.closeSubPath();
+        break;
+    case Icon::search:
+        p.addEllipse(0.12f, 0.12f, 0.5f, 0.5f);
+        p.startNewSubPath(0.55f, 0.55f);
+        p.lineTo(0.88f, 0.88f);
+        break;
     }
     return p;
 }

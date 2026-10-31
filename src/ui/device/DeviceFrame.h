@@ -72,9 +72,14 @@ public:
     // ControlRegistry::Locator
     void describe(ControlRegistry::Entry& entry) const override;
 
-    // A Sampler takes samples.
+    // A Sampler takes samples; a device or preset dropped on the title bar replaces the device
+    // (hot-swap, from the browser).
     bool isInterestedInDragSource(const SourceDetails&) override;
+    void itemDragMove(const SourceDetails&) override;
+    void itemDragExit(const SourceDetails&) override;
     void itemDropped(const SourceDetails&) override;
+    /** Whether a drop of this description here would replace the device. */
+    bool dropReplaces(const SourceDetails&) const;
     bool isInterestedInFileDrag(const juce::StringArray& files) override;
     void filesDropped(const juce::StringArray& files, int x, int y) override;
 
@@ -89,6 +94,7 @@ private:
     juce::ValueTree node;
     std::unique_ptr<DeviceBody> content;
     bool builtAll = false;
+    bool swapHover = false; // a drop here would replace the device
 
     IconButton power{"On", Icon::power, "Turns the device on or off."};
     IconButton fold{"Fold", Icon::foldOpen, "Folds the device to a narrow strip (or unfolds it)."};

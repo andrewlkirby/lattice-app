@@ -10,6 +10,11 @@
 
 #include <functional>
 
+namespace lattice::library
+{
+class PeakCache;
+}
+
 namespace lattice::ui
 {
 
@@ -18,10 +23,13 @@ class DeviceView;
 /** What is being dragged in and onto the Device view, as a juce::var drag description (the browser
     in 4e drags the same):
     - "device:<typeId>"   a new device
-    - "preset:<index>"    a preset from the library (an index into PresetLibrary::all())
+    - "preset:<which>"    a preset: an index into PresetLibrary::all(), "factory:<resource>" for a
+                          factory preset, or a .lpreset file's path (the browser's items)
     - "sample:<path>"     a sample file (also files dragged in from the OS)
     - "move:<deviceId>"   a device already in the set
-    - "pad:<note>"        a Drum Rack pad, dragged to another pad */
+    - "pad:<note>"        a Drum Rack pad, dragged to another pad
+    - "tuning:<which>"    a tuning (the browser): a TuningRegistry ID or a tuning file's path,
+                          dropped on a track header to set its tuning */
 namespace drag
 {
 inline juce::String device(const juce::String& typeId) { return "device:" + typeId; }
@@ -29,6 +37,8 @@ inline juce::String preset(int index) { return "preset:" + juce::String(index); 
 inline juce::String sample(const juce::File& f) { return "sample:" + f.getFullPathName(); }
 inline juce::String move(std::int64_t deviceId) { return "move:" + juce::String(deviceId); }
 inline juce::String pad(int note) { return "pad:" + juce::String(note); }
+inline juce::String presetKey(const juce::String& key) { return "preset:" + key; }
+inline juce::String tuning(const juce::String& idOrPath) { return "tuning:" + idOrPath; }
 
 inline bool is(const juce::var& description, const char* kind)
 {
@@ -68,6 +78,8 @@ struct DeviceContext
         confirm = {};
     /** Called after a preset was saved (lists of presets read the library again). */
     std::function<void()> presetsChanged = {};
+    /** Waveform peaks kept on disk (none in tests that don't ask). */
+    const library::PeakCache* peaks = nullptr;
     /** The view the panels are in: the selection, the inserting point, hot-swap and map mode. */
     DeviceView* view = nullptr;
 

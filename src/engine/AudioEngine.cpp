@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 
 namespace lattice
 {
@@ -159,6 +160,7 @@ void AudioEngine::prepare(double newSampleRate, int maxBlockSize)
     right.assign(block, 0.0f);
     toneScratch.assign(block, 0.0f);
     tone.prepare(newSampleRate);
+    previewPlayer.prepare(newSampleRate);
     sessionProcessor.prepare(newSampleRate, static_cast<int>(block));
     stats.reset();
 
@@ -241,6 +243,19 @@ void AudioEngine::process(float* const* outputs, int numOutputs, int numSamples)
         tone.render(toneScratch.data(), n);
         juce::FloatVectorOperations::add(left.data(), toneScratch.data(), n);
         juce::FloatVectorOperations::add(right.data(), toneScratch.data(), n);
+
+        // The preview bus, after the master. A synced preview waits for the next bar.
+        double toNextBar = -1.0;
+        if (const auto& clock = sessionProcessor.transport(); clock.isPlaying())
+        {
+            const auto start = sessionProcessor.currentSample() - n;
+            const double beat = clock.beatAt(start);
+            const double origin = sessionProcessor.transportState().barOrigin;
+            const double perBar = clock.beatsPerBar();
+            const double nextBar = origin + std::ceil((beat - origin) / perBar - 1.0e-9) * perBar;
+            toNextBar = static_cast<double>(clock.sampleAtBeat(nextBar) - start);
+        }
+        previewPlayer.render(left.data(), right.data(), n, toNextBar);
 
         for (int ch = 0; ch < numOutputs; ++ch)
         {

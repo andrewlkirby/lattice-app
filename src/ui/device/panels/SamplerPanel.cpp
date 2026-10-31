@@ -5,6 +5,7 @@
 
 #include "devices/instruments/Sampler.h"
 #include "devices/samples/SamplePool.h"
+#include "library/WaveformPeaks.h"
 #include "ui/device/DevicePanels.h"
 #include "ui/device/panels/PanelKit.h"
 #include "ui/theme/LatticeLookAndFeel.h"
@@ -14,82 +15,7 @@
 namespace lattice::ui::panels
 {
 
-// --- Peaks -----------------------------------------------------------------------------------------------
-
-/** A sample's peaks at several zoom levels (docs/05-m4-ui.md, "Rendering and performance"): the
-    lowest and highest value of each run of frames, 64 frames a run, then 4 times longer at each level
-    up, so a view of any zoom reads a few thousand values at most. Built in the background. */
-struct WaveformPeaks
-{
-    static constexpr int baseFrames = 64;
-    struct Level
-    {
-        int framesPerBin = baseFrames;
-        std::vector<float> low, high;
-    };
-    std::vector<Level> levels;
-    std::int64_t length = 0;
-
-    static std::shared_ptr<const WaveformPeaks> build(const SampleData& sample, const std::function<bool()>& cancelled)
-    {
-        auto p = std::make_shared<WaveformPeaks>();
-        p->length = sample.length;
-        Level base;
-        const auto bins = static_cast<std::size_t>((sample.length + baseFrames - 1) / baseFrames);
-        base.low.assign(bins, 0.0f);
-        base.high.assign(bins, 0.0f);
-        for (std::size_t b = 0; b < bins; ++b)
-        {
-            if ((b & 4095) == 0 && cancelled())
-                return nullptr;
-            float lo = 0.0f, hi = 0.0f;
-            const auto first = static_cast<std::int64_t>(b) * baseFrames;
-            const auto last = std::min<std::int64_t>(sample.length, first + baseFrames);
-            for (int c = 0; c < sample.numChannels; ++c)
-            {
-                const float* data = sample.channel(c);
-                for (auto f = first; f < last; ++f)
-                    lo = std::min(lo, data[f]), hi = std::max(hi, data[f]);
-            }
-            base.low[b] = lo;
-            base.high[b] = hi;
-        }
-        p->levels.push_back(std::move(base));
-        while (p->levels.back().low.size() > 512)
-        {
-            const auto& below = p->levels.back();
-            Level up;
-            up.framesPerBin = below.framesPerBin * 4;
-            const std::size_t n = (below.low.size() + 3) / 4;
-            up.low.assign(n, 0.0f);
-            up.high.assign(n, 0.0f);
-            for (std::size_t i = 0; i < below.low.size(); ++i)
-            {
-                up.low[i / 4] = std::min(up.low[i / 4], below.low[i]);
-                up.high[i / 4] = std::max(up.high[i / 4], below.high[i]);
-            }
-            p->levels.push_back(std::move(up));
-        }
-        return p;
-    }
-
-    /** The lowest and highest value over frames [from, to). */
-    std::pair<float, float> range(double from, double to) const
-    {
-        // The coarsest level that still gives at least one bin over the range.
-        const Level* level = &levels.front();
-        for (const auto& l : levels)
-            if (l.framesPerBin <= (to - from))
-                level = &l;
-        const auto n = static_cast<std::int64_t>(level->low.size());
-        auto b0 = juce::jlimit<std::int64_t>(0, n - 1, static_cast<std::int64_t>(from / level->framesPerBin));
-        const auto b1 = juce::jlimit<std::int64_t>(b0, n - 1, static_cast<std::int64_t>(std::ceil(to / level->framesPerBin)) - 1);
-        float lo = 0.0f, hi = 0.0f;
-        for (; b0 <= b1; ++b0)
-            lo = std::min(lo, level->low[static_cast<std::size_t>(b0)]), hi = std::max(hi, level->high[static_cast<std::size_t>(b0)]);
-        return {lo, hi};
-    }
-};
+using library::WaveformPeaks;
 
 namespace
 {
@@ -475,7 +401,18 @@ private:
         juce::Component::SafePointer<WaveformView> safe(this);
         job = context.jobs.submit(
             "Waveform of " + current->name,
-            [sample = current, built](JobPool::Context& work) { *built = WaveformPeaks::build(*sample, [&work] { return work.isCancelled(); }); },
+            [sample = current, built, cache = context.peaks](JobPool::Context& work) {
+                // From the disk cache when the file's peaks are there; built and stored otherwise.
+                const juce::File file(sample->path);
+                if (cache != nullptr && sample->path.isNotEmpty())
+                    *built = cache->load(file);
+                if (*built == nullptr)
+                {
+                    *built = WaveformPeaks::build(*sample, [&work] { return work.isCancelled(); });
+                    if (*built != nullptr && cache != nullptr && sample->path.isNotEmpty())
+                        cache->store(file, **built);
+                }
+            },
             [safe, built](bool cancelled) {
                 if (safe == nullptr || cancelled)
                     return;

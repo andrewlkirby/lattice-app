@@ -64,11 +64,12 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
     bar->frameBudgetSeconds = frameBudgetSeconds;
     addAndMakeVisible(*bar);
 
-    browser = std::make_unique<Placeholder>("Browser", "Devices, presets, samples and tunings, with search (4e). For now the "
-                                                       "device list is in the Debug UI tab.");
     clip = std::make_unique<ClipView>(session, stateFeed, tunings, selected);
-    presetLibrary = std::make_unique<presets::PresetLibrary>(presets::PresetLibrary::defaultUserRoot(platform::defaultPaths().userData),
+    presetLibrary = std::make_unique<presets::PresetLibrary>(presets::PresetLibrary::defaultUserRoot(platform::userDataFolder()),
                                                              session.deviceRegistry());
+    libraryService = std::make_unique<library::Library>(platform::userDataFolder(),
+                                                         library::Library::defaultDatabaseFile(platform::userDataFolder()),
+                                                         session.deviceRegistry(), *presetLibrary, tunings, jobPool);
     deviceShared = std::make_unique<DeviceContext>(DeviceContext{.session = session,
                                                                  .feed = stateFeed,
                                                                  .specs = deviceSpecs,
@@ -102,6 +103,7 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
                                          refocus();
                                      });
     };
+    deviceShared->peaks = &libraryService->peaks();
     devices = std::make_unique<DeviceView>(*deviceShared, selected);
     detail = std::make_unique<DetailView>(*clip, *devices);
     devices->onTitleChanged = [this](const juce::String& title) { detail->setDeviceTitle(title); };
@@ -121,6 +123,26 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
         if (showDetail)
             detail->show(DetailView::Page::device);
     };
+    session_->onBrowserDrop = [this](const SessionView::Hit& hit, const juce::String& description) {
+        return dropFromBrowser(hit, description);
+    };
+
+    BrowserView::Actions browsing;
+    browsing.insert = [this](const juce::String& description) { return insertFromBrowser(description); };
+    browsing.chooseFolder = [this](std::function<void(const juce::File&)> chosen) {
+        chooser = std::make_unique<juce::FileChooser>("Add a folder to Places", juce::File::getSpecialLocation(juce::File::userMusicDirectory));
+        chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                             [this, chosen = std::move(chosen), before = focusToRestore()](const juce::FileChooser& fc) {
+                                 if (fc.getResult().isDirectory())
+                                     chosen(fc.getResult());
+                                 restoreFocusLater(before);
+                             });
+    };
+    browsing.sampleRate = [this] {
+        auto* device = engine.getDeviceManager().getCurrentAudioDevice();
+        return device != nullptr ? device->getCurrentSampleRate() : 48000.0;
+    };
+    browser = std::make_unique<BrowserView>(*libraryService, jobPool, engine, stateFeed, *presetLibrary, &settings, std::move(browsing));
     arrangementPlaceholder = std::make_unique<Placeholder>("Arrangement", "After the MVP.");
     addChildComponent(*browser);
     addChildComponent(*detail);
@@ -144,6 +166,7 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
     showBrowser = settings.getBoolValue(browserKey, false);
     showDetail = settings.getBoolValue(detailKey, false);
     detailHeight = settings.getIntValue(detailHeightKey, 0);
+    browserWidth = settings.getIntValue(browserWidthKey, 0);
     showInfo = settings.getBoolValue(infoKey, true);
     browser->setVisible(showBrowser);
     detail->setVisible(showDetail);
@@ -159,6 +182,7 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
 
 MainShell::~MainShell()
 {
+    browser.reset(); // it plays through the engine and reads the library
     selected.removeListener(this);
     juce::Desktop::getInstance().removeGlobalMouseListener(this);
     session.set().state().removeListener(this);
@@ -183,6 +207,42 @@ void MainShell::addViewCommands()
                   .defaultKeys = {ctrlAlt('b')},
                   .perform = [this] { setBrowserVisible(!showBrowser); },
                   .isTicked = [this] { return showBrowser; }});
+    registry.add({.id = "view.searchBrowser",
+                  .name = "Search in Browser",
+                  .category = "View",
+                  .description = "Shows the browser and puts the keys in its search box (Find is Ctrl+F).",
+                  .defaultKeys = {ctrlAlt('f')},
+                  .perform =
+                      [this] {
+                          setBrowserVisible(true);
+                          browser->focusSearch();
+                      }});
+    registry.add({.id = "view.preview",
+                  .name = "Preview in Browser",
+                  .category = "View",
+                  .description = "Selecting a sample in the browser plays it, and an instrument preset plays a phrase.",
+                  .perform = [this] { browser->setPreviewOn(!browser->isPreviewOn()); },
+                  .isTicked = [this] { return browser != nullptr && browser->isPreviewOn(); }});
+    registry.add({.id = "view.previewSync",
+                  .name = "Sync Preview to the Bar",
+                  .category = "View",
+                  .description = "While the set plays, a preview starts on the next bar.",
+                  .perform = [this] { browser->setPreviewSynced(!browser->isPreviewSynced()); },
+                  .isTicked = [this] { return browser != nullptr && browser->isPreviewSynced(); }});
+    registry.add({.id = "view.addPlace",
+                  .name = "Add Folder to Places...",
+                  .category = "View",
+                  .description = "Adds a folder to the browser's places: its samples, presets and tunings are indexed and watched.",
+                  .perform =
+                      [this] {
+                          setBrowserVisible(true);
+                          browser->addPlace();
+                      }});
+    registry.add({.id = "view.rescanLibrary",
+                  .name = "Rescan the Library",
+                  .category = "View",
+                  .description = "Reads every place in the browser again (new files appear by themselves; this is for when they didn't).",
+                  .perform = [this] { libraryService->rescanAll(); }});
     registry.add({.id = "view.detail",
                   .name = "Show Detail View",
                   .category = "View",
@@ -324,6 +384,77 @@ void MainShell::showClipView()
         clip->pianoRoll().grabKeyboardFocus();
 }
 
+bool MainShell::setTrackTuningFrom(int track, const juce::String& idOrPath)
+{
+    auto& set = session.set();
+    if (track < 0 || track >= set.numTracks() || LiveSet::isGroup(set.track(track)))
+        return false;
+    auto& tunings = deviceShared->tunings;
+    TuningPtr tuning = tunings.findById(idOrPath);
+    if (tuning == nullptr && juce::File::isAbsolutePath(idOrPath))
+    {
+        // A tuning file (a few kilobytes) the registry hasn't seen: it's read once, here.
+        const auto loaded = tunings.loadFile(juce::File(idOrPath));
+        if (!loaded.ok())
+        {
+            if (deviceShared->confirm)
+                deviceShared->confirm("Can't use that tuning", loaded.error, {}, nullptr);
+            return false;
+        }
+        tuning = loaded.table;
+    }
+    if (tuning == nullptr)
+        return false;
+    session.undoManager().beginNewTransaction("Tuning");
+    set.setTrackTuning(track, tuning->id);
+    return true;
+}
+
+bool MainShell::insertFromBrowser(const juce::String& description)
+{
+    if (drag::is(description, "tuning"))
+        return setTrackTuningFrom(selected.get().track, drag::payload(description));
+    devices->flushUpdates();
+    const bool inserted = devices->insertHere(description);
+    showDeviceView();
+    return inserted;
+}
+
+bool MainShell::dropFromBrowser(const SessionView::Hit& hit, const juce::String& description)
+{
+    auto& set = session.set();
+    DeviceOwner owner;
+    if (hit.area == SessionView::Hit::Area::master)
+        owner = {DeviceOwner::Kind::master, 0};
+    else
+    {
+        const auto& columns = session_->layout().columns();
+        if (hit.column < 0 || hit.column >= static_cast<int>(columns.size()))
+            return false;
+        const auto& c = columns[static_cast<std::size_t>(hit.column)];
+        owner = {c.kind == SessionLayout::Column::Kind::returnTrack ? DeviceOwner::Kind::returnTrack : DeviceOwner::Kind::track, c.index};
+    }
+    if (drag::is(description, "tuning"))
+        return owner.kind == DeviceOwner::Kind::track && setTrackTuningFrom(owner.index, drag::payload(description));
+
+    // The track (or return, or the master) shows its devices, and the new one goes at the end.
+    juce::ValueTree target;
+    if (owner.kind == DeviceOwner::Kind::track)
+    {
+        selected.set({SessionSelection::Kind::track, owner.index, juce::jmax(0, selected.get().scene)});
+        target = set.track(owner.index);
+    }
+    else
+    {
+        selected.showDevicesOf(owner);
+        target = owner.kind == DeviceOwner::Kind::master ? set.master() : set.returnTrack(owner.index);
+    }
+    devices->flushUpdates();
+    const bool inserted = devices->insert(description, LiveSet::chainOf(target), -1);
+    showDeviceView();
+    return inserted;
+}
+
 juce::Component::SafePointer<juce::Component> MainShell::focusToRestore() const
 {
     return juce::Component::getCurrentlyFocusedComponent();
@@ -358,11 +489,19 @@ void MainShell::showDeviceView()
 
 void MainShell::mouseDown(const juce::MouseEvent& e)
 {
-    dragStartHeight = showDetail && detailDivider.contains(e.getEventRelativeTo(this).getPosition()) ? detail->getHeight() : -1;
+    const auto at = e.getEventRelativeTo(this).getPosition();
+    dragStartHeight = showDetail && detailDivider.contains(at) ? detail->getHeight() : -1;
+    dragStartWidth = showBrowser && browserDivider.contains(at) ? browser->getWidth() : -1;
 }
 
 void MainShell::mouseDrag(const juce::MouseEvent& e)
 {
+    if (dragStartWidth >= 0)
+    {
+        browserWidth = dragStartWidth + e.getDistanceFromDragStartX();
+        resized();
+        return;
+    }
     if (dragStartHeight < 0)
         return;
     detailHeight = dragStartHeight - e.getDistanceFromDragStartY();
@@ -373,7 +512,10 @@ void MainShell::mouseUp(const juce::MouseEvent&)
 {
     if (dragStartHeight >= 0)
         settings.setValue(detailHeightKey, detail->getHeight());
+    if (dragStartWidth >= 0)
+        settings.setValue(browserWidthKey, browser->getWidth());
     dragStartHeight = -1;
+    dragStartWidth = -1;
 }
 
 void MainShell::setInfoVisible(bool visible)
@@ -395,8 +537,9 @@ void MainShell::mouseMove(const juce::MouseEvent& e)
     if (e.eventComponent != nullptr && (e.eventComponent == this || isParentOf(e.eventComponent)))
         showInfoFor(e.eventComponent);
     if (e.eventComponent == this)
-        setMouseCursor(showDetail && detailDivider.contains(e.getPosition()) ? juce::MouseCursor::UpDownResizeCursor
-                                                                              : juce::MouseCursor::NormalCursor);
+        setMouseCursor(showDetail && detailDivider.contains(e.getPosition())    ? juce::MouseCursor::UpDownResizeCursor
+                       : showBrowser && browserDivider.contains(e.getPosition()) ? juce::MouseCursor::LeftRightResizeCursor
+                                                                                 : juce::MouseCursor::NormalCursor);
 }
 
 void MainShell::handleAsyncUpdate()
@@ -431,11 +574,19 @@ void MainShell::resized()
     status->setBounds(area.removeFromBottom(status->preferredHeight()));
 
     const int gap = juce::roundToInt(t.spacing);
-    const int sideWidth = juce::roundToInt(t.controlHeight * 10.0f);
+    // The browser's width is dragged at its right edge; the main area keeps most of the window.
+    const int minimumSide = juce::roundToInt(t.controlHeight * 10.0f);
+    const int defaultSide = juce::roundToInt(t.controlHeight * 17.0f);
+    const int sideWidth = juce::jlimit(minimumSide, juce::jmax(minimumSide, area.getWidth() / 2),
+                                       showBrowser ? (browserWidth > 0 ? browserWidth : defaultSide) : minimumSide);
+    browserDivider = {};
     if (showBrowser || showInfo)
     {
         auto side = area.removeFromLeft(sideWidth);
-        area.removeFromLeft(gap);
+        if (showBrowser)
+            browserDivider = area.removeFromLeft(gap);
+        else
+            area.removeFromLeft(gap);
         if (showInfo)
             info.setBounds(side.removeFromBottom(juce::roundToInt(t.fontNormal * 7.0f)));
         if (showBrowser)
