@@ -452,6 +452,11 @@ TEST_CASE("Hands-on 4e, 5.7: with the keys in the browser, letters play the comp
         return taken && held;
     };
 
+    // The library's first scans finish first, so the rows don't change under the keys.
+    app.shell().jobs().waitUntilIdle(10000);
+    app.shell().jobs().deliverFinished();
+    app.shell().library().deliverForTests();
+    app.shell().browserView().model().flushForTests();
     REQUIRE(send(juce::KeyPress('f', juce::ModifierKeys::commandModifier | juce::ModifierKeys::altModifier, 0)));
     app.shell().browserView().model().flushForTests();
     CHECK(send(juce::KeyPress(juce::KeyPress::downKey))); // into the rows

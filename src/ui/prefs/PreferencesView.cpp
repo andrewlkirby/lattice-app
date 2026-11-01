@@ -322,17 +322,26 @@ private:
             r->identifier = d.identifier;
             r->name = d.name;
             r->setTitle(d.name);
-            r->track.setToggleState(!context.engine.isOpening() && manager.isMidiInputDeviceEnabled(d.identifier), juce::dontSendNotification);
+            const bool open = !context.engine.isOpening() && manager.isMidiInputDeviceEnabled(d.identifier);
+            r->track.setToggleState(open && !prefs::nonTrackInputs(context.settings).contains(d.identifier), juce::dontSendNotification);
             r->remote.setToggleState(remotes.contains(d.identifier), juce::dontSendNotification);
-            r->track.onClick = [this, id = d.identifier, b = &r->track] {
+            // An input is open while either switch is on; with only Remote on, its notes don't
+            // reach the tracks.
+            const auto apply = [this, id = d.identifier, row = r.get()] {
+                const bool track = row->track.getToggleState(), remote = row->remote.getToggleState();
+                prefs::setRemoteInput(context.settings, id, remote);
+                prefs::setNonTrackInput(context.settings, id, remote && !track);
                 if (!context.engine.isOpening())
                 {
-                    context.engine.getDeviceManager().setMidiInputDeviceEnabled(id, b->getToggleState());
+                    context.engine.getDeviceManager().setMidiInputDeviceEnabled(id, track || remote);
                     if (const auto xml = context.engine.getDeviceManager().createStateXml())
                         context.settings.setValue("audioDeviceState", xml.get());
                 }
+                if (context.midiChanged)
+                    context.midiChanged();
             };
-            r->remote.onClick = [this, id = d.identifier, b = &r->remote] { prefs::setRemoteInput(context.settings, id, b->getToggleState()); };
+            r->track.onClick = apply;
+            r->remote.onClick = apply;
             list.addAndMakeVisible(*r);
             inputRows.push_back(std::move(r));
         }

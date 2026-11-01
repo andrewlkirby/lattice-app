@@ -54,6 +54,18 @@ public:
     /** The source number live MIDI from this input carries (by the input's identifier; 1 to 255,
         given out on first use and kept for the session). Any thread except the audio thread. */
     std::uint8_t midiSourceFor(const juce::String& inputIdentifier);
+
+    /** MIDI Map's inputs (docs/05-m4-ui.md, 4g): what they send is kept for the message thread
+        (takeRemoteMidi). An input open only for that (its Track switch off) is in notForTracks:
+        its notes don't reach the tracks. Message thread. */
+    void setRemoteInputs(const juce::StringArray& remote, const juce::StringArray& notForTracks);
+    struct RemoteMidi
+    {
+        juce::String input;
+        juce::MidiMessage message;
+    };
+    /** Message thread: what the remote inputs sent since the last call, oldest first. */
+    std::vector<RemoteMidi> takeRemoteMidi();
     AudioCallbackStats& callbackStats() noexcept { return stats; }
     /** Input latency probe: MIDI arrival to the end of the callback that plays it. */
     LatencyStats& inputLatency() noexcept { return latency; }
@@ -147,6 +159,9 @@ private:
     PreviewPlayer previewPlayer;
     AudioCallbackStats stats;
     LatencyStats latency;
+    std::mutex remoteLock; // MIDI threads and the message thread; never the audio thread
+    juce::StringArray remoteInputs, nonTrackInputs;
+    std::vector<RemoteMidi> remoteInbox;
     MidiInputQueue midiQueue;
     MpscQueue<EngineCommand> commands{commandQueueSize};
     SpscFifo<EngineEvent> events{eventQueueSize};

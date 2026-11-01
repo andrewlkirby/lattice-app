@@ -66,6 +66,22 @@ juce::StringArray remoteInputs(const juce::PropertiesFile& settings)
     return all;
 }
 
+juce::StringArray nonTrackInputs(const juce::PropertiesFile& settings)
+{
+    auto all = juce::StringArray::fromLines(settings.getValue(nonTrackInputsKey));
+    all.removeEmptyStrings();
+    return all;
+}
+
+void setNonTrackInput(juce::PropertiesFile& settings, const juce::String& identifier, bool on)
+{
+    auto all = nonTrackInputs(settings);
+    all.removeString(identifier);
+    if (on)
+        all.add(identifier);
+    settings.setValue(nonTrackInputsKey, all.joinIntoString("\n"));
+}
+
 void setRemoteInput(juce::PropertiesFile& settings, const juce::String& identifier, bool on)
 {
     auto all = remoteInputs(settings);

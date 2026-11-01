@@ -239,6 +239,13 @@ MainComponent::MainComponent(AudioEngine& engine, juce::PropertiesFile& settings
     view.onSelectionChanged = [this] { debugSelectionChanged(); };
     mainShell->setComputerKeyboard(&debug.playPanel().computerKeyboard());
     mainShell->onKeyboardSettingsChanged = [this] { debug.playPanel().retuneKeyboard(); };
+    mainShell->mappings().isKeyboardKey = [this](const juce::KeyPress& key) {
+        auto& keyboard = debug.playPanel().computerKeyboard();
+        if (!keyboard.isEnabled() || key.getModifiers().isAnyModifierKeyDown())
+            return false;
+        const auto c = juce::CharacterFunctions::toLowerCase(key.getTextCharacter());
+        return c > 0 && (keyboard.getNoteKeys().containsChar(c) || juce::String("zxcvm").containsChar(c));
+    };
     addAndMakeVisible(*mainShell);
 
     setSize(1280, 960);
@@ -315,6 +322,8 @@ bool MainComponent::keyPressed(const juce::KeyPress& key)
         return true;
     if (dynamic_cast<juce::TextEditor*>(juce::Component::getCurrentlyFocusedComponent()) != nullptr)
         return false; // typing in a text field
+    if (mainShell->mappings().handleKey(key))
+        return true; // Key Map (it leaves the computer keyboard's keys to it while it's on)
 
     const auto mods = key.getModifiers();
     if (mods.isCommandDown() || mods.isCtrlDown() || mods.isAltDown())

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <utility>
 
 namespace lattice
 {
@@ -322,9 +323,33 @@ std::uint8_t AudioEngine::midiSourceFor(const juce::String& inputIdentifier)
     return next;
 }
 
+void AudioEngine::setRemoteInputs(const juce::StringArray& remote, const juce::StringArray& notForTracks)
+{
+    const std::scoped_lock lock(remoteLock);
+    remoteInputs = remote;
+    nonTrackInputs = notForTracks;
+}
+
+std::vector<AudioEngine::RemoteMidi> AudioEngine::takeRemoteMidi()
+{
+    const std::scoped_lock lock(remoteLock);
+    return std::exchange(remoteInbox, {});
+}
+
 void AudioEngine::handleIncomingMidiMessage(juce::MidiInput* input, const juce::MidiMessage& message)
 {
-    midiQueue.push(message, input != nullptr ? midiSourceFor(input->getIdentifier()) : computerKeyboardSource);
+    // A MIDI thread, not the audio thread: a short lock is fine here.
+    bool forTracks = true;
+    if (input != nullptr)
+    {
+        const std::scoped_lock lock(remoteLock);
+        const auto id = input->getIdentifier();
+        if (remoteInputs.contains(id) && remoteInbox.size() < 4096) // a stalled UI can't grow it without end
+            remoteInbox.push_back({id, message});
+        forTracks = !nonTrackInputs.contains(id);
+    }
+    if (forTracks)
+        midiQueue.push(message, input != nullptr ? midiSourceFor(input->getIdentifier()) : computerKeyboardSource);
 }
 
 } // namespace lattice

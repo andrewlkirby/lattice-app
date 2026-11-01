@@ -23,27 +23,39 @@ ValueBinding::~ValueBinding()
     watched.removeListener(this);
 }
 
+juce::String ValueBinding::targetOf(const juce::ValueTree& node, const juce::Identifier& property)
+{
+    if (node.hasType(ids::master))
+        return "master/" + property.toString();
+    const auto id = LiveSet::idOf(node);
+    return id != 0 ? "node:" + juce::String(id) + "/" + property.toString() : juce::String();
+}
+
 std::unique_ptr<ValueBinding> ValueBinding::deviceParameter(LiveSet& liveSet, juce::ValueTree device, ParameterSpec spec)
 {
     const auto id = spec.id;
     const auto fallback = static_cast<double>(spec.defaultValue);
     auto* setPtr = &liveSet;
-    return std::make_unique<ValueBinding>(
+    auto binding = std::make_unique<ValueBinding>(
         std::move(spec), [device, id, fallback] { return LiveSet::deviceParameter(device, id, fallback); },
         [setPtr, device, id](double v) { setPtr->setDeviceParameter(device, id, v); }, liveSet.undoManager(), device,
         [device, id](const juce::ValueTree& tree, const juce::Identifier& property) {
             return tree.hasType(ids::params) && tree.getParent() == device && property.toString() == id;
         });
+    binding->target = "device:" + juce::String(LiveSet::idOf(device)) + "/" + id;
+    return binding;
 }
 
 std::unique_ptr<ValueBinding> ValueBinding::property(ParameterSpec spec, juce::UndoManager* undoManager,
                                                      juce::ValueTree node, juce::Identifier id, Setter setter)
 {
     const auto fallback = static_cast<double>(spec.defaultValue);
-    return std::make_unique<ValueBinding>(
+    auto binding = std::make_unique<ValueBinding>(
         std::move(spec), [node, id, fallback] { return static_cast<double>(node.getProperty(id, fallback)); },
         std::move(setter), undoManager, node,
         [node, id](const juce::ValueTree& tree, const juce::Identifier& property) { return tree == node && property == id; });
+    binding->target = targetOf(node, id);
+    return binding;
 }
 
 float ValueBinding::value() const

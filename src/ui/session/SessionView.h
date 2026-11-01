@@ -132,6 +132,7 @@ public:
 
     /** Applies pending document changes now (normally the message loop does; tests call it). */
     void flushUpdates() { handleUpdateNowIfNeeded(); }
+    SessionController& sessionController() noexcept { return session; }
 
     void setMixerVisible(bool visible);
     void setSendsVisible(bool visible);

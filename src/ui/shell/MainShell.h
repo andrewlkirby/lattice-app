@@ -17,6 +17,8 @@
 #include "ui/shell/StatusBar.h"
 #include "ui/shell/UndoHistoryView.h"
 #include "ui/prefs/PreferencesView.h"
+#include "ui/mapping/MapOverlay.h"
+#include "ui/find/FindView.h"
 #include "ui/theme/LatticeLookAndFeel.h"
 #include "ui/tuning/TuningView.h"
 
@@ -74,6 +76,23 @@ public:
     void setUndoHistoryVisible(bool visible);
     /** The missing-files window for a set just opened (the default for files().onMissingFiles). */
     void showMissingFiles(std::vector<setfiles::Reference> missing);
+
+    /** MIDI Map and Key Map (Ctrl+M, Ctrl+K): the mappings, and the mode. */
+    Mappings& mappings() noexcept { return *mapper; }
+    void setMapMode(Mappings::Mode mode);
+    MapOverlay& mapOverlay() noexcept { return *overlay; }
+    MappingsView& mappingsView() noexcept { return *mappingList; }
+    /** The inputs MIDI Map listens to, and those open only for it, from the settings to the engine. */
+    void applyMidiInputs();
+
+    /** Find (Ctrl+F) and the command palette (Ctrl+Shift+P). */
+    FindIndex& findIndex() noexcept { return *finder; }
+    FindView& findView() noexcept { return *findBox; }
+    void openFind(bool commandsOnly);
+    /** Takes you to a result: reveals and flashes the control, opens a setting's tab, runs a command. */
+    void goTo(const FindIndex::Result& result);
+    /** The control flashed last (Find's), while it's flashing. */
+    juce::Component* flashedControl() const noexcept { return flashed.getComponent(); }
 
     /** The Preferences window (Ctrl+,), on a tab. */
     void showPreferences(PreferencesView::Page page);
@@ -163,6 +182,10 @@ private:
     void addViewCommands();
     void addTuningCommands();
     void addFileCommands();
+    void addMappingCommands();
+    void addFindCommands();
+    void revealMixerControl(const juce::ValueTree& owner, const juce::String& property);
+    void flash(juce::Component* control);
     void changeListenerCallback(juce::ChangeBroadcaster*) override; // the shortcuts changed: saved
     /** A question with a text answer (an asynchronous dialog). */
     void askText(const juce::String& title, const juce::String& message, const juce::String& initial,
@@ -205,6 +228,12 @@ private:
     std::unique_ptr<UndoHistoryView> history;
     juce::Component::SafePointer<juce::DialogWindow> missingWindow;
     std::unique_ptr<juce::DocumentWindow> preferencesWindow;
+    std::unique_ptr<Mappings> mapper;
+    std::unique_ptr<MapOverlay> overlay;
+    std::unique_ptr<MappingsView> mappingList;
+    std::unique_ptr<FindIndex> finder;
+    std::unique_ptr<FindView> findBox;
+    juce::Component::SafePointer<juce::Component> flashed;
     ComputerKeyboardInput* computerKeyboard = nullptr;
     std::unique_ptr<juce::FileChooser> chooser;
     std::unique_ptr<DetailView> detail; // after what it shows, so it goes first

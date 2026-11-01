@@ -44,6 +44,11 @@ public:
 
     MixerStrip(SessionController& session, Kind kind, int index, TuningRegistry* tunings = nullptr);
 
+    /** The mixer's values (MIDI Map uses the same, so a mapped fader matches the on-screen one). */
+    static ParameterSpec volumeSpec();
+    static ParameterSpec panSpec();
+    static ParameterSpec sendSpec(const juce::String& returnName);
+
     Kind kind() const noexcept { return stripKind; }
     int index() const noexcept { return stripIndex; }
     void setShowsSends(bool show);

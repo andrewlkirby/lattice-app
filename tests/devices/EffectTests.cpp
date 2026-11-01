@@ -379,10 +379,13 @@ TEST_CASE("Reverb: no strong resonances, and decorrelated channels", "[devices][
     const double binHz = sr / size;
     for (int bin = static_cast<int>(100.0 / binHz); bin + smooth < static_cast<int>(power.size()) && bin * binHz < 12000.0; ++bin)
     {
+        // The window stays inside the spectrum: near 100 Hz it's cut short below (reading before
+        // bin 0 crashed now and then, when the vector began at a page boundary).
         double sum = 0.0;
-        for (int k = bin - smooth; k <= bin + smooth; ++k)
+        int count = 0;
+        for (int k = std::max(0, bin - smooth); k <= bin + smooth; ++k, ++count)
             sum += power[static_cast<std::size_t>(k)];
-        worst = std::max(worst, 10.0 * std::log10(power[static_cast<std::size_t>(bin)] * (2 * smooth + 1) / sum));
+        worst = std::max(worst, 10.0 * std::log10(power[static_cast<std::size_t>(bin)] * count / sum));
     }
     INFO(segments << " segments; strongest peak over the smoothed spectrum: " << worst << " dB");
     CHECK(worst < 6.0);

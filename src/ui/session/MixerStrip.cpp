@@ -6,16 +6,15 @@
 
 namespace lattice::ui
 {
-namespace
+ParameterSpec MixerStrip::volumeSpec()
 {
-ParameterSpec volumeSpec(float maxDb)
-{
-    return ParameterSpec::continuous("volumeDb", "Volume", static_cast<float>(LiveSet::minVolumeDb), maxDb, 0.0f, ParamUnit::Decibels)
+    return ParameterSpec::continuous("volumeDb", "Volume", static_cast<float>(LiveSet::minVolumeDb), static_cast<float>(LiveSet::maxVolumeDb),
+                                     0.0f, ParamUnit::Decibels)
         .withCentre(-12.0f)
         .inGroup("Mixer");
 }
 
-ParameterSpec panSpec()
+ParameterSpec MixerStrip::panSpec()
 {
     return ParameterSpec::continuous("pan", "Pan", -1.0f, 1.0f, 0.0f)
         .inGroup("Mixer")
@@ -25,6 +24,16 @@ ParameterSpec panSpec()
         });
 }
 
+ParameterSpec MixerStrip::sendSpec(const juce::String& returnName)
+{
+    return ParameterSpec::continuous("send", "Send to " + returnName, static_cast<float>(LiveSet::minVolumeDb), 0.0f,
+                                     static_cast<float>(LiveSet::minVolumeDb), ParamUnit::Decibels)
+        .withCentre(-18.0f)
+        .inGroup("Sends");
+}
+
+namespace
+{
 /** Does any device in the set take its sidechain from this track? */
 bool feedsASidechain(const LiveSet& set, std::int64_t trackId)
 {
@@ -50,6 +59,7 @@ std::unique_ptr<Toggle> flagToggle(const juce::String& name, Toggle::Role role, 
         [node, id, inverted] { return static_cast<bool>(node.getProperty(id, false)) != inverted ? 1.0 : 0.0; },
         [set = std::move(set), inverted](double v) { set((v > 0.5) != inverted); }, undo, node,
         [node, id](const juce::ValueTree& tree, const juce::Identifier& property) { return tree == node && property == id; });
+    binding->target = ValueBinding::targetOf(node, id);
     return std::make_unique<Toggle>(std::move(binding), role, caption);
 }
 } // namespace
@@ -125,14 +135,10 @@ MixerStrip::MixerStrip(SessionController& s, Kind k, int i, TuningRegistry* tuni
         for (int r = 0; r < set.numReturns(); ++r)
         {
             const auto returnName = set.returnTrack(r)[ids::name].toString();
-            auto spec = ParameterSpec::continuous("send" + juce::String(r), "Send to " + returnName,
-                                                  static_cast<float>(LiveSet::minVolumeDb), 0.0f,
-                                                  static_cast<float>(LiveSet::minVolumeDb), ParamUnit::Decibels)
-                            .withCentre(-18.0f)
-                            .inGroup("Sends");
             auto binding = std::make_unique<ValueBinding>(
-                std::move(spec), [&set, i, r] { return set.sendLevel(i, r); }, [&set, i, r](double db) { set.setSendLevel(i, r, db); },
+                sendSpec(returnName), [&set, i, r] { return set.sendLevel(i, r); }, [&set, i, r](double db) { set.setSendLevel(i, r, db); },
                 undo, node, [](const juce::ValueTree& tree, const juce::Identifier&) { return tree.hasType(ids::send); });
+            binding->target = "send:" + juce::String(LiveSet::idOf(node)) + "/" + juce::String(LiveSet::idOf(set.returnTrack(r)));
             auto knob = std::make_unique<Knob>(std::move(binding));
             knob->setLabel(returnName.substring(0, 1)); // the return's letter; the value shows in dB
             knob->setTitle("Send to " + returnName);
@@ -159,9 +165,9 @@ MixerStrip::MixerStrip(SessionController& s, Kind k, int i, TuningRegistry* tuni
     };
     pan = std::make_unique<Knob>(ValueBinding::property(panSpec(), undo, node, ids::pan, setPan));
     pan->setLabel({});
-    volume = std::make_unique<Fader>(ValueBinding::property(volumeSpec(static_cast<float>(LiveSet::maxVolumeDb)), undo, node,
+    volume = std::make_unique<Fader>(ValueBinding::property(volumeSpec(), undo, node,
                                                             ids::volumeDb, setVolume));
-    volumeText = std::make_unique<NumberBox>(ValueBinding::property(volumeSpec(static_cast<float>(LiveSet::maxVolumeDb)), undo,
+    volumeText = std::make_unique<NumberBox>(ValueBinding::property(volumeSpec(), undo,
                                                                     node, ids::volumeDb, setVolume));
     for (juce::Component* c : {static_cast<juce::Component*>(pan.get()), static_cast<juce::Component*>(volume.get()),
                                static_cast<juce::Component*>(volumeText.get())})

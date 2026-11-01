@@ -49,6 +49,9 @@ struct Fixture
     }
     ~Fixture()
     {
+        // Saved tunings would set later tests' libraries scanning (the folder is watched).
+        if (shell != nullptr)
+            shell->userTuningsFolder().deleteRecursively();
         shell.reset();
         settings.reset();
         settingsFile.deleteFile();

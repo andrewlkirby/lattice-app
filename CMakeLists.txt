@@ -357,6 +357,10 @@ add_library(lattice_ui STATIC
     src/ui/shell/StatusBar.cpp
     src/ui/shell/UndoHistoryView.cpp
     src/ui/theme/LatticeLookAndFeel.cpp
+    src/ui/find/FindIndex.cpp
+    src/ui/find/FindView.cpp
+    src/ui/mapping/MapOverlay.cpp
+    src/ui/mapping/Mappings.cpp
     src/ui/prefs/AppSettings.cpp
     src/ui/prefs/PreferencesView.cpp
     src/ui/theme/Theme.cpp

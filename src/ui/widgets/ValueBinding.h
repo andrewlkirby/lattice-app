@@ -62,6 +62,13 @@ public:
 
     std::function<void()> onChange;
 
+    /** What it controls, as an address that outlives the widget (MIDI Map and Key Map save it):
+        "device:<id>/<parameter>", "node:<id>/<property>" (a track's or return's), "master/<property>",
+        "send:<track id>/<return id>". Empty: it can't be mapped. */
+    juce::String target;
+    /** The address of a model node's property (a track, a return, the master). */
+    static juce::String targetOf(const juce::ValueTree& node, const juce::Identifier& property);
+
 private:
     void write(float plain);
     void valueTreePropertyChanged(juce::ValueTree& tree, const juce::Identifier& property) override;

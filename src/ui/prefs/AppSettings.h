@@ -18,6 +18,7 @@ constexpr auto defaultTuningKey = "tuningId";               // new tracks' tunin
 constexpr auto defaultHighNotesKey = "newTrack.highNotes";  // new tracks' high-note policy
 constexpr auto shortcutsKey = "shortcuts";                  // CommandRegistry::shortcutsToXml
 constexpr auto remoteInputsKey = "midi.remoteInputs";       // inputs MIDI Map listens to, one per line
+constexpr auto nonTrackInputsKey = "midi.notTrack";         // inputs open only for Remote (Track off)
 constexpr auto noteKeysKey = "keyboard.noteKeys";           // the computer keyboard's 17 note keys
 constexpr auto pageKeyPrefix = "keyboard.page.";            // + a tuning ID: its range step
 constexpr auto userThemeKey = "theme.userFile";             // a JSON theme chosen from the Themes folder
@@ -47,5 +48,8 @@ int pageSizeFor(const juce::PropertiesFile& settings, const juce::String& tuning
 /** The MIDI inputs (by identifier) MIDI Map and Key Map listen to. */
 juce::StringArray remoteInputs(const juce::PropertiesFile& settings);
 void setRemoteInput(juce::PropertiesFile& settings, const juce::String& identifier, bool on);
+/** Inputs open for Remote only: their notes don't reach the tracks. */
+juce::StringArray nonTrackInputs(const juce::PropertiesFile& settings);
+void setNonTrackInput(juce::PropertiesFile& settings, const juce::String& identifier, bool on);
 
 } // namespace lattice::ui::prefs

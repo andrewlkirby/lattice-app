@@ -199,6 +199,63 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
     session_->onBrowserDrop = [this](const SessionView::Hit& hit, const juce::String& description) {
         return dropFromBrowser(hit, description);
     };
+    // MIDI Map and Key Map (4g).
+    mapper = std::make_unique<Mappings>(session, registry, deviceSpecs);
+    mapper->pullMidi = [this] {
+        std::vector<std::pair<juce::String, juce::MidiMessage>> out;
+        for (auto& m : engine.takeRemoteMidi())
+            out.emplace_back(std::move(m.input), std::move(m.message));
+        return out;
+    };
+    overlay = std::make_unique<MapOverlay>(*mapper, controls, *session_);
+    overlay->onExit = [this] { setMapMode(Mappings::Mode::off); };
+    overlay->passesThrough = [this](const juce::KeyPress& key) {
+        for (const auto* id : {"view.midiMap", "view.keyMap"})
+            if (registry.shortcutsFor(id).contains(key))
+                return true;
+        return false;
+    };
+    addChildComponent(*overlay);
+    mappingList = std::make_unique<MappingsView>(*mapper, registry);
+    addChildComponent(*mappingList);
+    mapper->onChange = [this] {
+        mappingList->refresh();
+        overlay->repaint();
+    };
+    addMappingCommands();
+    applyMidiInputs();
+
+    // Find (4g).
+    finder = std::make_unique<FindIndex>(*deviceShared, registry);
+    finder->extra = [this](const juce::StringArray& words, const juce::String& typed) {
+        // The selected clip's settings: the Clip view's controls (they exist while a clip is selected).
+        std::vector<FindIndex::Result> out;
+        for (const auto* e : controls.entries())
+        {
+            if (e->component == nullptr || !clip->isParentOf(e->component) || e->binding == nullptr)
+                continue;
+            if (!FindIndex::matches(words, e->name + " " + e->group + " Clip"))
+                continue;
+            FindIndex::Result r;
+            r.kind = FindIndex::Kind::clip;
+            r.name = e->name;
+            r.location = juce::String("Clip") + juce::String::fromUTF8(" \xe2\x80\xba ") + (e->group.isNotEmpty() ? e->group : juce::String("Properties"));
+            r.section = 0;
+            r.score = FindIndex::scoreFor(e->name, typed);
+            r.control = e->component;
+            out.push_back(std::move(r));
+        }
+        return out;
+    };
+    findBox = std::make_unique<FindView>(*finder);
+    findBox->selectedTrack = [this] {
+        const auto s = selected.get();
+        return s.kind == SessionSelection::Kind::scene ? -1 : s.track;
+    };
+    findBox->onChoose = [this](const FindIndex::Result& r) { goTo(r); };
+    findBox->onClose = [this, before = juce::Component::SafePointer<juce::Component>()] { repaint(); };
+    addChildComponent(*findBox);
+    addFindCommands();
     session_->onLoadTuning = [this](int track) { chooseTuningFile(track); };
     session_->onShowTuning = [this] { showTuningView(); };
     addTuningCommands();
@@ -269,6 +326,11 @@ MainShell::~MainShell()
 {
     session.onSetReplaced = nullptr;
     preferencesWindow.reset();
+    findBox.reset();
+    finder.reset();
+    overlay.reset();
+    mappingList.reset();
+    mapper.reset();
     registry.keyMappings().removeChangeListener(this);
     if (missingWindow != nullptr)
         delete missingWindow.getComponent();
@@ -453,6 +515,177 @@ void MainShell::addFileCommands()
                   .isTicked = [this] { return showHistory; }});
 }
 
+void MainShell::addMappingCommands()
+{
+    using juce::KeyPress;
+    using juce::ModifierKeys;
+    registry.add({.id = "view.midiMap",
+                  .name = "MIDI Map Mode",
+                  .category = "View",
+                  .description = "Map controls, clip slots, scenes and commands to MIDI notes and CCs: click one, then move a knob or press a pad.",
+                  .defaultKeys = {KeyPress('m', ModifierKeys::commandModifier, 0)},
+                  .perform = [this] { setMapMode(mapper->mode() == Mappings::Mode::midi ? Mappings::Mode::off : Mappings::Mode::midi); },
+                  .isTicked = [this] { return mapper != nullptr && mapper->mode() == Mappings::Mode::midi; }});
+    registry.add({.id = "view.keyMap",
+                  .name = "Key Map Mode",
+                  .category = "View",
+                  .description = "Map controls, clip slots, scenes and commands to computer keys: click one, then press a key.",
+                  .defaultKeys = {KeyPress('k', ModifierKeys::commandModifier, 0)},
+                  .perform = [this] { setMapMode(mapper->mode() == Mappings::Mode::key ? Mappings::Mode::off : Mappings::Mode::key); },
+                  .isTicked = [this] { return mapper != nullptr && mapper->mode() == Mappings::Mode::key; }});
+}
+
+void MainShell::addFindCommands()
+{
+    using juce::KeyPress;
+    using juce::ModifierKeys;
+    registry.add({.id = "view.find",
+                  .name = "Find...",
+                  .category = "View",
+                  .description = "Finds any control in the set, any setting or any command by name, and takes you to it.",
+                  .defaultKeys = {KeyPress('f', ModifierKeys::commandModifier, 0)},
+                  .perform = [this] { openFind(false); }});
+    registry.add({.id = "view.commandPalette",
+                  .name = "Command Palette...",
+                  .category = "View",
+                  .description = "Runs any command by typing part of its name.",
+                  .defaultKeys = {KeyPress('p', ModifierKeys::commandModifier | ModifierKeys::shiftModifier, 0)},
+                  .perform = [this] { openFind(true); }});
+}
+
+void MainShell::openFind(bool commandsOnly)
+{
+    const auto& t = theme();
+    const int width = juce::jmin(getWidth() - juce::roundToInt(t.padding * 4.0f), juce::roundToInt(t.controlHeight * 30.0f));
+    findBox->setBounds((getWidth() - width) / 2, bar->getBottom() + juce::roundToInt(t.spacing * 2.0f), width, findBox->preferredHeight());
+    findBox->open(commandsOnly);
+}
+
+void MainShell::goTo(const FindIndex::Result& r)
+{
+    switch (r.kind)
+    {
+    case FindIndex::Kind::parameter:
+        devices->revealParameter(r.device, r.parameterId); // it shows the Device view and flashes the control
+        break;
+    case FindIndex::Kind::mixer:
+        revealMixerControl(r.owner, r.parameterId);
+        break;
+    case FindIndex::Kind::clip:
+        showClipView();
+        flash(r.control.getComponent());
+        break;
+    case FindIndex::Kind::setting:
+        showPreferences(static_cast<PreferencesView::Page>(juce::jlimit(0, PreferencesView::numPages - 1, r.page)));
+        break;
+    case FindIndex::Kind::command:
+        registry.perform(r.commandId);
+        break;
+    }
+}
+
+void MainShell::revealMixerControl(const juce::ValueTree& owner, const juce::String& property)
+{
+    auto& set = session.set();
+    // Its track selected (a return's or the master's devices shown), the mixer and its section on.
+    int column = -1;
+    const auto& columns = session_->layout().columns();
+    if (owner.hasType(ids::track))
+    {
+        const int t = set.trackIndexForId(LiveSet::idOf(owner));
+        if (t < 0)
+            return;
+        selected.set({SessionSelection::Kind::track, t, juce::jmax(0, selected.get().scene)});
+        for (int c = 0; c < static_cast<int>(columns.size()); ++c)
+            if (columns[static_cast<std::size_t>(c)].kind == SessionLayout::Column::Kind::track && columns[static_cast<std::size_t>(c)].index == t)
+                column = c;
+    }
+    else if (owner.hasType(ids::returnTrack))
+    {
+        const int r = set.returnIndexForId(LiveSet::idOf(owner));
+        for (int c = 0; c < static_cast<int>(columns.size()); ++c)
+            if (columns[static_cast<std::size_t>(c)].kind == SessionLayout::Column::Kind::returnTrack && columns[static_cast<std::size_t>(c)].index == r)
+                column = c;
+    }
+    tabs.setCurrentTabIndex(0);
+    if (!session_->isMixerVisible())
+    {
+        session_->setMixerVisible(true);
+        settings.setValue(mixerKey, true);
+    }
+    const juce::StringArray ioProperties{"tuningId", "highNotePolicy", "bendMode", "bendRange", "midiInput", "midiChannel", "monitoring"};
+    if (ioProperties.contains(property) && !session_->isIOVisible())
+    {
+        session_->setIOVisible(true);
+        settings.setValue(ioKey, true);
+    }
+    if (property.startsWith("send:") && !session_->areSendsVisible())
+    {
+        session_->setSendsVisible(true);
+        settings.setValue(sendsKey, true);
+    }
+    session_->flushUpdates();
+    auto* strip = owner.hasType(ids::master) ? session_->masterStrip() : session_->stripForColumn(column);
+    if (strip == nullptr)
+        return;
+    // The control in the strip: by what it's bound to.
+    const auto wantedTarget = property.startsWith("send:") ? "send:" + juce::String(LiveSet::idOf(owner)) + "/" + property.fromFirstOccurrenceOf(":", false, false)
+                                                           : ValueBinding::targetOf(owner, property);
+    const juce::StringArray specIds = property == "tuningId"     ? juce::StringArray{"tuning"}
+                                      : property == "bendRange"  ? juce::StringArray{"bendRangeCents", "bendRangeSteps"}
+                                      : property == "monitoring" ? juce::StringArray{"monitoringAuto"}
+                                                                 : juce::StringArray{property};
+    juce::Component* found = nullptr;
+    std::function<void(juce::Component&)> search = [&](juce::Component& c) {
+        if (auto* bound = dynamic_cast<BoundControl*>(&c); bound != nullptr && found == nullptr && c.isVisible())
+            if (bound->binding().target == wantedTarget || specIds.contains(bound->binding().spec().id))
+                found = &c;
+        if (auto* toggle = dynamic_cast<Toggle*>(&c); toggle != nullptr && found == nullptr && toggle->binding() != nullptr && c.isVisible())
+            if (toggle->binding()->target == wantedTarget || specIds.contains(toggle->binding()->spec().id))
+                found = &c;
+        for (auto* child : c.getChildren())
+            search(*child);
+    };
+    search(*strip);
+    flash(found);
+}
+
+void MainShell::flash(juce::Component* control)
+{
+    flashed = control;
+    repaint();
+    juce::Component::SafePointer<MainShell> safe(this);
+    juce::Timer::callAfterDelay(1500, [safe, control] {
+        if (safe != nullptr && safe->flashed.getComponent() == control)
+        {
+            safe->flashed = nullptr;
+            safe->repaint();
+        }
+    });
+}
+
+void MainShell::setMapMode(Mappings::Mode mode)
+{
+    mapper->setMode(mode);
+    const bool on = mode != Mappings::Mode::off;
+    overlay->setVisible(on);
+    mappingList->setVisible(on);
+    mappingList->refresh();
+    if (on)
+    {
+        overlay->toFront(mode == Mappings::Mode::key); // Key Map: it has the keys
+        if (mode == Mappings::Mode::key && overlay->isShowing())
+            overlay->grabKeyboardFocus();
+    }
+    resized();
+    repaint();
+}
+
+void MainShell::applyMidiInputs()
+{
+    engine.setRemoteInputs(prefs::remoteInputs(settings), prefs::nonTrackInputs(settings));
+}
+
 void MainShell::changeListenerCallback(juce::ChangeBroadcaster*)
 {
     prefs::saveShortcuts(settings, registry);
@@ -494,6 +727,7 @@ PreferencesView::Context MainShell::preferencesContext()
         });
     };
     c.themesFolder = platform::userDataFolder().getChildFile("Themes");
+    c.midiChanged = [this] { applyMidiInputs(); };
     return c;
 }
 
@@ -913,6 +1147,11 @@ void MainShell::mouseMove(const juce::MouseEvent& e)
 void MainShell::handleAsyncUpdate()
 {
     status->refresh();
+    if (mappingList != nullptr && mappingList->isVisible())
+    {
+        mappingList->refresh();
+        overlay->repaint();
+    }
 }
 
 void MainShell::resetLoadStatistics()
@@ -928,8 +1167,15 @@ void MainShell::paint(juce::Graphics& g)
     g.fillAll(lookAndFeel.theme().background);
 }
 
-void MainShell::paintOverChildren(juce::Graphics&)
+void MainShell::paintOverChildren(juce::Graphics& g)
 {
+    // Find's flash: a ring round the control it found.
+    if (auto* c = flashed.getComponent(); c != nullptr && c->isShowing() && isParentOf(c))
+    {
+        const auto& t = lookAndFeel.theme();
+        g.setColour(t.focus);
+        g.drawRoundedRectangle(getLocalArea(c, c->getLocalBounds()).toFloat().expanded(2.0f), t.radius, juce::jmax(2.0f, t.stroke * 2.0f));
+    }
     const double painting = juce::Time::highResolutionTicksToSeconds(juce::Time::getHighResolutionTicks() - paintStarted);
     frames.recordCallback(painting + stateFeed.takeTickWorkSeconds(), frameBudgetSeconds);
 }
@@ -978,6 +1224,15 @@ void MainShell::resized()
         detailDivider = area.removeFromBottom(gap);
     }
     tabs.setBounds(area);
+    if (mappingList != nullptr && mappingList->isVisible())
+    {
+        // While mapping, the list takes the browser's place.
+        const auto side = browser->isVisible() ? browser->getBounds() : juce::Rectangle<int>(0, area.getY(), juce::roundToInt(t.controlHeight * 12.0f), area.getHeight());
+        mappingList->setBounds(side);
+        mappingList->toFront(false);
+    }
+    if (overlay != nullptr && overlay->isVisible())
+        overlay->setBounds(tabs.getBounds().getUnion(detail->isVisible() ? detail->getBounds() : tabs.getBounds()));
 }
 
 } // namespace lattice::ui
