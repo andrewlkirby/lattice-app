@@ -42,14 +42,14 @@ public:
         TuningRegistry& tunings;
         library::Library& library;
         ComputerKeyboardInput* keyboard = nullptr;
-        std::function<void(const Theme&)> setTheme;
-        std::function<const Theme&()> theme;
-        std::function<void()> keyboardChanged; // the note keys or a range step changed
-        std::function<void()> midiChanged;     // an input's Track or Remote switch changed
-        std::function<void(std::function<void(const juce::File&)>)> chooseFolder;
+        std::function<void(const Theme&)> setTheme = {};
+        std::function<const Theme&()> theme = {};
+        std::function<void()> keyboardChanged = {}; // the note keys or a range step changed
+        std::function<void()> midiChanged = {};     // an input's Track or Remote switch changed
+        std::function<void(std::function<void(const juce::File&)>)> chooseFolder = {};
         /** A file to import (save false) or export to. */
-        std::function<void(const juce::String& title, const juce::String& patterns, bool save, std::function<void(const juce::File&)>)> chooseFile;
-        juce::File themesFolder;
+        std::function<void(const juce::String& title, const juce::String& patterns, bool save, std::function<void(const juce::File&)>)> chooseFile = {};
+        juce::File themesFolder = {};
     };
 
     enum class Page

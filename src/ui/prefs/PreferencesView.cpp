@@ -478,10 +478,10 @@ public:
         });
         remove.setButtonText("Remove");
         styleButton(remove, [this] {
-            const auto places = context.library.places();
+            const auto now = context.library.places();
             const int i = list.getSelectedRow();
-            if (i > 0 && i < places.size()) // not the User Library
-                context.library.removePlace(places[i]);
+            if (i > 0 && i < now.size()) // not the User Library
+                context.library.removePlace(now[i]);
             refresh();
         });
         rescan.setButtonText("Rescan All");

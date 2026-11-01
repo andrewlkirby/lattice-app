@@ -78,10 +78,10 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
     fileDialogs.chooseFile = [this](const juce::String& title, const juce::File& start, const juce::String& patterns, bool save,
                                     std::function<void(const juce::File&)> chosen) {
         chooser = std::make_unique<juce::FileChooser>(title, start, patterns);
-        const int flags = save ? juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles |
+        const int mode = save ? juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles |
                                      juce::FileBrowserComponent::warnAboutOverwriting
                                : juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
-        chooser->launchAsync(flags, [this, chosen = std::move(chosen), before = focusToRestore()](const juce::FileChooser& fc) {
+        chooser->launchAsync(mode, [this, chosen = std::move(chosen), before = focusToRestore()](const juce::FileChooser& fc) {
             restoreFocusLater(before);
             chosen(fc.getResult());
         });
@@ -230,27 +230,27 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
     finder->extra = [this](const juce::StringArray& words, const juce::String& typed) {
         // The selected clip's settings: the Clip view's controls (they exist while a clip is selected).
         std::vector<FindIndex::Result> out;
-        for (const auto* e : controls.entries())
+        for (const auto* entry : controls.entries())
         {
-            if (e->component == nullptr || !clip->isParentOf(e->component) || e->binding == nullptr)
+            if (entry->component == nullptr || !clip->isParentOf(entry->component) || entry->binding == nullptr)
                 continue;
-            if (!FindIndex::matches(words, e->name + " " + e->group + " Clip"))
+            if (!FindIndex::matches(words, entry->name + " " + entry->group + " Clip"))
                 continue;
             FindIndex::Result r;
             r.kind = FindIndex::Kind::clip;
-            r.name = e->name;
-            r.location = juce::String("Clip") + juce::String::fromUTF8(" \xe2\x80\xba ") + (e->group.isNotEmpty() ? e->group : juce::String("Properties"));
+            r.name = entry->name;
+            r.location = juce::String("Clip") + juce::String::fromUTF8(" \xe2\x80\xba ") + (entry->group.isNotEmpty() ? entry->group : juce::String("Properties"));
             r.section = 0;
-            r.score = FindIndex::scoreFor(e->name, typed);
-            r.control = e->component;
+            r.score = FindIndex::scoreFor(entry->name, typed);
+            r.control = entry->component;
             out.push_back(std::move(r));
         }
         return out;
     };
     findBox = std::make_unique<FindView>(*finder);
     findBox->selectedTrack = [this] {
-        const auto s = selected.get();
-        return s.kind == SessionSelection::Kind::scene ? -1 : s.track;
+        const auto now = selected.get();
+        return now.kind == SessionSelection::Kind::scene ? -1 : now.track;
     };
     findBox->onChoose = [this](const FindIndex::Result& r) { goTo(r); };
     findBox->onClose = [this, before = juce::Component::SafePointer<juce::Component>()] { repaint(); };
@@ -718,10 +718,10 @@ PreferencesView::Context MainShell::preferencesContext()
     };
     c.chooseFile = [this](const juce::String& title, const juce::String& patterns, bool save, std::function<void(const juce::File&)> chosen) {
         chooser = std::make_unique<juce::FileChooser>(title, juce::File::getSpecialLocation(juce::File::userDocumentsDirectory), patterns);
-        const int flags = save ? juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles |
+        const int mode = save ? juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles |
                                      juce::FileBrowserComponent::warnAboutOverwriting
                                : juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
-        chooser->launchAsync(flags, [chosen = std::move(chosen)](const juce::FileChooser& fc) {
+        chooser->launchAsync(mode, [chosen = std::move(chosen)](const juce::FileChooser& fc) {
             if (fc.getResult() != juce::File())
                 chosen(fc.getResult());
         });
