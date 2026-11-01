@@ -210,7 +210,7 @@ public:
             addAndMakeVisible(*tab);
             tabs.push_back(std::move(tab));
         }
-        always = section("", {"voice.mode", "voice.polyphony", "voice.glide", "out.volume", "out.pan"});
+        always = section("", {"voice.mode", "voice.polyphony", "voice.glide", "voice.tuning", "out.volume", "out.pan"});
         addAndMakeVisible(*always);
         showPage(Page::oscillators);
     }

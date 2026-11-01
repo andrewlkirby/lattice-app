@@ -11,6 +11,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <functional>
 #include <random>
@@ -303,12 +304,15 @@ TEST_CASE("Factory presets: every one uses only real parameters and plays on a C
         };
         check(p.device);
 
-        // On a Colundi track, a held chord makes sound (the arp rack's notes come on its beat).
+        // On a Colundi track, a held chord makes sound (the arp rack's notes come on its beat); a
+        // kit's kick, snare and hat do.
         Fixture f(1);
         f.set().setTrackTuning(0, TuningRegistry::colundiId);
         f.set().insertDeviceCopy(f.chain(), -1, p.device);
         f.session.flush();
-        for (const int note : {40, 47, 52})
+        const bool kit = p.device[ids::deviceType].toString() == RackDevice::drumRackId;
+        const std::array<int, 3> notes = kit ? std::array{36, 38, 42} : std::array{40, 47, 52};
+        for (const int note : notes)
             f.engine.midiInput().push(juce::MidiMessage::noteOn(1, note, static_cast<juce::uint8>(100)));
         f.renderer.renderFor(96000);
         double peak = 0.0, energy = 0.0;

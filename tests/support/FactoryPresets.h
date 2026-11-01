@@ -181,12 +181,187 @@ inline juce::ValueTree buildColundiArpChordRack(LiveSet& set, juce::ValueTree ch
     return rack;
 }
 
+// --- Drum Rack kits: every pad a Synth, so they need no samples ----------------------------------
+
+using Params = std::initializer_list<std::pair<const char*, double>>;
+
+/** A Drum Rack pad on `note` holding a Synth set up for one-shot drums (no sustain, no second
+    oscillator, no key tracking), playing `playNote`. Fixed: 12-TET from middle C, whatever the
+    track's tuning (kicks, snares and hats keep their pitch); otherwise it follows the track's
+    tuning, as Colundi toms and bells do. */
+inline juce::ValueTree addSynthPad(LiveSet& set, const juce::ValueTree& kit, int note, const char* name, int playNote,
+                                   bool fixed, int chokeGroup, Params params)
+{
+    auto pad = racks::addChain(set, kit, name);
+    pad.setProperty(ids::receiveNote, note, set.undoManager());
+    racks::setPadPlayNote(set, pad, playNote);
+    racks::setChokeGroup(set, pad, chokeGroup);
+    auto synth = set.insertDevice(racks::devicesOf(pad), -1, SynthDevice::typeId);
+    setParams(set, synth,
+              {{"osc1.shape", 0.0}, // sine
+               {"osc1.level", 0.0},
+               {"osc2.level", -70.0},
+               {"filter.type", 0.0}, // low-pass 12
+               {"filter.cutoff", 16000.0},
+               {"filter.keytrack", 0.0},
+               {"amp.attack", 0.5},
+               {"amp.sustain", 0.0},
+               {"amp.velocity", 0.6},
+               {"env2.attack", 0.5},
+               {"voice.polyphony", 4.0},
+               {"voice.tuning", fixed ? 1.0 : 0.0}});
+    setParams(set, synth, params);
+    // Drums ring out however short the note: the release is the decay.
+    set.setDeviceParameter(synth, "amp.release", static_cast<double>(synth.getChildWithName(ids::params)["amp.decay"]));
+    return pad;
+}
+
+/** Analog-style drums on the General MIDI pads (kick 36, snare 38, hats 42 and 46, toms 41, 45
+    and 48, ...), all at fixed pitch: the same in every tuning. The hats choke each other. */
+inline juce::ValueTree buildSynthKit(LiveSet& set, juce::ValueTree chain)
+{
+    auto kit = racks::insertRack(set, std::move(chain), -1, RackDevice::drumRackId);
+    constexpr bool fixed = true;
+    addSynthPad(set, kit, 36, "Kick", 31, fixed, 0, // 49 Hz, from about 150
+                {{"env2.decay", 45.0}, {"env2.sustain", 0.0},
+                 {"mod1.source", 1.0}, {"mod1.dest", 1.0}, {"mod1.amount", 0.8}, // Env 2 -> pitch
+                 {"amp.decay", 700.0}, {"amp.velocity", 0.4},
+                 {"out.volume", -2.0}});
+    addSynthPad(set, kit, 37, "Rim", 90, fixed, 0,
+                {{"osc1.shape", 1.0}, {"osc1.level", 0.0}, // triangle
+                 {"osc2.shape", 0.0}, {"osc2.level", -6.0}, {"osc2.transpose", -5.0},
+                 {"noise.level", -18.0},
+                 {"filter.type", 2.0}, {"filter.cutoff", 400.0}, // high-pass 12
+                 {"amp.decay", 28.0},
+                 {"out.volume", 2.0}});
+    addSynthPad(set, kit, 38, "Snare", 54, fixed, 0, // a 185 Hz body under noise
+                {{"osc1.shape", 1.0}, {"osc1.level", -6.0},
+                 {"noise.level", -3.0}, {"noise.colour", 1.0},
+                 {"filter.type", 2.0}, {"filter.cutoff", 180.0}, {"filter.resonance", 0.1},
+                 {"env2.decay", 25.0}, {"env2.sustain", 0.0},
+                 {"mod1.source", 1.0}, {"mod1.dest", 1.0}, {"mod1.amount", 0.25},
+                 {"amp.decay", 200.0},
+                 {"out.volume", -5.0}});
+    addSynthPad(set, kit, 39, "Clap", 60, fixed, 0, // band-passed noise, chopped by a falling saw
+                {{"osc1.level", -70.0},
+                 {"noise.level", 0.0}, {"noise.colour", 0.9},
+                 {"filter.type", 4.0}, {"filter.cutoff", 1100.0}, {"filter.resonance", 0.35}, // band-pass
+                 {"lfo1.shape", 3.0}, {"lfo1.rate", 38.0}, {"lfo1.retrigger", 1.0}, // saw down
+                 {"mod1.source", 2.0}, {"mod1.dest", 13.0}, {"mod1.amount", 0.7},     // LFO 1 -> amp
+                 {"amp.decay", 260.0},
+                 {"out.volume", -4.0}});
+    const auto tom = [&](int note, const char* name, int playNote) {
+        addSynthPad(set, kit, note, name, playNote, fixed, 0,
+                    {{"noise.level", -26.0}, {"noise.colour", 0.5},
+                     {"filter.cutoff", 4000.0},
+                     {"env2.decay", 90.0}, {"env2.sustain", 0.0},
+                     {"mod1.source", 1.0}, {"mod1.dest", 1.0}, {"mod1.amount", 0.22},
+                     {"amp.decay", 700.0},
+                     {"out.volume", -4.0}});
+    };
+    tom(41, "Low Tom", 43);
+    const auto hat = [&](int note, const char* name, double decayMs, double volume) {
+        addSynthPad(set, kit, note, name, 103, fixed, 1, // two pulses a fifth apart for the metal
+                    {{"osc1.shape", 3.0}, {"osc1.level", -18.0},
+                     {"osc2.shape", 3.0}, {"osc2.level", -20.0}, {"osc2.transpose", 7.0},
+                     {"noise.level", 0.0}, {"noise.colour", 1.0},
+                     {"filter.type", 3.0}, {"filter.cutoff", 8000.0}, {"filter.resonance", 0.15}, // high-pass 24
+                     {"amp.decay", decayMs},
+                     {"out.volume", volume}});
+    };
+    hat(42, "Closed Hat", 55.0, -6.0);
+    tom(45, "Mid Tom", 48);
+    hat(46, "Open Hat", 420.0, -10.0);
+    tom(48, "High Tom", 53);
+    addSynthPad(set, kit, 49, "Crash", 60, fixed, 0,
+                {{"osc1.level", -70.0},
+                 {"noise.level", 0.0}, {"noise.colour", 1.0},
+                 {"filter.type", 2.0}, {"filter.cutoff", 3500.0}, {"filter.resonance", 0.1},
+                 {"amp.decay", 1800.0},
+                 {"out.volume", -12.0}});
+    addSynthPad(set, kit, 51, "Ride", 100, fixed, 0,
+                {{"osc1.shape", 3.0}, {"osc1.level", -14.0},
+                 {"osc2.shape", 3.0}, {"osc2.level", -16.0}, {"osc2.transpose", 6.0},
+                 {"noise.level", -4.0}, {"noise.colour", 1.0},
+                 {"filter.type", 3.0}, {"filter.cutoff", 5000.0}, {"filter.resonance", 0.25},
+                 {"amp.decay", 1100.0},
+                 {"out.volume", -13.0}});
+    addSynthPad(set, kit, 56, "Cowbell", 73, fixed, 0, // 554 and 831 Hz
+                {{"osc1.shape", 3.0}, {"osc1.level", -4.0},
+                 {"osc2.shape", 3.0}, {"osc2.level", -4.0}, {"osc2.transpose", 7.0},
+                 {"filter.type", 4.0}, {"filter.cutoff", 850.0}, {"filter.resonance", 0.45},
+                 {"amp.decay", 240.0},
+                 {"out.volume", -9.0}});
+    return kit;
+}
+
+/** Kick, snare and hats at fixed pitch, and toms and bells that follow the track's tuning: on a
+    Colundi track they sit on the table's steps (toms at 80, 96, 110 and 132 Hz, bells at 384, 440,
+    528 and 639 Hz), with a second oscillator 12 steps up. */
+inline juce::ValueTree buildColundiKit(LiveSet& set, juce::ValueTree chain)
+{
+    auto kit = racks::insertRack(set, std::move(chain), -1, RackDevice::drumRackId);
+    constexpr bool fixed = true, tuned = false;
+    addSynthPad(set, kit, 36, "Kick", 29, fixed, 0, // 44 Hz, deep and long
+                {{"env2.decay", 60.0}, {"env2.sustain", 0.0},
+                 {"mod1.source", 1.0}, {"mod1.dest", 1.0}, {"mod1.amount", 0.75},
+                 {"filter.drive", 4.0},
+                 {"amp.decay", 1200.0}, {"amp.velocity", 0.4},
+                 {"out.volume", 0.0}});
+    addSynthPad(set, kit, 38, "Snare", 50, fixed, 0, // lower, noisier
+                {{"osc1.shape", 1.0}, {"osc1.level", -8.0},
+                 {"noise.level", -2.0}, {"noise.colour", 0.8},
+                 {"filter.type", 4.0}, {"filter.cutoff", 2400.0}, {"filter.resonance", 0.2},
+                 {"env2.decay", 35.0}, {"env2.sustain", 0.0},
+                 {"mod1.source", 1.0}, {"mod1.dest", 1.0}, {"mod1.amount", 0.3},
+                 {"amp.decay", 260.0},
+                 {"out.volume", 2.0}});
+    const auto hat = [&](int note, const char* name, double decayMs, double volume) {
+        addSynthPad(set, kit, note, name, 60, fixed, 1,
+                    {{"osc1.level", -70.0},
+                     {"noise.level", 0.0}, {"noise.colour", 1.0},
+                     {"filter.type", 3.0}, {"filter.cutoff", 9500.0}, {"filter.resonance", 0.3},
+                     {"amp.decay", decayMs},
+                     {"out.volume", volume}});
+    };
+    const auto tom = [&](int note, const char* name, int step) {
+        addSynthPad(set, kit, note, name, step, tuned, 0,
+                    {{"osc2.shape", 1.0}, {"osc2.level", -16.0}, {"osc2.transpose", 12.0},
+                     {"filter.cutoff", 3000.0},
+                     {"env2.decay", 120.0}, {"env2.sustain", 0.0},
+                     {"mod1.source", 1.0}, {"mod1.dest", 1.0}, {"mod1.amount", 0.12},
+                     {"amp.decay", 900.0},
+                     {"out.volume", -5.0}});
+    };
+    const auto bell = [&](int note, const char* name, int step) {
+        addSynthPad(set, kit, note, name, step, tuned, 0,
+                    {{"osc2.shape", 0.0}, {"osc2.level", -10.0}, {"osc2.transpose", 12.0},
+                     {"env2.decay", 300.0}, {"env2.sustain", 0.0},
+                     {"mod1.source", 1.0}, {"mod1.dest", 9.0}, {"mod1.amount", 0.6}, // Env 2 -> osc 2 level
+                     {"amp.decay", 1400.0},
+                     {"out.volume", -12.0}});
+    };
+    tom(41, "Tom 1", 17);
+    hat(42, "Closed Hat", 40.0, -6.0);
+    tom(43, "Tom 2", 20);
+    tom(45, "Tom 3", 23);
+    hat(46, "Open Hat", 360.0, -11.0);
+    tom(47, "Tom 4", 26);
+    bell(48, "Bell 1", 44);
+    bell(50, "Bell 2", 47);
+    bell(52, "Bell 3", 50);
+    bell(53, "Bell 4", 53);
+    return kit;
+}
+
 inline const std::vector<FactoryPreset>& factoryPresets()
 {
     static const std::vector<FactoryPreset> all{
         {"Colundi Pad", "Colundi Pad.lpreset", buildColundiPad},
         {"Colundi Bass", "Colundi Bass.lpreset", buildColundiBass},
         {"Colundi Arp Chords", "Colundi Arp Chords.lpreset", buildColundiArpChordRack},
+        {"Synth Kit", "Synth Kit.lpreset", buildSynthKit},
+        {"Colundi Kit", "Colundi Kit.lpreset", buildColundiKit},
     };
     return all;
 }

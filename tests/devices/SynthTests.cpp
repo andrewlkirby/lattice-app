@@ -83,6 +83,25 @@ TEST_CASE("Synth: Colundi notes sound at the table's frequencies", "[devices][sy
     }
 }
 
+TEST_CASE("Synth: fixed tuning plays 12-TET on a Colundi track (drums on pads)", "[devices][synth][tuning]")
+{
+    ColundiTrack track;
+    for (const int note : {36, 60, 81})
+    {
+        INFO("note " << note);
+        SynthDevice synth(track.tuning);
+        makePlainSine(synth);
+        setParam(synth, "voice.tuning", 1.0f);
+        DeviceHarness h(synth);
+        h.noteOn(0, note);
+        h.renderTo(4800 + (1 << 16));
+        const double expected = 261.6255653 * std::exp2((note - 60) / 12.0);
+        const auto [measured, level] = measureFundamental(h.slice(4800, 4800 + (1 << 16)), expected);
+        CHECK(measured == Catch::Approx(expected).margin(0.5));
+        CHECK(level > 0.9);
+    }
+}
+
 TEST_CASE("Synth: glide moves along the tuning table", "[devices][synth][tuning]")
 {
     ColundiTrack track;

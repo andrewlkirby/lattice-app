@@ -30,6 +30,8 @@ namespace lattice
       steps) and gets its frequency from TrackTuning::hzAt once per control block, so glide and
       vibrato move along the active tuning, Colundi included. Increments are interpolated across the
       block, so pitch changes are smooth.
+    - Tuning "Fixed (12-TET)" ignores the track's tuning (as the Sampler's): notes, modulation and
+      bend are semitones from middle C, for drums on Drum Rack pads.
 
     Voice stealing takes a released voice first, then the oldest, and fades the stolen voice out
     over 3 ms in a spare voice slot while the new note starts at once.
@@ -136,6 +138,7 @@ public:
             mod8Source, mod8Dest, mod8Amount,
             voiceMode, polyphony, glideTime,
             outVolume, outPan,
+            tuningMode,
             numParams
         };
     };
@@ -290,6 +293,7 @@ private:
         VoiceMode mode = VoiceMode::Poly;
         int polyphony = 16;
         double glideSeconds = 0.0;
+        bool fixedTuning = false; // 12-TET from middle C, not the track's tuning
         // Derived: unison detune ratios and pan gains per copy
         std::array<double, maxUnison> unisonRatio{};
         std::array<float, maxUnison> unisonLeft{};

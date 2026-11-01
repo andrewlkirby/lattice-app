@@ -164,6 +164,7 @@ std::vector<ParameterSpec> makeSpecs()
         ParameterSpec::continuous("out.volume", "Volume", -70.0f, 6.0f, -6.0f, ParamUnit::Decibels).withCentre(-12.0f),
         "Output");
     set(P::outPan, ParameterSpec::continuous("out.pan", "Pan", -1.0f, 1.0f, 0.0f).withFormatter(panText), "Output");
+    set(P::tuningMode, ParameterSpec::choice("voice.tuning", "Tuning", {"Track", "Fixed (12-TET)"}, 0), "Voice");
     return s;
 }
 
@@ -325,6 +326,7 @@ void SynthDevice::readPatch() noexcept
     p.mode = static_cast<VoiceMode>(juce::roundToInt(value(P::voiceMode)));
     p.polyphony = juce::jlimit(1, maxPolyphony, juce::roundToInt(value(P::polyphony)));
     p.glideSeconds = value(P::glideTime) * 0.001;
+    p.fixedTuning = juce::roundToInt(value(P::tuningMode)) == 1;
 
     float l = 0.0f;
     float r = 0.0f;
@@ -799,7 +801,13 @@ void SynthDevice::renderVoiceBlock(Voice& v, int start, int m, const DeviceTimeI
         }
         double bendSteps = 0.0;
         double bendCents = 0.0;
-        tuning.bendOffsets(bend, bendSteps, bendCents);
+        if (p.fixedTuning)
+            bendSteps = 2.0 * bend; // as the Sampler's fixed tuning: +-2 semitones
+        else
+            tuning.bendOffsets(bend, bendSteps, bendCents);
+        const auto hzAt = [&](double pitch, double cents) {
+            return p.fixedTuning ? referenceHz * std::exp2((pitch - 60.0) / 12.0 + cents / 1200.0) : tuning.hzAt(pitch, cents);
+        };
         const double basePitch = v.pitch + bendSteps + 24.0 * mod(ModDest::Pitch);
 
         std::uint32_t targetInc[2][maxUnison]{};
@@ -808,7 +816,7 @@ void SynthDevice::renderVoiceBlock(Voice& v, int start, int m, const DeviceTimeI
         for (int o = 0; o < 2; ++o)
         {
             const double pitch = basePitch + p.transpose[o] + 24.0 * mod(o == 0 ? ModDest::Osc1Pitch : ModDest::Osc2Pitch);
-            const double hz = tuning.hzAt(pitch, p.detune[o] + bendCents);
+            const double hz = hzAt(pitch, p.detune[o] + bendCents);
             oscHz[o] = hz;
             for (int u = 0; u < unison; ++u)
             {
@@ -840,7 +848,7 @@ void SynthDevice::renderVoiceBlock(Voice& v, int start, int m, const DeviceTimeI
         const std::int64_t subStep = (static_cast<std::int64_t>(subTarget) - static_cast<std::int64_t>(v.subInc)) / m;
 
         // --- Filter ----------------------------------------------------------------------------------
-        const double noteHz = oscHz[0] > 0.0 ? oscHz[0] : tuning.hzAt(v.pitch);
+        const double noteHz = oscHz[0] > 0.0 ? oscHz[0] : hzAt(v.pitch, 0.0);
         const double keyFactor = noteHz > 0.0 ? std::pow(noteHz / referenceHz, static_cast<double>(p.keytrack)) : 1.0;
         const double octavesUp = p.envAmount * env2Value + p.filterVelocity * v.velocity + 6.0 * mod(ModDest::Cutoff);
         const double cutoff = std::clamp(p.cutoff * keyFactor * std::exp2(octavesUp), 20.0, 0.45 * sr);
