@@ -170,7 +170,7 @@ TEST_CASE("WorkerPool: each thread's time in tasks is counted, for the time per 
     const WorkerPool pool(2);
     REQUIRE(pool.busyNanoseconds() == std::vector<std::uint64_t>(3, 0));
     // 100 jobs of 4 tasks, each busy for 200 us: 80 ms of task time, however it's shared out.
-    constexpr auto taskTime = std::chrono::microseconds(200);
+    static constexpr auto taskTime = std::chrono::microseconds(200);
     for (int job = 0; job < 100; ++job)
         pool.run(
             4,

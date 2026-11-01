@@ -66,6 +66,7 @@ if [[ $inside -eq 0 ]]; then
     # Forward the warnings-as-errors switch, so local runs can match CI exactly.
     run=(docker run --rm "${tty_flags[@]}" "${security[@]}" --cpus 4 --memory 4g
          -e "LATTICE_WARNINGS_AS_ERRORS=${LATTICE_WARNINGS_AS_ERRORS:-OFF}"
+         -e "LATTICE_UPDATE_SNAPSHOTS=${LATTICE_UPDATE_SNAPSHOTS:-}"
          -v "$REPO_ROOT:/src"
          -v lattice-cache:/cache
          -v lattice-build:/build

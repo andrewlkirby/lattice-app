@@ -63,7 +63,10 @@ void createWindowManagerAtoms()
     static void* const display = open(nullptr);
     if (display == nullptr)
         return;
-    for (const auto* name : {"WM_PROTOCOLS", "WM_TAKE_FOCUS", "WM_DELETE_WINDOW", "_NET_WM_PING"})
+    // Those XWindowSystemUtilities::Atoms takes only if they exist (some are used unchecked).
+    for (const auto* name : {"WM_PROTOCOLS", "WM_TAKE_FOCUS", "WM_DELETE_WINDOW", "_NET_WM_PING", "WM_CHANGE_STATE", "WM_STATE",
+                             "_NET_WM_WINDOW_TYPE", "_NET_WM_STATE", "_NET_WM_STATE_HIDDEN", "_NET_WM_STATE_MAXIMIZED_HORZ",
+                             "_NET_WM_STATE_MAXIMIZED_VERT"})
         intern(display, name, 0); // 0: create it if it doesn't exist
 }
 } // namespace
