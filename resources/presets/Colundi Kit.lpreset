@@ -34,13 +34,13 @@
         </DEVICES>
       </CHAIN>
       <CHAIN id="12" name="Tom 1" volumeDb="0.0" pan="0.0" mute="0" solo="0"
-             receiveNote="41" playNote="17" chokeGroup="0">
+             receiveNote="41" playNote="40" chokeGroup="0">
         <DEVICES>
           <DEVICE id="13" type="lattice.synth" enabled="1">
             <PARAMS osc1.shape="0.0" osc1.level="0.0" osc2.level="-16.0" filter.type="0.0"
                     filter.cutoff="3000.0" filter.keytrack="0.0" amp.attack="0.5"
                     amp.sustain="0.0" amp.velocity="0.6" env2.attack="0.5" voice.polyphony="4.0"
-                    voice.tuning="0.0" osc2.shape="1.0" osc2.transpose="12.0" env2.decay="120.0"
+                    voice.tuning="2.0" osc2.shape="1.0" osc2.transpose="12.0" env2.decay="120.0"
                     env2.sustain="0.0" mod1.source="1.0" mod1.dest="1.0" mod1.amount="0.12"
                     amp.decay="900.0" out.volume="-5.0" amp.release="900.0"/>
             <STATE/>
@@ -61,13 +61,13 @@
         </DEVICES>
       </CHAIN>
       <CHAIN id="16" name="Tom 2" volumeDb="0.0" pan="0.0" mute="0" solo="0"
-             receiveNote="43" playNote="20" chokeGroup="0">
+             receiveNote="43" playNote="43" chokeGroup="0">
         <DEVICES>
           <DEVICE id="17" type="lattice.synth" enabled="1">
             <PARAMS osc1.shape="0.0" osc1.level="0.0" osc2.level="-16.0" filter.type="0.0"
                     filter.cutoff="3000.0" filter.keytrack="0.0" amp.attack="0.5"
                     amp.sustain="0.0" amp.velocity="0.6" env2.attack="0.5" voice.polyphony="4.0"
-                    voice.tuning="0.0" osc2.shape="1.0" osc2.transpose="12.0" env2.decay="120.0"
+                    voice.tuning="2.0" osc2.shape="1.0" osc2.transpose="12.0" env2.decay="120.0"
                     env2.sustain="0.0" mod1.source="1.0" mod1.dest="1.0" mod1.amount="0.12"
                     amp.decay="900.0" out.volume="-5.0" amp.release="900.0"/>
             <STATE/>
@@ -75,13 +75,13 @@
         </DEVICES>
       </CHAIN>
       <CHAIN id="18" name="Tom 3" volumeDb="0.0" pan="0.0" mute="0" solo="0"
-             receiveNote="45" playNote="23" chokeGroup="0">
+             receiveNote="45" playNote="45" chokeGroup="0">
         <DEVICES>
           <DEVICE id="19" type="lattice.synth" enabled="1">
             <PARAMS osc1.shape="0.0" osc1.level="0.0" osc2.level="-16.0" filter.type="0.0"
                     filter.cutoff="3000.0" filter.keytrack="0.0" amp.attack="0.5"
                     amp.sustain="0.0" amp.velocity="0.6" env2.attack="0.5" voice.polyphony="4.0"
-                    voice.tuning="0.0" osc2.shape="1.0" osc2.transpose="12.0" env2.decay="120.0"
+                    voice.tuning="2.0" osc2.shape="1.0" osc2.transpose="12.0" env2.decay="120.0"
                     env2.sustain="0.0" mod1.source="1.0" mod1.dest="1.0" mod1.amount="0.12"
                     amp.decay="900.0" out.volume="-5.0" amp.release="900.0"/>
             <STATE/>
@@ -102,13 +102,13 @@
         </DEVICES>
       </CHAIN>
       <CHAIN id="22" name="Tom 4" volumeDb="0.0" pan="0.0" mute="0" solo="0"
-             receiveNote="47" playNote="26" chokeGroup="0">
+             receiveNote="47" playNote="48" chokeGroup="0">
         <DEVICES>
           <DEVICE id="23" type="lattice.synth" enabled="1">
             <PARAMS osc1.shape="0.0" osc1.level="0.0" osc2.level="-16.0" filter.type="0.0"
                     filter.cutoff="3000.0" filter.keytrack="0.0" amp.attack="0.5"
                     amp.sustain="0.0" amp.velocity="0.6" env2.attack="0.5" voice.polyphony="4.0"
-                    voice.tuning="0.0" osc2.shape="1.0" osc2.transpose="12.0" env2.decay="120.0"
+                    voice.tuning="2.0" osc2.shape="1.0" osc2.transpose="12.0" env2.decay="120.0"
                     env2.sustain="0.0" mod1.source="1.0" mod1.dest="1.0" mod1.amount="0.12"
                     amp.decay="900.0" out.volume="-5.0" amp.release="900.0"/>
             <STATE/>
@@ -116,13 +116,13 @@
         </DEVICES>
       </CHAIN>
       <CHAIN id="24" name="Bell 1" volumeDb="0.0" pan="0.0" mute="0" solo="0"
-             receiveNote="48" playNote="44" chokeGroup="0">
+             receiveNote="48" playNote="67" chokeGroup="0">
         <DEVICES>
           <DEVICE id="25" type="lattice.synth" enabled="1">
             <PARAMS osc1.shape="0.0" osc1.level="0.0" osc2.level="-10.0" filter.type="0.0"
                     filter.cutoff="16000.0" filter.keytrack="0.0" amp.attack="0.5"
                     amp.sustain="0.0" amp.velocity="0.6" env2.attack="0.5" voice.polyphony="4.0"
-                    voice.tuning="0.0" osc2.shape="0.0" osc2.transpose="12.0" env2.decay="300.0"
+                    voice.tuning="2.0" osc2.shape="0.0" osc2.transpose="12.0" env2.decay="300.0"
                     env2.sustain="0.0" mod1.source="1.0" mod1.dest="9.0" mod1.amount="0.6"
                     amp.decay="1400.0" out.volume="-12.0" amp.release="1400.0"/>
             <STATE/>
@@ -130,13 +130,13 @@
         </DEVICES>
       </CHAIN>
       <CHAIN id="26" name="Bell 2" volumeDb="0.0" pan="0.0" mute="0" solo="0"
-             receiveNote="50" playNote="47" chokeGroup="0">
+             receiveNote="50" playNote="69" chokeGroup="0">
         <DEVICES>
           <DEVICE id="27" type="lattice.synth" enabled="1">
             <PARAMS osc1.shape="0.0" osc1.level="0.0" osc2.level="-10.0" filter.type="0.0"
                     filter.cutoff="16000.0" filter.keytrack="0.0" amp.attack="0.5"
                     amp.sustain="0.0" amp.velocity="0.6" env2.attack="0.5" voice.polyphony="4.0"
-                    voice.tuning="0.0" osc2.shape="0.0" osc2.transpose="12.0" env2.decay="300.0"
+                    voice.tuning="2.0" osc2.shape="0.0" osc2.transpose="12.0" env2.decay="300.0"
                     env2.sustain="0.0" mod1.source="1.0" mod1.dest="9.0" mod1.amount="0.6"
                     amp.decay="1400.0" out.volume="-12.0" amp.release="1400.0"/>
             <STATE/>
@@ -144,13 +144,13 @@
         </DEVICES>
       </CHAIN>
       <CHAIN id="28" name="Bell 3" volumeDb="0.0" pan="0.0" mute="0" solo="0"
-             receiveNote="52" playNote="50" chokeGroup="0">
+             receiveNote="52" playNote="72" chokeGroup="0">
         <DEVICES>
           <DEVICE id="29" type="lattice.synth" enabled="1">
             <PARAMS osc1.shape="0.0" osc1.level="0.0" osc2.level="-10.0" filter.type="0.0"
                     filter.cutoff="16000.0" filter.keytrack="0.0" amp.attack="0.5"
                     amp.sustain="0.0" amp.velocity="0.6" env2.attack="0.5" voice.polyphony="4.0"
-                    voice.tuning="0.0" osc2.shape="0.0" osc2.transpose="12.0" env2.decay="300.0"
+                    voice.tuning="2.0" osc2.shape="0.0" osc2.transpose="12.0" env2.decay="300.0"
                     env2.sustain="0.0" mod1.source="1.0" mod1.dest="9.0" mod1.amount="0.6"
                     amp.decay="1400.0" out.volume="-12.0" amp.release="1400.0"/>
             <STATE/>
@@ -158,13 +158,13 @@
         </DEVICES>
       </CHAIN>
       <CHAIN id="30" name="Bell 4" volumeDb="0.0" pan="0.0" mute="0" solo="0"
-             receiveNote="53" playNote="53" chokeGroup="0">
+             receiveNote="53" playNote="75" chokeGroup="0">
         <DEVICES>
           <DEVICE id="31" type="lattice.synth" enabled="1">
             <PARAMS osc1.shape="0.0" osc1.level="0.0" osc2.level="-10.0" filter.type="0.0"
                     filter.cutoff="16000.0" filter.keytrack="0.0" amp.attack="0.5"
                     amp.sustain="0.0" amp.velocity="0.6" env2.attack="0.5" voice.polyphony="4.0"
-                    voice.tuning="0.0" osc2.shape="0.0" osc2.transpose="12.0" env2.decay="300.0"
+                    voice.tuning="2.0" osc2.shape="0.0" osc2.transpose="12.0" env2.decay="300.0"
                     env2.sustain="0.0" mod1.source="1.0" mod1.dest="9.0" mod1.amount="0.6"
                     amp.decay="1400.0" out.volume="-12.0" amp.release="1400.0"/>
             <STATE/>

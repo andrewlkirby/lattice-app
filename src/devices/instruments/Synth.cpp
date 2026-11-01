@@ -164,7 +164,7 @@ std::vector<ParameterSpec> makeSpecs()
         ParameterSpec::continuous("out.volume", "Volume", -70.0f, 6.0f, -6.0f, ParamUnit::Decibels).withCentre(-12.0f),
         "Output");
     set(P::outPan, ParameterSpec::continuous("out.pan", "Pan", -1.0f, 1.0f, 0.0f).withFormatter(panText), "Output");
-    set(P::tuningMode, ParameterSpec::choice("voice.tuning", "Tuning", {"Track", "Fixed (12-TET)"}, 0), "Voice");
+    set(P::tuningMode, ParameterSpec::choice("voice.tuning", "Tuning", {"Track", "Fixed (12-TET)", "Nearest Step"}, 0), "Voice");
     return s;
 }
 
@@ -326,7 +326,7 @@ void SynthDevice::readPatch() noexcept
     p.mode = static_cast<VoiceMode>(juce::roundToInt(value(P::voiceMode)));
     p.polyphony = juce::jlimit(1, maxPolyphony, juce::roundToInt(value(P::polyphony)));
     p.glideSeconds = value(P::glideTime) * 0.001;
-    p.fixedTuning = juce::roundToInt(value(P::tuningMode)) == 1;
+    p.tuningMode = static_cast<TuningMode>(juce::jlimit(0, 2, juce::roundToInt(value(P::tuningMode))));
 
     float l = 0.0f;
     float r = 0.0f;
@@ -400,6 +400,7 @@ void SynthDevice::startVoice(Voice& v, int note, float velocity, int channel, bo
     v.stealing = false;
     v.age = ++noteCounter;
     v.pitchTarget = note;
+    v.snappedFrom = -1.0; // snapped afresh each note (the track's tuning may have changed)
 
     const double from = fresh ? (lastPitch >= 0.0 ? lastPitch : note) : v.pitch;
     if (patch.glideSeconds > 0.0 && from != note && (!fresh || lastPitch >= 0.0))
@@ -801,14 +802,27 @@ void SynthDevice::renderVoiceBlock(Voice& v, int start, int m, const DeviceTimeI
         }
         double bendSteps = 0.0;
         double bendCents = 0.0;
-        if (p.fixedTuning)
+        const bool fixed = p.tuningMode == TuningMode::Fixed;
+        if (fixed)
             bendSteps = 2.0 * bend; // as the Sampler's fixed tuning: +-2 semitones
         else
             tuning.bendOffsets(bend, bendSteps, bendCents);
         const auto hzAt = [&](double pitch, double cents) {
-            return p.fixedTuning ? referenceHz * std::exp2((pitch - 60.0) / 12.0 + cents / 1200.0) : tuning.hzAt(pitch, cents);
+            return fixed ? referenceHz * std::exp2((pitch - 60.0) / 12.0 + cents / 1200.0) : tuning.hzAt(pitch, cents);
         };
-        const double basePitch = v.pitch + bendSteps + 24.0 * mod(ModDest::Pitch);
+        double notePitch = v.pitch;
+        if (p.tuningMode == TuningMode::NearestStep)
+        {
+            // Snapped again only when the pitch moves (the search is a loop over the table).
+            if (v.snappedFrom != v.pitch)
+            {
+                const int nearest = tuning.nearestNote(referenceHz * std::exp2((v.pitch - 60.0) / 12.0));
+                v.snappedFrom = v.pitch;
+                v.snappedTo = nearest >= 0 ? nearest : -1000.0; // none mapped: silent
+            }
+            notePitch = v.snappedTo;
+        }
+        const double basePitch = notePitch + bendSteps + 24.0 * mod(ModDest::Pitch);
 
         std::uint32_t targetInc[2][maxUnison]{};
         dsp::MipmappedWave::Position at[2][maxUnison]{};
@@ -848,7 +862,7 @@ void SynthDevice::renderVoiceBlock(Voice& v, int start, int m, const DeviceTimeI
         const std::int64_t subStep = (static_cast<std::int64_t>(subTarget) - static_cast<std::int64_t>(v.subInc)) / m;
 
         // --- Filter ----------------------------------------------------------------------------------
-        const double noteHz = oscHz[0] > 0.0 ? oscHz[0] : hzAt(v.pitch, 0.0);
+        const double noteHz = oscHz[0] > 0.0 ? oscHz[0] : hzAt(notePitch, 0.0);
         const double keyFactor = noteHz > 0.0 ? std::pow(noteHz / referenceHz, static_cast<double>(p.keytrack)) : 1.0;
         const double octavesUp = p.envAmount * env2Value + p.filterVelocity * v.velocity + 6.0 * mod(ModDest::Cutoff);
         const double cutoff = std::clamp(p.cutoff * keyFactor * std::exp2(octavesUp), 20.0, 0.45 * sr);

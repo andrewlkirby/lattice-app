@@ -57,6 +57,16 @@ double TrackTuning::hzAt(double fractionalNote, double cents) const noexcept
     return applyHighNotePolicy(hz, *t);
 }
 
+int TrackTuning::nearestNote(double hz) const noexcept
+{
+    const RtShared<TuningTable>::ReadScope scope(table);
+    const TuningTable* t = scope.get();
+    if (t == nullptr)
+        return -1;
+    const int index = t->nearestNoteTo(hz);
+    return index < 0 ? -1 : index - noteOffset.load(std::memory_order_relaxed);
+}
+
 double TrackTuning::applyHighNotePolicy(double hz, const TuningTable& t) const noexcept
 {
     if (hz <= 0.0)

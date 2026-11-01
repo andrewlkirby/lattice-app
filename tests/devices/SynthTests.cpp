@@ -102,6 +102,36 @@ TEST_CASE("Synth: fixed tuning plays 12-TET on a Colundi track (drums on pads)",
     }
 }
 
+TEST_CASE("Synth: nearest step plays the track tuning's note nearest the 12-TET pitch", "[devices][synth][tuning]")
+{
+    // Colundi Kit's toms: G2 (98 Hz) and C3 (131 Hz) land on Colundi's 98 and 132 Hz steps; on a
+    // 12-TET track they are G2 and C3 themselves.
+    const auto colundi = TuningRegistry::makeBuiltinColundi();
+    for (const bool onColundi : {true, false})
+        for (const int note : {43, 48})
+        {
+            INFO((onColundi ? "Colundi" : "12-TET") << ", note " << note);
+            TrackTuning tuning;
+            if (onColundi)
+                tuning.setTuning(colundi);
+            else
+                tuning.setTuning(Tet12::make());
+            tuning.setSampleRate(DeviceHarness::sampleRate);
+            SynthDevice synth(tuning);
+            makePlainSine(synth);
+            setParam(synth, "voice.tuning", 2.0f);
+            DeviceHarness h(synth);
+            h.noteOn(0, note);
+            h.renderTo(4800 + (1 << 16));
+            const double tet = 261.6255653 * std::exp2((note - 60) / 12.0);
+            const double expected =
+                onColundi ? colundi->hz[static_cast<std::size_t>(colundi->nearestNoteTo(tet))] : tet;
+            const auto [measured, level] = measureFundamental(h.slice(4800, 4800 + (1 << 16)), expected);
+            CHECK(measured == Catch::Approx(expected).margin(0.5));
+            CHECK(level > 0.9);
+        }
+}
+
 TEST_CASE("Synth: glide moves along the tuning table", "[devices][synth][tuning]")
 {
     ColundiTrack track;

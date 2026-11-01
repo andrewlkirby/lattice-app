@@ -186,11 +186,17 @@ inline juce::ValueTree buildColundiArpChordRack(LiveSet& set, juce::ValueTree ch
 using Params = std::initializer_list<std::pair<const char*, double>>;
 
 /** A Drum Rack pad on `note` holding a Synth set up for one-shot drums (no sustain, no second
-    oscillator, no key tracking), playing `playNote`. Fixed: 12-TET from middle C, whatever the
-    track's tuning (kicks, snares and hats keep their pitch); otherwise it follows the track's
-    tuning, as Colundi toms and bells do. */
+    oscillator, no key tracking), playing `playNote` as a 12-TET note. Fixed: at that pitch,
+    whatever the track's tuning (kicks, snares and hats); nearest step: on the track tuning's note
+    nearest it (Colundi Kit's toms and bells, which sit on the table's steps on a Colundi track and
+    stay near the same pitch in any other tuning). */
+enum class PadTuning
+{
+    fixed,
+    nearestStep
+};
 inline juce::ValueTree addSynthPad(LiveSet& set, const juce::ValueTree& kit, int note, const char* name, int playNote,
-                                   bool fixed, int chokeGroup, Params params)
+                                   PadTuning tuning, int chokeGroup, Params params)
 {
     auto pad = racks::addChain(set, kit, name);
     pad.setProperty(ids::receiveNote, note, set.undoManager());
@@ -209,7 +215,7 @@ inline juce::ValueTree addSynthPad(LiveSet& set, const juce::ValueTree& kit, int
                {"amp.velocity", 0.6},
                {"env2.attack", 0.5},
                {"voice.polyphony", 4.0},
-               {"voice.tuning", fixed ? 1.0 : 0.0}});
+               {"voice.tuning", tuning == PadTuning::fixed ? 1.0 : 2.0}}); // Fixed (12-TET), Nearest Step
     setParams(set, synth, params);
     // Drums ring out however short the note: the release is the decay.
     set.setDeviceParameter(synth, "amp.release", static_cast<double>(synth.getChildWithName(ids::params)["amp.decay"]));
@@ -221,7 +227,7 @@ inline juce::ValueTree addSynthPad(LiveSet& set, const juce::ValueTree& kit, int
 inline juce::ValueTree buildSynthKit(LiveSet& set, juce::ValueTree chain)
 {
     auto kit = racks::insertRack(set, std::move(chain), -1, RackDevice::drumRackId);
-    constexpr bool fixed = true;
+    constexpr auto fixed = PadTuning::fixed;
     addSynthPad(set, kit, 36, "Kick", 31, fixed, 0, // 49 Hz, from about 150
                 {{"env2.decay", 45.0}, {"env2.sustain", 0.0},
                  {"mod1.source", 1.0}, {"mod1.dest", 1.0}, {"mod1.amount", 0.8}, // Env 2 -> pitch
@@ -295,13 +301,13 @@ inline juce::ValueTree buildSynthKit(LiveSet& set, juce::ValueTree chain)
     return kit;
 }
 
-/** Kick, snare and hats at fixed pitch, and toms and bells that follow the track's tuning: on a
-    Colundi track they sit on the table's steps (toms at 80, 96, 110 and 132 Hz, bells at 384, 440,
-    528 and 639 Hz), with a second oscillator 12 steps up. */
+/** Kick, snare and hats at fixed pitch, and toms and bells on the track tuning's nearest steps:
+    on a Colundi track the toms land on 80, 98, 110 and 132 Hz and the bells on 384, 440, 528 and
+    639 Hz; in 12-TET on E2, G2, A2, C3 and G4, A4, C5, D#5. A second oscillator sits 12 steps up. */
 inline juce::ValueTree buildColundiKit(LiveSet& set, juce::ValueTree chain)
 {
     auto kit = racks::insertRack(set, std::move(chain), -1, RackDevice::drumRackId);
-    constexpr bool fixed = true, tuned = false;
+    constexpr auto fixed = PadTuning::fixed, tuned = PadTuning::nearestStep;
     addSynthPad(set, kit, 36, "Kick", 29, fixed, 0, // 44 Hz, deep and long
                 {{"env2.decay", 60.0}, {"env2.sustain", 0.0},
                  {"mod1.source", 1.0}, {"mod1.dest", 1.0}, {"mod1.amount", 0.75},
@@ -324,8 +330,8 @@ inline juce::ValueTree buildColundiKit(LiveSet& set, juce::ValueTree chain)
                      {"amp.decay", decayMs},
                      {"out.volume", volume}});
     };
-    const auto tom = [&](int note, const char* name, int step) {
-        addSynthPad(set, kit, note, name, step, tuned, 0,
+    const auto tom = [&](int note, const char* name, int playNote) {
+        addSynthPad(set, kit, note, name, playNote, tuned, 0,
                     {{"osc2.shape", 1.0}, {"osc2.level", -16.0}, {"osc2.transpose", 12.0},
                      {"filter.cutoff", 3000.0},
                      {"env2.decay", 120.0}, {"env2.sustain", 0.0},
@@ -333,24 +339,24 @@ inline juce::ValueTree buildColundiKit(LiveSet& set, juce::ValueTree chain)
                      {"amp.decay", 900.0},
                      {"out.volume", -5.0}});
     };
-    const auto bell = [&](int note, const char* name, int step) {
-        addSynthPad(set, kit, note, name, step, tuned, 0,
+    const auto bell = [&](int note, const char* name, int playNote) {
+        addSynthPad(set, kit, note, name, playNote, tuned, 0,
                     {{"osc2.shape", 0.0}, {"osc2.level", -10.0}, {"osc2.transpose", 12.0},
                      {"env2.decay", 300.0}, {"env2.sustain", 0.0},
                      {"mod1.source", 1.0}, {"mod1.dest", 9.0}, {"mod1.amount", 0.6}, // Env 2 -> osc 2 level
                      {"amp.decay", 1400.0},
                      {"out.volume", -12.0}});
     };
-    tom(41, "Tom 1", 17);
+    tom(41, "Tom 1", 40);
     hat(42, "Closed Hat", 40.0, -6.0);
-    tom(43, "Tom 2", 20);
-    tom(45, "Tom 3", 23);
+    tom(43, "Tom 2", 43);
+    tom(45, "Tom 3", 45);
     hat(46, "Open Hat", 360.0, -11.0);
-    tom(47, "Tom 4", 26);
-    bell(48, "Bell 1", 44);
-    bell(50, "Bell 2", 47);
-    bell(52, "Bell 3", 50);
-    bell(53, "Bell 4", 53);
+    tom(47, "Tom 4", 48);
+    bell(48, "Bell 1", 67);
+    bell(50, "Bell 2", 69);
+    bell(52, "Bell 3", 72);
+    bell(53, "Bell 4", 75);
     return kit;
 }
 

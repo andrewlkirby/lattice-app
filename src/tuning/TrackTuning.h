@@ -64,6 +64,11 @@ public:
         what every M3 instrument uses (docs/04-m3-devices.md, "Tuning hookup"). */
     double hzAt(double fractionalNote, double cents = 0.0) const noexcept LATTICE_NONBLOCKING;
 
+    /** The note (as hzAt() takes it, so before the note offset) whose frequency in the table is
+        closest to hz, in log terms; -1 if the table maps none. Loops over the table: callers
+        cache it (a voice does, per note). */
+    int nearestNote(double hz) const noexcept LATTICE_NONBLOCKING;
+
     /** A pitch-bend value (-1..1) as an offset for hzAt(), following the current bend mode: in
         table steps (TableSteps) or in cents (Cents); the other is 0. */
     void bendOffsets(float bend, double& steps, double& cents) const noexcept LATTICE_NONBLOCKING
