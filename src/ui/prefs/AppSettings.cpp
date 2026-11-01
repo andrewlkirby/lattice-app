@@ -1,7 +1,9 @@
 #include "ui/prefs/AppSettings.h"
 
 #include "core/model/LiveSet.h"
+#include "engine/AudioEngine.h"
 #include "engine/WorkerPool.h"
+#include "tuning/TuningRegistry.h"
 #include "tuning/TuningTable.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -25,6 +27,35 @@ int workerThreads(const juce::PropertiesFile& settings)
         return 0;
     const int chosen = settings.getIntValue(workersKey, 0);
     return chosen > 0 ? chosen : WorkerPool::defaultWorkers();
+}
+
+void applyTestTone(const juce::PropertiesFile& settings, AudioEngine& engine)
+{
+    engine.testTone().setFrequency(static_cast<float>(settings.getDoubleValue(toneFrequencyKey, 440.0)));
+    engine.testTone().setGain(juce::Decibels::decibelsToGain(static_cast<float>(settings.getDoubleValue(toneLevelKey, -12.0))));
+}
+
+void saveDeviceState(juce::PropertiesFile& settings, AudioEngine& engine)
+{
+    if (engine.isOpening())
+        return; // the device manager belongs to the opening thread until it's open
+    if (const auto xml = engine.getDeviceManager().createStateXml())
+        settings.setValue(deviceStateKey, xml.get());
+}
+
+void loadRememberedTunings(TuningRegistry& registry, const juce::PropertiesFile& settings)
+{
+    for (const auto& path : juce::StringArray::fromLines(settings.getValue(userTuningFilesKey)))
+        if (path.isNotEmpty() && juce::File::isAbsolutePath(path))
+            registry.loadFile(juce::File(path));
+}
+
+void rememberTuningFile(juce::PropertiesFile& settings, const juce::File& file)
+{
+    auto files = juce::StringArray::fromLines(settings.getValue(userTuningFilesKey));
+    files.removeEmptyStrings();
+    files.addIfNotAlreadyThere(file.getFullPathName());
+    settings.setValue(userTuningFilesKey, files.joinIntoString("\n"));
 }
 
 void applyNewTrackDefaults(const juce::PropertiesFile& settings)

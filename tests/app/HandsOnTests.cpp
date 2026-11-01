@@ -1,13 +1,12 @@
 // The M4 4b hands-on checks (docs/05-m4-ui.md), run on the whole window's content as the app builds
-// it: the shell with the Debug UI beside it, keys through the shell's key mappings and on to the
-// computer keyboard, and the engine rendering offline. The bugs the hands-on checks found came
-// from the two UIs together, which tests of either alone can't see.
+// it: the shell, keys through the shell's key mappings and on to the computer keyboard, and the
+// engine rendering offline. The bugs the hands-on checks found came from the pieces together,
+// which tests of each alone can't see.
 //
 // With LATTICE_SNAPSHOT_DIR set, each step also saves a picture of the window there
 // (handson-*.png), for looking at: what a test can't judge is whether it reads on screen.
 
 #include "app/MainWindow.h"
-#include "app/debug/DeviceUi.h"
 #include "devices/ChainEditing.h"
 #include "devices/effects/Reverb.h"
 #include "devices/racks/Rack.h"
@@ -54,13 +53,12 @@ struct App
     LiveSet& set() { return session.set(); }
     ui::MainShell& shell() { return window->shell(); }
     ui::SessionView& view() { return shell().sessionView(); }
-    ComputerKeyboardInput& keyboard() { return window->debugUi().playPanel().computerKeyboard(); }
-    /** What the message loop would do between events: document updates, the debug UI's timer. */
+    ComputerKeyboardInput& keyboard() { return window->computerKeyboard(); }
+    /** What the message loop would do between events: document updates. */
     void settle()
     {
         view().flushUpdates();
-        window->debugUi().sessionView().flushForTests();
-        window->debugUi().sessionView().detailView().flushUpdates();
+        shell().deviceView().flushUpdates();
         shell().clipView().flushUpdates();
     }
     bool key(const juce::KeyPress& k)
@@ -296,20 +294,21 @@ TEST_CASE("Hands-on 4b, 4: auto-arm and the computer keyboard", "[app][handson]"
 TEST_CASE("Hands-on 4b, 5: an effect inserted on a return starts fully wet", "[app][handson]")
 {
     App app;
-    auto& debug = app.window->debugUi().sessionView();
-    // As in the Debug UI tab: show Return A's chain and insert a Reverb from the device list.
-    debug.showChainOf({debugui::ChainOwner::Kind::Return, 0});
-    REQUIRE(debug.detailView().chainRow() != nullptr);
-    debug.detailView().chainRow()->insertFromDescription(debugui::drag::device(ReverbDevice::typeId), -1);
+    auto& devices = app.shell().deviceView();
+    app.shell().setDetailVisible(true);
+    // Return A's chain in the Device view, and a Reverb inserted from the browser.
+    app.shell().selection().showDevicesOf({ui::DeviceOwner::Kind::returnTrack, 0});
+    app.settle();
+    REQUIRE(devices.insertHere(ui::drag::device(ReverbDevice::typeId)));
     auto returnChain = LiveSet::chainOf(app.set().returnTrack(0));
     REQUIRE(returnChain.getNumChildren() == 1);
     CHECK(LiveSet::deviceParameter(returnChain.getChild(0), "reverb.mix", 0.0) == 1.0);
-    app.shell().mainArea().setCurrentTabIndex(2); // the Debug UI tab
     app.snap("5-1-reverb-on-return-A");
 
     // On a track it keeps its usual default.
-    debug.showChainOf({debugui::ChainOwner::Kind::Track, 0});
-    debug.detailView().chainRow()->insertFromDescription(debugui::drag::device(ReverbDevice::typeId), -1);
+    app.shell().selection().set({ui::SessionSelection::Kind::slot, 0, 0});
+    app.settle();
+    REQUIRE(devices.insertHere(ui::drag::device(ReverbDevice::typeId)));
     auto trackChain = LiveSet::chainOf(app.set().track(0));
     REQUIRE(trackChain.getNumChildren() == 2);
     CHECK(LiveSet::deviceParameter(trackChain.getChild(1), "reverb.mix", -1.0) == -1.0); // the default

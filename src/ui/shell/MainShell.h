@@ -30,9 +30,8 @@ namespace lattice::ui
 {
 
 /** The main window's layout (docs/05-m4-ui.md, 4a): the control bar along the top, the browser on
-    the left (4e; its width dragged at its right edge) with the info view under it, the main area (Session; Arrangement, disabled for now;
-    and, until the new views cover everything, the Debug UI), the detail view along the bottom, and
-    the status bar. The browser, detail view and info view can each be shown or hidden.
+    the left (4e; its width dragged at its right edge) with the info view under it, the main area (Session; Arrangement, disabled for now),
+    the detail view along the bottom, and the status bar. The browser, detail view and info view can each be shown or hidden.
 
     It owns what the whole UI shares: the look and feel and its theme, the command registry, the
     engine state feed (ticking on this window's display refresh) and the background job pool. Keys
@@ -126,8 +125,9 @@ public:
     /** Where the tuning editor saves (the User Library's Tunings folder, which the browser shows). */
     juce::File userTuningsFolder() const;
 
-    /** The old views, in a "Debug UI" tab, until the new ones cover everything they do. */
-    void setDebugUi(juce::Component* debugUi);
+    /** The audio device has been opened, or failed to open (error says why; the Preferences'
+        Audio page shows it too). */
+    void audioDeviceOpened(const juce::String& error);
 
     void setTheme(const Theme& theme);
     const Theme& theme() const noexcept { return lookAndFeel.theme(); }
@@ -235,6 +235,7 @@ private:
     std::unique_ptr<FindView> findBox;
     juce::Component::SafePointer<juce::Component> flashed;
     ComputerKeyboardInput* computerKeyboard = nullptr;
+    juce::String audioError; // why the audio device didn't open
     std::unique_ptr<juce::FileChooser> chooser;
     std::unique_ptr<DetailView> detail; // after what it shows, so it goes first
     juce::Rectangle<int> detailDivider, browserDivider;

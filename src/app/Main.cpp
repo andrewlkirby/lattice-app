@@ -1,5 +1,4 @@
 #include "app/MainWindow.h"
-#include "app/PlayPanel.h"
 #include "app/SoakTest.h"
 #include "core/Profiling.h"
 #include "core/StartupTimeline.h"
@@ -52,7 +51,7 @@ public:
         tunings->loadFolder(paths.userData.getChildFile("Tunings"));
         // What the tuning editor saved (docs/05-m4-ui.md, 4f): in the User Library, where the browser shows it.
         tunings->loadFolder(paths.userData.getChildFile("Library").getChildFile("Tunings"));
-        PlayPanel::loadRememberedTunings(*tunings, *settings);
+        ui::prefs::loadRememberedTunings(*tunings, *settings); // tuning files loaded from elsewhere
         timeline.mark("tunings loaded");
 
         // A new set, its tracks in the Preferences' tuning (a tuning file no longer there: 12-TET).
@@ -153,7 +152,6 @@ private:
                                               quit();
                                           });
         soak->start();
-        mainWindow->content().setToneToggle(true);
     }
 
     StartupTimeline timeline;

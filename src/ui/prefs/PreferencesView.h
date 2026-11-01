@@ -50,6 +50,7 @@ public:
         /** A file to import (save false) or export to. */
         std::function<void(const juce::String& title, const juce::String& patterns, bool save, std::function<void(const juce::File&)>)> chooseFile = {};
         juce::File themesFolder = {};
+        juce::String audioError = {}; // why the audio device didn't open, if it didn't
     };
 
     enum class Page

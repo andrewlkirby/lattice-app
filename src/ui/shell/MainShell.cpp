@@ -59,6 +59,18 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
             if (session_ != nullptr)
                 session_->renameSelection();
         };
+    if (!actions.importMidi)
+        actions.importMidi = [this] {
+            // Into the selected slot (the command is on only with a slot selected).
+            const auto at = selected.get();
+            if (at.kind != SessionSelection::Kind::slot || deviceShared == nullptr || !deviceShared->chooseFile)
+                return;
+            deviceShared->chooseFile("Import a MIDI File", "*.mid;*.midi", [this, track = at.track, scene = at.scene](const juce::File& file) {
+                const auto result = session.importMidiFile(file, track, scene);
+                if (!result.ok() && deviceShared->confirm)
+                    deviceShared->confirm("Can't import " + file.getFileName(), result.error, {}, nullptr);
+            });
+        };
     // The set's files (4g): New, Open, Save and Save As are the shell's own.
     SetFileActions::Dialogs fileDialogs;
     fileDialogs.ask = [this](const juce::String& title, const juce::String& message, const juce::StringArray& buttons,
@@ -701,7 +713,8 @@ PreferencesView::Context MainShell::preferencesContext()
                                .commands = registry,
                                .tunings = deviceShared->tunings,
                                .library = *libraryService,
-                               .keyboard = computerKeyboard};
+                               .keyboard = computerKeyboard,
+                               .audioError = audioError};
     c.setTheme = [this](const Theme& t) { setTheme(t); };
     c.theme = [this]() -> const Theme& { return theme(); };
     c.keyboardChanged = [this] {
@@ -944,11 +957,11 @@ void MainShell::selectionChanged(const SessionSelection& now)
     session.setAutoArmTrack(autoArm && midiTrack ? set.trackId(now.track) : 0);
 }
 
-void MainShell::setDebugUi(juce::Component* debugUi)
+void MainShell::audioDeviceOpened(const juce::String& error)
 {
-    if (debugUi == nullptr)
-        return;
-    tabs.addTab("Debug UI", lookAndFeel.theme().background, debugUi, false);
+    audioError = error;
+    if (error.isNotEmpty() && deviceShared->confirm)
+        deviceShared->confirm("No audio device", error + "\n\nChoose one in Preferences, on the Audio page.", {}, nullptr);
 }
 
 void MainShell::setTheme(const Theme& t)
@@ -1006,6 +1019,7 @@ bool MainShell::setTrackTuningFrom(int track, const juce::String& idOrPath)
             return false;
         }
         tuning = loaded.table;
+        prefs::rememberTuningFile(settings, juce::File(idOrPath)); // and loaded again next time
     }
     if (tuning == nullptr)
         return false;

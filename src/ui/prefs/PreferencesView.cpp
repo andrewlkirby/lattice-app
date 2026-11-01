@@ -137,10 +137,10 @@ public:
         frequency.setRange(20.0, 20000.0, 1.0);
         frequency.setSkewFactorFromMidPoint(1000.0);
         frequency.setTextValueSuffix(" Hz");
-        frequency.setValue(context.settings.getDoubleValue("testToneFrequency", 440.0), juce::dontSendNotification);
+        frequency.setValue(context.settings.getDoubleValue(prefs::toneFrequencyKey, 440.0), juce::dontSendNotification);
         level.setRange(-60.0, 0.0, 0.5);
         level.setTextValueSuffix(" dB");
-        level.setValue(context.settings.getDoubleValue("testToneLevelDb", -12.0), juce::dontSendNotification);
+        level.setValue(context.settings.getDoubleValue(prefs::toneLevelKey, -12.0), juce::dontSendNotification);
         for (auto* s : {&frequency, &level})
         {
             s->setSliderStyle(juce::Slider::LinearHorizontal);
@@ -190,17 +190,13 @@ private:
     {
         context.engine.testTone().setFrequency(static_cast<float>(frequency.getValue()));
         context.engine.testTone().setGain(juce::Decibels::decibelsToGain(static_cast<float>(level.getValue())));
-        context.settings.setValue("testToneFrequency", frequency.getValue());
-        context.settings.setValue("testToneLevelDb", level.getValue());
+        context.settings.setValue(prefs::toneFrequencyKey, frequency.getValue());
+        context.settings.setValue(prefs::toneLevelKey, level.getValue());
     }
 
     void changeListenerCallback(juce::ChangeBroadcaster*) override
     {
-        // The device changed: remember it (as the debug UI's Audio tab did), unless still opening.
-        if (context.engine.isOpening())
-            return;
-        if (const auto xml = context.engine.getDeviceManager().createStateXml())
-            context.settings.setValue("audioDeviceState", xml.get());
+        prefs::saveDeviceState(context.settings, context.engine); // the device changed: remember it
     }
 
     void timerCallback() override
@@ -210,7 +206,7 @@ private:
         auto* device = context.engine.isOpening() ? nullptr : context.engine.getDeviceManager().getCurrentAudioDevice();
         juce::String text;
         if (device == nullptr)
-            text = "No audio device open.";
+            text = "No audio device open." + (context.audioError.isNotEmpty() ? "\n" + context.audioError : juce::String());
         else
         {
             const double sr = device->getCurrentSampleRate();
@@ -335,7 +331,7 @@ private:
                 {
                     context.engine.getDeviceManager().setMidiInputDeviceEnabled(id, track || remote);
                     if (const auto xml = context.engine.getDeviceManager().createStateXml())
-                        context.settings.setValue("audioDeviceState", xml.get());
+                        context.settings.setValue(prefs::deviceStateKey, xml.get());
                 }
                 if (context.midiChanged)
                     context.midiChanged();

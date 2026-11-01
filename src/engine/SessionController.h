@@ -22,7 +22,7 @@ namespace lattice
     undo history, keeps the engine's snapshot up to date, turns user actions into engine commands,
     and turns what the engine reports (recorded notes, scene tempos) back into document edits.
 
-    Every surface (the debug UI now, the real UI in M4, the Virtual Push and Push in M5) drives the
+    Every surface (the UI, the Virtual Push and Push in M5) drives the
     session through this one API, so they all behave the same. Message thread only. */
 class SessionController final : private juce::Timer
 {

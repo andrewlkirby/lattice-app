@@ -298,20 +298,6 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|x86_64|amd64)$")
     endif()
 endif()
 
-# --- Debug UI (M2/M3, replaced in M4): a library, so the tests can drive the editors headless ------
-add_library(lattice_debug_ui STATIC
-    src/app/debug/ClipPropertiesPanel.cpp
-    src/app/debug/DetailView.cpp
-    src/app/debug/DevicePanel.cpp
-    src/app/debug/DeviceUi.cpp
-    src/app/debug/MixerStrip.cpp
-    src/app/debug/SessionGrid.cpp
-    src/app/debug/SessionView.cpp
-    src/app/debug/TransportBar.cpp)
-target_include_directories(lattice_debug_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(lattice_debug_ui PUBLIC lattice_core)
-lattice_set_warnings(lattice_debug_ui)
-
 # --- UI (M4, docs/05-m4-ui.md): a library, so the tests can drive the views headless ---------------
 add_library(lattice_ui STATIC
     src/ui/browser/BrowserModel.cpp
@@ -383,10 +369,9 @@ lattice_set_warnings(lattice_ui)
 
 # --- The window's content (M4): a library, so the tests can drive the whole app headless ----------
 add_library(lattice_app STATIC
-    src/app/MainWindow.cpp
-    src/app/PlayPanel.cpp)
+    src/app/MainWindow.cpp)
 target_include_directories(lattice_app PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(lattice_app PUBLIC lattice_core lattice_debug_ui lattice_ui)
+target_link_libraries(lattice_app PUBLIC lattice_core lattice_ui)
 if(LATTICE_RT_CHECKS STREQUAL "ON")
     target_compile_definitions(lattice_app PRIVATE LATTICE_RT_CHECKS_ENABLED=1)
 elseif(LATTICE_RT_CHECKS STREQUAL "AUTO")

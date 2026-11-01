@@ -1,7 +1,6 @@
 #pragma once
 
-#include "app/PlayPanel.h"
-#include "app/debug/SessionView.h"
+#include "control/ComputerKeyboardInput.h"
 #include "engine/AudioEngine.h"
 #include "engine/SessionController.h"
 #include "tuning/TuningRegistry.h"
@@ -17,74 +16,16 @@
 namespace lattice
 {
 
-/** The "Audio" tab: test tone, callback load and input latency readouts, and the audio/MIDI device
-    setup (the M0 main view). */
-class AudioPanel final : public juce::Component, private juce::Timer, private juce::ChangeListener
-{
-public:
-    AudioPanel(AudioEngine& engine, juce::PropertiesFile& settings);
-    ~AudioPanel() override;
-
-    void audioDeviceOpened(const juce::String& error);
-    void setPersistDeviceState(bool shouldPersist) noexcept { persistDeviceState = shouldPersist; }
-    void setToneToggle(bool on) { toneToggle.setToggleState(on, juce::dontSendNotification); }
-
-    void paint(juce::Graphics& g) override;
-    void resized() override;
-
-private:
-    void timerCallback() override;
-    void changeListenerCallback(juce::ChangeBroadcaster* source) override;
-    void saveDeviceState();
-    void updateToneFromControls();
-
-    AudioEngine& engine;
-    juce::PropertiesFile& settings;
-    bool persistDeviceState = true;
-
-    juce::ToggleButton toneToggle{"Test tone"};
-    juce::ToggleButton multiThreaded{"Multi-threaded audio"};
-    juce::Slider frequencySlider;
-    juce::Slider levelSlider;
-    juce::Label frequencyLabel{{}, "Frequency"};
-    juce::Label levelLabel{{}, "Level"};
-    juce::TextButton resetStatsButton{"Reset stats"};
-    juce::Label statusLabel;
-    std::unique_ptr<juce::AudioDeviceSelectorComponent> deviceSelector;
-    juce::String deviceError;
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AudioPanel)
-};
-
-/** The M2/M3 debug UI, as one panel for the shell's "Debug UI" tab until the M4 views replace it
-    (docs/05-m4-ui.md, "Order of work"): the debug session view and the audio tab, with the play
-    panel (tuning, computer keyboard, on-screen keyboard) underneath. */
-class DebugUiPanel final : public juce::Component
-{
-public:
-    DebugUiPanel(AudioEngine& engine, juce::PropertiesFile& settings, TuningRegistry& tunings, SessionController& session);
-
-    AudioPanel& audioPanel() noexcept { return audio; }
-    debugui::SessionView& sessionView() noexcept { return sessionPanel; }
-    PlayPanel& playPanel() noexcept { return play; }
-
-    void resized() override;
-
-private:
-    AudioPanel audio;
-    debugui::SessionView sessionPanel;
-    juce::TabbedComponent tabs{juce::TabbedButtonBar::TabsAtTop};
-    PlayPanel play;
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DebugUiPanel)
-};
-
-/** The window's content: the M4 shell (ui::MainShell), with the debug UI in its Debug UI tab.
-    Keys go to the shell's commands first; what no command takes plays the computer MIDI keyboard. */
+/** The window's content: the shell (ui::MainShell). Keys go to the shell's commands first; what no
+    command takes plays the computer MIDI keyboard, which this owns: it plays into the engine's live
+    MIDI input, set up for the selected track's tuning (and a Drum Rack's pads, KeyboardFollow). It
+    also remembers the audio device setup whenever it changes. */
 class MainComponent final : public juce::Component,
                             public juce::DragAndDropContainer,
                             private ui::SessionSelectionModel::Listener,
-                            private juce::ValueTree::Listener
+                            private juce::ValueTree::Listener,
+                            private juce::ChangeListener,
+                            private TuningRegistry::Listener
 {
 public:
     MainComponent(AudioEngine& engine, juce::PropertiesFile& settings, TuningRegistry& tunings,
@@ -92,18 +33,14 @@ public:
     ~MainComponent() override;
 
     /** Called once the device has been opened (successfully or not). */
-    void audioDeviceOpened(const juce::String& error) { debug.audioPanel().audioDeviceOpened(error); }
+    void audioDeviceOpened(const juce::String& error);
 
     /** When false, device changes are not written to the settings (used by test runs such as
         --soak, which change the buffer size temporarily). */
-    void setPersistDeviceState(bool shouldPersist) noexcept { debug.audioPanel().setPersistDeviceState(shouldPersist); }
+    void setPersistDeviceState(bool shouldPersist) noexcept { persistDeviceState = shouldPersist; }
 
-    /** Reflects a tone state that was changed from outside the UI. */
-    void setToneToggle(bool on) { debug.audioPanel().setToneToggle(on); }
-
-    debugui::SessionView& sessionView() noexcept { return debug.sessionView(); }
     ui::MainShell& shell() noexcept { return *mainShell; }
-    DebugUiPanel& debugUi() noexcept { return debug; }
+    ComputerKeyboardInput& computerKeyboard() noexcept { return keyboard; }
 
     void paint(juce::Graphics& g) override;
     void resized() override;
@@ -111,22 +48,30 @@ public:
     bool keyStateChanged(bool isKeyDown) override;
 
     /** Releases notes held by the computer keyboard (e.g. when the window loses focus). */
-    void releaseHeldKeys() { debug.playPanel().computerKeyboard().releaseAll(); }
+    void releaseHeldKeys() { keyboard.releaseAll(); }
 
 private:
-    /** The debug view (and its device editor) follows the shell's selection, and the other way. */
     void selectionChanged(const ui::SessionSelection& now) override;
-    void debugSelectionChanged();
-    /** A Drum Rack's page scrolled in the Device view: the keyboard follows it (M3 finding 5). */
+    /** A Drum Rack's page scrolled in the Device view, or the selected track's tuning changed. */
     void valueTreePropertyChanged(juce::ValueTree& tree, const juce::Identifier& property) override;
+    void changeListenerCallback(juce::ChangeBroadcaster*) override; // the audio device changed
+    void tuningsChanged() override;
+    /** The keyboard set up for the selected track: its tuning's range (again if `retune`), then a
+        Drum Rack's pads. */
+    void followSelectedTrack(bool retune);
 
     std::function<void()> onFirstPaint;
     bool firstPaintDone = false;
-    bool mirroring = false;
-    ui::KeyboardFollow keyboardFollow;
+    bool persistDeviceState = true;
+    bool deviceOpen = false;
+    AudioEngine& engine;
+    juce::PropertiesFile& settings;
+    TuningRegistry& tunings;
     SessionController& sessionController;
+    ComputerKeyboardInput keyboard;
+    TuningPtr keyboardTuning; // what the keyboard is set up for
+    ui::KeyboardFollow keyboardFollow;
 
-    DebugUiPanel debug;
     std::unique_ptr<ui::MainShell> mainShell;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)

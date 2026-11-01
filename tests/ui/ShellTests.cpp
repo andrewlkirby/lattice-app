@@ -106,10 +106,8 @@ TEST_CASE("Shell: the control bar, main area, info view and status bar are laid 
     CHECK(!shell.infoView().isVisible());
     CHECK(shell.commands().find("view.browser")->isTicked());
 
-    // A debug UI tab goes last; the Session view stays in front.
-    juce::Component debugUi;
-    shell.setDebugUi(&debugUi);
-    CHECK(shell.mainArea().getTabNames()[2] == "Debug UI");
+    // Session and Arrangement; the debug UI is gone (4h).
+    CHECK(shell.mainArea().getTabNames() == juce::StringArray{"Session", "Arrangement"});
     CHECK(shell.mainArea().getCurrentTabName() == "Session");
     CHECK(shell.commands().conflicts().empty()); // the view commands too
 }

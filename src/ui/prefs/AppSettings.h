@@ -5,6 +5,12 @@
 
 #include <juce_data_structures/juce_data_structures.h>
 
+namespace lattice
+{
+class AudioEngine;
+class TuningRegistry;
+} // namespace lattice
+
 namespace lattice::ui::prefs
 {
 
@@ -22,6 +28,11 @@ constexpr auto nonTrackInputsKey = "midi.notTrack";         // inputs open only 
 constexpr auto noteKeysKey = "keyboard.noteKeys";           // the computer keyboard's 17 note keys
 constexpr auto pageKeyPrefix = "keyboard.page.";            // + a tuning ID: its range step
 constexpr auto userThemeKey = "theme.userFile";             // a JSON theme chosen from the Themes folder
+constexpr auto deviceStateKey = "audioDeviceState";         // the audio device setup (AudioDeviceManager XML)
+constexpr auto toneFrequencyKey = "testToneFrequency";      // Hz
+constexpr auto toneLevelKey = "testToneLevelDb";            // dB
+constexpr auto computerKeyboardKey = "computerKeyboardOn";  // bool: the computer keyboard plays notes
+constexpr auto userTuningFilesKey = "userTuningFiles";      // tuning files loaded from elsewhere, one per line
 
 constexpr double minZoom = 0.5, maxZoom = 2.5;
 
@@ -44,6 +55,16 @@ void saveShortcuts(juce::PropertiesFile& settings, const CommandRegistry& regist
 /** The computer keyboard's note keys and per-tuning range steps, from the settings. */
 void applyKeyboard(const juce::PropertiesFile& settings, ComputerKeyboardInput& keyboard);
 int pageSizeFor(const juce::PropertiesFile& settings, const juce::String& tuningId); // 0: the tuning's own
+
+/** The test tone's frequency and level, from the settings (it stays off until switched on). */
+void applyTestTone(const juce::PropertiesFile& settings, AudioEngine& engine);
+/** Saves the audio device setup, unless the device is still opening. */
+void saveDeviceState(juce::PropertiesFile& settings, AudioEngine& engine);
+
+/** The tuning files loaded from outside the tuning folders before (call before the session is
+    made, so a set's tracks find them), and remembering one more. */
+void loadRememberedTunings(TuningRegistry& registry, const juce::PropertiesFile& settings);
+void rememberTuningFile(juce::PropertiesFile& settings, const juce::File& file);
 
 /** The MIDI inputs (by identifier) MIDI Map and Key Map listen to. */
 juce::StringArray remoteInputs(const juce::PropertiesFile& settings);
