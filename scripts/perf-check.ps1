@@ -14,6 +14,10 @@
     "Windows Audio (Low Latency Mode)" or "ASIO", and -DeviceName the device (for ASIO, the driver:
     "ASIO4ALL v2" or "FlexASIO").
 
+    UI stress (-Soak -UiStress, docs/05-m4-ui.md Tests 11): instead of the tone, the reference set
+    plays (written first by lattice_engine_bench --write-set; the master fader at -40 dB) while the
+    window is worked every frame (src/app/UiStress.h). Same pass rule: 0 overruns, 0 xruns.
+
     Later milestones add the reference-set load, pad-to-sound latency, and benchmark comparisons.
 
     Run under the charter's test conditions: on AC power, Performance mode, background apps closed.
@@ -22,6 +26,7 @@
     scripts\perf-check.ps1
     scripts\perf-check.ps1 -Soak
     scripts\perf-check.ps1 -Soak -BufferSize 128 -DeviceType "Windows Audio (Low Latency Mode)"
+    scripts\perf-check.ps1 -Soak -UiStress -DeviceType ASIO -DeviceName "ASIO4ALL v2"
     scripts\perf-check.ps1 -Runs 5 -Exe build\windows-release\Lattice_artefacts\Release\Lattice.exe
 #>
 param(
@@ -30,6 +35,7 @@ param(
     [double]$WindowShownTarget = 0.5,
     [double]$ReadyTarget = 1.5,
     [switch]$Soak,
+    [switch]$UiStress,
     [int]$SoakSeconds = 600,
     [int]$BufferSize = 64,
     [double]$SampleRate = 0,
@@ -55,6 +61,14 @@ if ($Soak) {
     if ($DeviceType) { $soakArgs += @('--device-type', ('"{0}"' -f $DeviceType)) }
     if ($DeviceName) { $soakArgs += @('--device-name', ('"{0}"' -f $DeviceName)) }
     if ($SampleRate -gt 0) { $soakArgs += @('--sample-rate', $SampleRate) }
+    if ($UiStress) {
+        $bench = Join-Path (Split-Path $Exe) '..\..\tests\Release\lattice_engine_bench.exe'
+        if (-not (Test-Path $bench)) { throw "lattice_engine_bench not found at $bench (it writes the reference set)" }
+        $set = Join-Path $env:TEMP 'lattice-reference.lset'
+        & $bench --write-set $set | Out-Null
+        if (-not (Test-Path $set)) { throw "Couldn't write the reference set to $set" }
+        $soakArgs += @('--ui-stress', '--set', ('"{0}"' -f $set))
+    }
     $previous = if (Test-Path $soakLog) { @(Get-Content $soakLog).Count } else { 0 }
     "Soak: {0} s at a {1}-sample buffer{2}. Progress is logged to {3} once a minute." -f $SoakSeconds, $BufferSize, $(if ($DeviceType) { " on $DeviceType" } else { '' }), $soakLog
     $p = Start-Process -FilePath $Exe -ArgumentList $soakArgs -PassThru
