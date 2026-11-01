@@ -415,3 +415,53 @@ TEST_CASE("Hands-on 4d, A4: with the focus on the window itself, Ctrl+Z still un
     CHECK(app.window->keyPressed(juce::KeyPress('a', 0, 'a')));
     app.keyboard().releaseAll();
 }
+
+#if JUCE_WINDOWS
+namespace juce::detail
+{
+bool dispatchNextMessageOnSystemQueue(bool returnIfNoPendingMessages); // juce_events' own message pump
+}
+
+TEST_CASE("Hands-on 4e, 5.7: with the keys in the browser, letters play the computer keyboard", "[app][handson]")
+{
+    // Through the window's peer, as Windows sends keys: to the focused component, then up.
+    App app;
+    app.window->addToDesktop(juce::ComponentPeer::windowIsTemporary);
+    app.window->setVisible(true);
+    auto* peer = app.window->getPeer();
+    REQUIRE(peer != nullptr);
+    const auto pump = [] {
+        for (int i = 0; i < 1000 && juce::detail::dispatchNextMessageOnSystemQueue(true); ++i)
+        {
+        }
+    };
+    const auto send = [&](const juce::KeyPress& k) {
+        app.settle();
+        const bool taken = peer->handleKeyPress(k);
+        pump();
+        app.settle();
+        return taken;
+    };
+    const auto playsA = [&] {
+        const bool taken = send(juce::KeyPress('a', 0, 'a'));
+        const bool held = !app.keyboard().heldKeyCodes().empty();
+        app.keyboard().releaseAll();
+        return taken && held;
+    };
+
+    REQUIRE(send(juce::KeyPress('f', juce::ModifierKeys::commandModifier | juce::ModifierKeys::altModifier, 0)));
+    app.shell().browserView().model().flushForTests();
+    CHECK(send(juce::KeyPress(juce::KeyPress::downKey))); // into the rows
+    CHECK(playsA());
+
+    // Enter inserts the row (an instrument: the question comes, and is answered); the keys come back.
+    CHECK(send(juce::KeyPress(juce::KeyPress::returnKey)));
+    if (auto* alert = juce::ModalComponentManager::getInstance()->getModalComponent(0))
+        alert->exitModalState(1);
+    pump();
+    app.settle();
+    pump();
+    CHECK(playsA());
+    app.window->removeFromDesktop();
+}
+#endif
