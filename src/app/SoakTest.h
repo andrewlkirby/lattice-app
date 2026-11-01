@@ -25,10 +25,14 @@ public:
         juce::String deviceName;  // empty: that type's current/default device (ASIO: the driver name)
         float levelDb = -40.0f;   // quiet, but not silent: the normal render path runs
         double warmupSeconds = 2.0; // excluded from the counts (device start-up)
+        /** The UI stress test (docs/05-m4-ui.md, Tests 11): instead of the test tone, the set in
+            setFile plays while UiStress works the window. */
+        bool uiStress = false;
+        juce::String setFile;
     };
 
-    /** Reads --soak-seconds, --buffer-size, --sample-rate, --device-type, --device-name and --soak-level-db.
-        Returns false if --soak-seconds is absent. */
+    /** Reads --soak-seconds, --buffer-size, --sample-rate, --device-type, --device-name,
+        --soak-level-db, --ui-stress and --set. Returns false if --soak-seconds is absent. */
     static bool parseCommandLine(const juce::String& commandLine, Options& options);
 
     SoakTest(AudioEngine& engine, Options options, juce::File logFile, std::function<void(bool passed)> onFinished);

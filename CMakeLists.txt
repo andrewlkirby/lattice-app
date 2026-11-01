@@ -395,7 +395,8 @@ if(LATTICE_BUILD_APP)
         VERSION ${PROJECT_VERSION})
     target_sources(Lattice PRIVATE
         src/app/Main.cpp
-        src/app/SoakTest.cpp)
+        src/app/SoakTest.cpp
+        src/app/UiStress.cpp)
     target_compile_definitions(Lattice PRIVATE
         JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:Lattice,JUCE_PRODUCT_NAME>"
         JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:Lattice,JUCE_VERSION>")

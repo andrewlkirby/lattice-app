@@ -38,6 +38,8 @@ bool SoakTest::parseCommandLine(const juce::String& commandLine, Options& option
         options.deviceName = v;
     if (const auto v = valueOf("--soak-level-db"); v.isNotEmpty())
         options.levelDb = v.getFloatValue();
+    options.uiStress = args.contains("--ui-stress");
+    options.setFile = valueOf("--set");
     return true;
 }
 
@@ -108,8 +110,11 @@ void SoakTest::start()
         setupError = dm.setAudioDeviceSetup(setup, false);
     }
 
-    engine.testTone().setGain(juce::Decibels::decibelsToGain(options.levelDb, -100.0f));
-    engine.testTone().setEnabled(true);
+    if (!options.uiStress) // the UI stress test plays a set instead
+    {
+        engine.testTone().setGain(juce::Decibels::decibelsToGain(options.levelDb, -100.0f));
+        engine.testTone().setEnabled(true);
+    }
 
     startTime = nowSeconds();
     startTimer(250);
@@ -148,7 +153,7 @@ void SoakTest::writeLine(const juce::String& kind)
     const int xruns = dm.getXRunCount() - xrunBaseline;
 
     juce::String line = juce::Time::getCurrentTime().toISO8601(true);
-    line << " | " << kind << " | elapsed=" << juce::String(measuring ? nowSeconds() - startTime : 0.0, 1);
+    line << " | " << kind << (options.uiStress ? " (ui stress: " + options.setFile + ")" : juce::String()) << " | elapsed=" << juce::String(measuring ? nowSeconds() - startTime : 0.0, 1);
 
     if (auto* device = dm.getCurrentAudioDevice())
     {

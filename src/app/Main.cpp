@@ -1,5 +1,6 @@
 #include "app/MainWindow.h"
 #include "app/SoakTest.h"
+#include "app/UiStress.h"
 #include "core/Profiling.h"
 #include "core/StartupTimeline.h"
 #include "devices/dsp/Wavetable.h"
@@ -77,6 +78,7 @@ public:
 
     void shutdown() override
     {
+        uiStress = nullptr;
         soak = nullptr;
         mainWindow = nullptr; // saves the device state
         session = nullptr;    // the engine owns everything the audio thread reads, so it can keep running
@@ -146,6 +148,24 @@ private:
 
     void startSoak()
     {
+        if (soakOptions.uiStress)
+        {
+            // The UI stress test: the set plays while the window is worked (UiStress).
+            const auto result = session->loadSet(juce::File::getCurrentWorkingDirectory().getChildFile(soakOptions.setFile));
+            if (soakOptions.setFile.isEmpty() || result.failed())
+            {
+                paths.logs().getChildFile("soak.log").appendText(juce::Time::getCurrentTime().toISO8601(true) +
+                                                                 " | ui stress | could not open the set '" + soakOptions.setFile +
+                                                                 "': " + result.getErrorMessage() + " | FAIL\n");
+                setApplicationReturnValue(1);
+                quit();
+                return;
+            }
+            // Quiet, as the soak's tone is: the master fader at its level (the set renders the same).
+            session->set().setMasterVolumeDb(soakOptions.levelDb);
+            uiStress = std::make_unique<UiStress>(mainWindow->content().shell());
+            uiStress->start();
+        }
         soak = std::make_unique<SoakTest>(*engine, soakOptions, paths.logs().getChildFile("soak.log"),
                                           [this](bool passed) {
                                               setApplicationReturnValue(passed ? 0 : 1);
@@ -160,6 +180,7 @@ private:
     bool runSoak = false;
     SoakTest::Options soakOptions;
     std::unique_ptr<SoakTest> soak;
+    std::unique_ptr<UiStress> uiStress;
     bool windowIsShown = false;
     bool audioIsOpen = false;
     std::unique_ptr<juce::PropertiesFile> settings;
