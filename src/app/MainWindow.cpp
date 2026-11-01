@@ -237,7 +237,8 @@ MainComponent::MainComponent(AudioEngine& engine, juce::PropertiesFile& settings
     mainShell->selection().addListener(this);
     session.set().state().addListener(this);
     view.onSelectionChanged = [this] { debugSelectionChanged(); };
-    mainShell->controlBar().setComputerKeyboard(&debug.playPanel().computerKeyboard());
+    mainShell->setComputerKeyboard(&debug.playPanel().computerKeyboard());
+    mainShell->onKeyboardSettingsChanged = [this] { debug.playPanel().retuneKeyboard(); };
     addAndMakeVisible(*mainShell);
 
     setSize(1280, 960);

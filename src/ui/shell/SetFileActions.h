@@ -70,8 +70,6 @@ public:
     void flushTitle() { handleUpdateNowIfNeeded(); }
     /** After a set opens with files that aren't there. */
     std::function<void(std::vector<setfiles::Reference>)> onMissingFiles;
-    /** What a new set's tracks are tuned to (the Preferences' default; empty: 12-TET). */
-    std::function<juce::String()> defaultTuning;
 
     // --- Autosave --------------------------------------------------------------------------------
     static constexpr int autosaveSeconds = 120;

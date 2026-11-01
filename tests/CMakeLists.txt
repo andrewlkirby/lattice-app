@@ -53,6 +53,7 @@ add_executable(lattice_tests
     ui/SessionViewTests.cpp
     ui/ShellTests.cpp
     ui/FilesTests.cpp
+    ui/PreferencesTests.cpp
     ui/ThemeTests.cpp
     ui/TuningViewTests.cpp
     ui/WidgetTests.cpp)

@@ -115,13 +115,7 @@ void SetFileActions::newSet()
     confirmDiscardingChanges([this](bool go) {
         if (!go)
             return;
-        session.newSet();
-        if (const auto tuning = defaultTuning ? defaultTuning() : juce::String(); tuning.isNotEmpty())
-        {
-            for (int t = 0; t < session.set().numTracks(); ++t)
-                session.set().setTrackTuning(t, tuning);
-            session.markClean();
-        }
+        session.newSet(); // its tracks get the Preferences' tuning (LiveSet::newTrackDefaults)
         recoveryCopy.clear();
         lastAutosaved = {};
         titleMayHaveChanged();

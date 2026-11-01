@@ -16,6 +16,7 @@
 #include "ui/shell/SetFileActions.h"
 #include "ui/shell/StatusBar.h"
 #include "ui/shell/UndoHistoryView.h"
+#include "ui/prefs/PreferencesView.h"
 #include "ui/theme/LatticeLookAndFeel.h"
 #include "ui/tuning/TuningView.h"
 
@@ -37,6 +38,7 @@ namespace lattice::ui
     on to the window (the computer keyboard). */
 class MainShell final : public juce::Component,
                         public ControlRegistry::Provider,
+                        private juce::ChangeListener,
                         private SessionSelectionModel::Listener,
                         private juce::ValueTree::Listener,
                         private juce::AsyncUpdater
@@ -72,6 +74,17 @@ public:
     void setUndoHistoryVisible(bool visible);
     /** The missing-files window for a set just opened (the default for files().onMissingFiles). */
     void showMissingFiles(std::vector<setfiles::Reference> missing);
+
+    /** The Preferences window (Ctrl+,), on a tab. */
+    void showPreferences(PreferencesView::Page page);
+    void showPreferences();
+    PreferencesView* preferences() noexcept;
+    /** What the Preferences work on (tests make the view with it, without a window). */
+    PreferencesView::Context preferencesContext();
+    /** The computer keyboard (the app's): the Preferences' note keys and range steps apply to it. */
+    void setComputerKeyboard(ComputerKeyboardInput* keyboard);
+    /** After the note keys or a range step changed (the app re-reads the track's tuning). */
+    std::function<void()> onKeyboardSettingsChanged;
     BrowserView& browserView() noexcept { return *browser; }
     library::Library& library() noexcept { return *libraryService; }
     /** Inserts what the browser names (a drag description) where the Device view is looking; a
@@ -150,6 +163,7 @@ private:
     void addViewCommands();
     void addTuningCommands();
     void addFileCommands();
+    void changeListenerCallback(juce::ChangeBroadcaster*) override; // the shortcuts changed: saved
     /** A question with a text answer (an asynchronous dialog). */
     void askText(const juce::String& title, const juce::String& message, const juce::String& initial,
                  std::function<void(const juce::String&)> answer);
@@ -190,6 +204,8 @@ private:
     std::unique_ptr<SetFileActions> setFiles; // after the job pool it writes autosaves with
     std::unique_ptr<UndoHistoryView> history;
     juce::Component::SafePointer<juce::DialogWindow> missingWindow;
+    std::unique_ptr<juce::DocumentWindow> preferencesWindow;
+    ComputerKeyboardInput* computerKeyboard = nullptr;
     std::unique_ptr<juce::FileChooser> chooser;
     std::unique_ptr<DetailView> detail; // after what it shows, so it goes first
     juce::Rectangle<int> detailDivider, browserDivider;

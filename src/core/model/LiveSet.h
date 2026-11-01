@@ -197,6 +197,15 @@ public:
     /** The instrument new tracks get. Set once at startup (before any LiveSet is created) by
         whoever knows the devices; the model itself does not. */
     static juce::String& defaultInstrumentType();
+    /** What a new track starts with (the Preferences' Tuning tab, docs/05-m4-ui.md, 4g): its tuning
+        (empty: 12-TET) and high-note policy. For every set made from now on, like the default
+        instrument. */
+    struct NewTrackDefaults
+    {
+        juce::String tuningId;
+        int highNotePolicy = 0;
+    };
+    static NewTrackDefaults& newTrackDefaults();
 
     explicit LiveSet(juce::UndoManager* undoManager = nullptr);
 

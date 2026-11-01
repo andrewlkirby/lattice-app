@@ -1,6 +1,7 @@
 #include "ui/shell/MainShell.h"
 
 #include "platform/Platform.h"
+#include "ui/prefs/AppSettings.h"
 #include "ui/clip/ClipCommands.h"
 #include "ui/device/DeviceCommands.h"
 
@@ -41,6 +42,15 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
     setLookAndFeel(&lookAndFeel);
     if (const auto* saved = Theme::builtIn(settings.getValue(themeKey, "Dark")))
         lookAndFeel.setTheme(*saved);
+    // A theme from the Themes folder, if one was chosen.
+    if (const juce::File userTheme(settings.getValue(prefs::userThemeKey)); juce::File::isAbsolutePath(userTheme.getFullPathName()) && userTheme.existsAsFile())
+    {
+        juce::StringArray problems;
+        auto theme = Theme::fromJson(juce::JSON::parse(userTheme), problems);
+        if (theme.name.isEmpty())
+            theme.name = userTheme.getFileNameWithoutExtension();
+        lookAndFeel.setTheme(theme);
+    }
 
     if (!actions.rename)
         actions.rename = [this] {
@@ -82,7 +92,6 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
     };
     setFiles = std::make_unique<SetFileActions>(session, settings, jobPool, platform::userDataFolder().getChildFile("Recovery"),
                                                 std::move(fileDialogs));
-    setFiles->defaultTuning = [this] { return settings.getValue("tuningId"); };
     setFiles->onMissingFiles = [this](std::vector<setfiles::Reference> missing) { showMissingFiles(std::move(missing)); };
     actions.newSet = [this] { setFiles->newSet(); };
     actions.openSet = [this] { setFiles->open(); };
@@ -100,6 +109,9 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
                        std::move(actions));
     addViewCommands();
     addFileCommands();
+    // The Preferences (4g): shortcuts as saved, and saved whenever they change.
+    prefs::restoreShortcuts(settings, registry);
+    registry.keyMappings().addChangeListener(this);
     addKeyListener(&registry.keyMappings());
     menuModel = std::make_unique<CommandMenus>(registry);
     menuModel->addSubmenuAfter("file.open", "Open Recent", [this] { return setFiles->recentMenu(); });
@@ -256,6 +268,8 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
 MainShell::~MainShell()
 {
     session.onSetReplaced = nullptr;
+    preferencesWindow.reset();
+    registry.keyMappings().removeChangeListener(this);
     if (missingWindow != nullptr)
         delete missingWindow.getComponent();
     setFiles.reset(); // it waits for an autosave being written
@@ -404,6 +418,12 @@ void MainShell::addViewCommands()
 
 void MainShell::addFileCommands()
 {
+    registry.add({.id = "app.preferences",
+                  .name = "Preferences...",
+                  .category = "File",
+                  .description = "Audio and MIDI devices, the look, the library's folders, CPU, tuning defaults, the computer keyboard and shortcuts.",
+                  .defaultKeys = {juce::KeyPress(',', juce::ModifierKeys::commandModifier, 0)},
+                  .perform = [this] { showPreferences(); }});
     registry.add({.id = "file.collectAll",
                   .name = "Collect All and Save",
                   .category = "File",
@@ -431,6 +451,92 @@ void MainShell::addFileCommands()
                   .defaultKeys = {juce::KeyPress('h', juce::ModifierKeys::commandModifier | juce::ModifierKeys::altModifier, 0)},
                   .perform = [this] { setUndoHistoryVisible(!showHistory); },
                   .isTicked = [this] { return showHistory; }});
+}
+
+void MainShell::changeListenerCallback(juce::ChangeBroadcaster*)
+{
+    prefs::saveShortcuts(settings, registry);
+}
+
+PreferencesView::Context MainShell::preferencesContext()
+{
+    PreferencesView::Context c{.session = session,
+                               .engine = engine,
+                               .settings = settings,
+                               .commands = registry,
+                               .tunings = deviceShared->tunings,
+                               .library = *libraryService,
+                               .keyboard = computerKeyboard};
+    c.setTheme = [this](const Theme& t) { setTheme(t); };
+    c.theme = [this]() -> const Theme& { return theme(); };
+    c.keyboardChanged = [this] {
+        if (computerKeyboard != nullptr)
+            prefs::applyKeyboard(settings, *computerKeyboard);
+        if (onKeyboardSettingsChanged)
+            onKeyboardSettingsChanged();
+    };
+    c.chooseFolder = [this](std::function<void(const juce::File&)> chosen) {
+        chooser = std::make_unique<juce::FileChooser>("Add a folder to Places", juce::File::getSpecialLocation(juce::File::userMusicDirectory));
+        chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                             [chosen = std::move(chosen)](const juce::FileChooser& fc) {
+                                 if (fc.getResult().isDirectory())
+                                     chosen(fc.getResult());
+                             });
+    };
+    c.chooseFile = [this](const juce::String& title, const juce::String& patterns, bool save, std::function<void(const juce::File&)> chosen) {
+        chooser = std::make_unique<juce::FileChooser>(title, juce::File::getSpecialLocation(juce::File::userDocumentsDirectory), patterns);
+        const int flags = save ? juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles |
+                                     juce::FileBrowserComponent::warnAboutOverwriting
+                               : juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
+        chooser->launchAsync(flags, [chosen = std::move(chosen)](const juce::FileChooser& fc) {
+            if (fc.getResult() != juce::File())
+                chosen(fc.getResult());
+        });
+    };
+    c.themesFolder = platform::userDataFolder().getChildFile("Themes");
+    return c;
+}
+
+void MainShell::showPreferences()
+{
+    showPreferences(static_cast<PreferencesView::Page>(
+        juce::jlimit(0, PreferencesView::numPages - 1, settings.getIntValue(PreferencesView::lastPageKey, 0))));
+}
+
+void MainShell::showPreferences(PreferencesView::Page page)
+{
+    if (preferencesWindow == nullptr)
+    {
+        // A window of its own, beside the main one; closing it hides it.
+        struct Window final : juce::DocumentWindow
+        {
+            explicit Window(const Theme& t) : juce::DocumentWindow("Preferences", t.surface, juce::DocumentWindow::closeButton) {}
+            void closeButtonPressed() override { setVisible(false); }
+        };
+        preferencesWindow = std::make_unique<Window>(theme());
+        preferencesWindow->setUsingNativeTitleBar(true);
+        preferencesWindow->setLookAndFeel(&lookAndFeel);
+        preferencesWindow->setContentOwned(new PreferencesView(preferencesContext()), false);
+        preferencesWindow->setResizable(true, false);
+        preferencesWindow->centreAroundComponent(this, juce::roundToInt(theme().controlHeight * 40.0f), juce::roundToInt(theme().controlHeight * 26.0f));
+    }
+    if (auto* view = preferences())
+        view->show(page);
+    preferencesWindow->setVisible(true);
+    preferencesWindow->toFront(true);
+}
+
+PreferencesView* MainShell::preferences() noexcept
+{
+    return preferencesWindow != nullptr ? dynamic_cast<PreferencesView*>(preferencesWindow->getContentComponent()) : nullptr;
+}
+
+void MainShell::setComputerKeyboard(ComputerKeyboardInput* keyboard)
+{
+    computerKeyboard = keyboard;
+    bar->setComputerKeyboard(keyboard);
+    if (keyboard != nullptr)
+        prefs::applyKeyboard(settings, *keyboard);
 }
 
 void MainShell::setUndoHistoryVisible(bool visible)

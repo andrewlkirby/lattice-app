@@ -42,6 +42,12 @@ public:
     ~PlayPanel() override;
 
     ComputerKeyboardInput& computerKeyboard() noexcept { return keyboardInput; }
+    /** Sets the keyboard up for the track's tuning again (its range step may have changed). */
+    void retuneKeyboard()
+    {
+        configuredTuning = nullptr;
+        refresh();
+    }
 
     /** The track whose tuning the panel shows and edits. */
     void setTrack(int trackIndex);

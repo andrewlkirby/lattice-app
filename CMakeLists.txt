@@ -357,6 +357,8 @@ add_library(lattice_ui STATIC
     src/ui/shell/StatusBar.cpp
     src/ui/shell/UndoHistoryView.cpp
     src/ui/theme/LatticeLookAndFeel.cpp
+    src/ui/prefs/AppSettings.cpp
+    src/ui/prefs/PreferencesView.cpp
     src/ui/theme/Theme.cpp
     src/ui/tuning/TrackTuningControls.cpp
     src/ui/tuning/TuningDraft.cpp

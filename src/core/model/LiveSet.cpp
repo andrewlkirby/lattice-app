@@ -28,6 +28,12 @@ bool isValidDenominator(int den)
 }
 } // namespace
 
+LiveSet::NewTrackDefaults& LiveSet::newTrackDefaults()
+{
+    static NewTrackDefaults defaults;
+    return defaults;
+}
+
 juce::String& LiveSet::defaultInstrumentType()
 {
     static juce::String type{"lattice.synth"};
@@ -602,9 +608,9 @@ juce::ValueTree LiveSet::makeTrack(int number)
     t.setProperty(ids::mute, false, nullptr);
     t.setProperty(ids::solo, false, nullptr);
     t.setProperty(ids::arm, false, nullptr);
-    t.setProperty(ids::tuningId, juce::String(), nullptr);
+    t.setProperty(ids::tuningId, newTrackDefaults().tuningId, nullptr);
     t.setProperty(ids::noteOffset, 0, nullptr);
-    t.setProperty(ids::highNotePolicy, 0, nullptr);
+    t.setProperty(ids::highNotePolicy, newTrackDefaults().highNotePolicy, nullptr);
     t.setProperty(ids::bendMode, 0, nullptr);
     t.setProperty(ids::bendRangeCents, defaultBendRangeCents, nullptr);
     t.setProperty(ids::bendRangeSteps, defaultBendRangeSteps, nullptr);

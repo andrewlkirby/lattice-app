@@ -27,10 +27,43 @@ ComputerKeyboardInput::ComputerKeyboardInput(Sender sender) : send(std::move(sen
 {
 }
 
+bool ComputerKeyboardInput::isValidNoteKeys(const juce::String& keys)
+{
+    if (keys.length() != numNoteKeys || keys.containsAnyOf("zxcvmZXCVM"))
+        return false;
+    const auto lower = keys.toLowerCase();
+    for (int i = 0; i < lower.length(); ++i)
+        if (lower[i] <= ' ' || lower.indexOfChar(i + 1, lower[i]) >= 0)
+            return false; // a space, a control character, or a key twice
+    return true;
+}
+
+bool ComputerKeyboardInput::setNoteKeys(const juce::String& keys)
+{
+    if (!isValidNoteKeys(keys))
+        return false;
+    releaseAll();
+    layout = keys.toLowerCase();
+    changed();
+    return true;
+}
+
+std::optional<int> ComputerKeyboardInput::noteFor(juce::juce_wchar key) const noexcept
+{
+    const int index = layout.indexOfChar(juce::CharacterFunctions::toLowerCase(key));
+    if (index < 0)
+        return std::nullopt;
+    const int note = baseNote + index;
+    if (note < 0 || note > 127)
+        return std::nullopt;
+    return note;
+}
+
 void ComputerKeyboardInput::configureForTuning(const TuningTable& tuning)
 {
     releaseAll();
-    pageSize = std::max(1, tuning.keyboardPageSize);
+    const int chosen = pageSizeFor ? pageSizeFor(tuning) : 0;
+    pageSize = std::max(1, chosen > 0 ? chosen : tuning.keyboardPageSize);
     baseNote = std::clamp(tuning.defaultKeyboardBase(), 0, 127);
     changed();
 }
@@ -67,9 +100,9 @@ bool ComputerKeyboardInput::keyDown(juce::juce_wchar character, int keyCode)
         break;
     }
 
-    const auto note = noteForKey(c, baseNote);
+    const auto note = noteFor(c);
     if (!note)
-        return c > 0 && c <= 127 && std::strchr(noteKeys, static_cast<int>(c)) != nullptr; // note key past 127
+        return c > 0 && layout.indexOfChar(c) >= 0; // a note key past 127
 
     // Auto-repeat: the key is already holding a note.
     if (std::any_of(held.begin(), held.end(), [&](const Held& h) { return h.keyCode == keyCode; }))

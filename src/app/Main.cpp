@@ -8,6 +8,7 @@
 #include "engine/SessionController.h"
 #include "platform/Platform.h"
 #include "tuning/TuningRegistry.h"
+#include "ui/prefs/AppSettings.h"
 
 #include <juce_gui_extra/juce_gui_extra.h>
 
@@ -42,7 +43,9 @@ public:
 
         engine = std::make_unique<AudioEngine>();
         // Parallel track processing: a worker per physical core, unless switched off in the settings.
-        engine->setWorkerThreads(settings->getBoolValue("multiThreadedAudio", true) ? WorkerPool::defaultWorkers() : 0);
+        engine->setWorkerThreads(ui::prefs::workerThreads(*settings));
+        ui::prefs::applyZoom(ui::prefs::zoom(*settings));
+        ui::prefs::applyNewTrackDefaults(*settings); // new tracks' tuning and high notes
         timeline.mark("engine created");
 
         tunings = std::make_unique<TuningRegistry>();
@@ -52,14 +55,10 @@ public:
         PlayPanel::loadRememberedTunings(*tunings, *settings);
         timeline.mark("tunings loaded");
 
-        // A new set, its tracks in the tuning chosen last.
+        // A new set, its tracks in the Preferences' tuning (a tuning file no longer there: 12-TET).
+        if (tunings->findById(LiveSet::newTrackDefaults().tuningId) == nullptr)
+            LiveSet::newTrackDefaults().tuningId = {};
         session = std::make_unique<SessionController>(*engine, *tunings);
-        if (const auto tuning = settings->getValue(PlayPanel::tuningIdKey); tunings->findById(tuning) != nullptr)
-        {
-            for (int t = 0; t < session->set().numTracks(); ++t)
-                session->set().setTrackTuning(t, tuning);
-            session->markClean();
-        }
         timeline.mark("session created");
 
         // Opening the device can take over a second in the driver (WASAPI exclusive mode on the
