@@ -117,6 +117,9 @@ public:
     void paintOverChildren(juce::Graphics&) override;
     void resized() override;
     bool keyPressed(const juce::KeyPress&) override;
+    /** The selected device, for screen readers: "Reverb · 1 MIDI, off, 2 of 3". */
+    juce::String describeSelection() const;
+    std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
     void mouseDown(const juce::MouseEvent&) override;
 
 private:

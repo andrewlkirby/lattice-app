@@ -17,6 +17,10 @@ public:
     static constexpr float startAngle = -2.35619449f; // -135 degrees
     static constexpr float endAngle = 2.35619449f;
     static float angleFor(float normalised) noexcept { return startAngle + normalised * (endAngle - startAngle); }
+    /** An arc as a stroke `width` wide with round ends draws it, as one outline to fill (stroking
+        costs several times as much, and a mixer has three knobs a strip). Angles in radians,
+        clockwise from 12 o'clock. */
+    static juce::Path arcShape(juce::Point<float> centre, float radius, float width, float from, float to);
 
     void setBipolar(bool shouldBeBipolar);
     /** The value arc's colour (a rack macro's own); transparent: the theme's accent. */

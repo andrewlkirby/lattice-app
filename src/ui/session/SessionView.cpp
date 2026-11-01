@@ -5,6 +5,7 @@
 #include "ui/device/DeviceContext.h"
 
 #include "ui/theme/LatticeLookAndFeel.h"
+#include "ui/widgets/Accessible.h"
 #include "ui/widgets/Toggle.h"
 
 #include <cmath>
@@ -60,6 +61,7 @@ SessionView::SessionView(SessionController& s, EngineStateFeed& f, CommandRegist
     : session(s), feed(f), commands(c), selection(sel), tunings(tuningRegistry)
 {
     setTitle("Session view");
+    accessible::markAsView(*this);
     setOpaque(true);
     // A click in the view takes the keys back (from a text field, say), so the arrows move the
     // selection and Enter launches. It handles no keys itself: they go on to the shell's commands.
@@ -120,12 +122,21 @@ void SessionView::rebuildStrips()
                                                   col.index, &tunings);
         strip->setShowsSends(showSends);
         strip->setShowsIO(showIO);
+        // Kept as an image: scrolling the grid while it plays repaints every strip each frame,
+        // and only their meters change (a meter's repaint redraws just its part of the image).
+        strip->setBufferedToImage(true);
         stripArea.addAndMakeVisible(*strip);
         strips.push_back(std::move(strip));
     }
     master = std::make_unique<MixerStrip>(session, MixerStrip::Kind::master, 0);
     master->setShowsIO(showIO);
+    master->setBufferedToImage(true);
     addAndMakeVisible(*master);
+}
+
+bool SessionView::isInMixer(const juce::Component* c) const
+{
+    return c != nullptr && (stripArea.isParentOf(c) || (master != nullptr && (master.get() == c || master->isParentOf(c))));
 }
 
 void SessionView::setMixerVisible(bool visible)
@@ -903,6 +914,50 @@ void SessionView::selectionChanged(const SessionSelection&)
     for (auto& s : strips)
         s->repaint();
     revealSelection();
+    accessible::selectionChanged(*this);
+}
+
+juce::String SessionView::describeSelection() const
+{
+    const auto& sel = selection.get();
+    auto& set = session.set();
+    const auto& types = session.deviceRegistry();
+    if (sel.isRange())
+    {
+        const int trackCount = sel.lastTrack() - sel.firstTrack() + 1, sceneCount = sel.lastScene() - sel.firstScene() + 1;
+        const auto count = [](int n, const char* one) { return juce::String(n) + " " + one + (n == 1 ? "" : "s"); };
+        if (sel.kind == SessionSelection::Kind::track)
+            return count(trackCount, "track") + " selected";
+        if (sel.kind == SessionSelection::Kind::scene)
+            return count(sceneCount, "scene") + " selected";
+        return count(trackCount * sceneCount, "slot") + " selected, " + count(trackCount, "track") + " by " + count(sceneCount, "scene");
+    }
+    if (sel.track < 0 || sel.track >= set.numTracks() || sel.scene < 0 || sel.scene >= set.numScenes())
+        return {};
+    if (sel.kind == SessionSelection::Kind::scene)
+        return undoNames::locationOf(set.scene(sel.scene), types);
+    if (sel.kind == SessionSelection::Kind::track)
+        return undoNames::locationOf(set.track(sel.track), types);
+    const auto clip = set.clip(sel.track, sel.scene);
+    if (!clip.isValid())
+        return "Empty slot" + undoNames::dot() + undoNames::locationOf(set.slot(sel.track, sel.scene), types);
+    auto text = undoNames::locationOf(clip, types);
+    switch (feed.slot(sel.track, sel.scene))
+    {
+    case SlotState::Playing: text << ", playing"; break;
+    case SlotState::QueuedLaunch: text << ", starting"; break;
+    case SlotState::QueuedStop: text << ", stopping"; break;
+    case SlotState::QueuedRecord: text << ", about to record"; break;
+    case SlotState::Recording: text << ", recording"; break;
+    case SlotState::Empty:
+    case SlotState::Stopped: break;
+    }
+    return text;
+}
+
+std::unique_ptr<juce::AccessibilityHandler> SessionView::createAccessibilityHandler()
+{
+    return accessible::viewHandler(*this, juce::AccessibilityRole::table, [this] { return describeSelection(); });
 }
 
 namespace

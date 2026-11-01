@@ -407,3 +407,53 @@ TEST_CASE("Widgets: a gallery of every widget in every theme, for looking at", "
         gallery.setLookAndFeel(nullptr);
     }
 }
+
+TEST_CASE("Widgets: a knob's arc, filled as an outline, draws as the rounded stroke it replaces", "[ui][widgets]")
+{
+    // Knob::arcShape stands in for PathStrokeType(rounded) on the arc (UI benchmarks, 4h); the two
+    // must look the same at every zoom, for unipolar and bipolar knobs at any value.
+    for (const float scale : {1.0f, 1.5f, 2.0f})
+        for (const float value : {0.02f, 0.3f, 0.5f, 0.7f, 1.0f})
+            for (const bool bipolar : {false, true})
+            {
+                const float angle = Knob::angleFor(value);
+                const float from = bipolar ? 0.0f : Knob::startAngle;
+                if (std::abs(angle - from) < 0.001f)
+                    continue;
+                const float a = std::min(from, angle), b = std::max(from, angle);
+                juce::Image stroked(juce::Image::ARGB, 100, 100, true), filled(juce::Image::ARGB, 100, 100, true);
+                {
+                    juce::Graphics g(stroked);
+                    g.addTransform(juce::AffineTransform::scale(scale));
+                    g.setColour(juce::Colours::white);
+                    juce::Path arc;
+                    arc.addCentredArc(30.0f, 30.0f, 14.0f, 14.0f, 0.0f, a, b, true);
+                    g.strokePath(arc, juce::PathStrokeType(3.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+                }
+                {
+                    juce::Graphics g(filled);
+                    g.addTransform(juce::AffineTransform::scale(scale));
+                    g.setColour(juce::Colours::white);
+                    g.fillPath(Knob::arcShape({30.0f, 30.0f}, 14.0f, 3.0f, a, b));
+                }
+                // Edge pixels differ by a fraction of a pixel's coverage: the outline is the exact
+                // shape (its area is the geometry's), JUCE's stroke a few hundredths of a pixel
+                // heavier each side.
+                int worst = 0;
+                double strokedArea = 0.0, filledArea = 0.0;
+                for (int y = 0; y < 100; ++y)
+                    for (int x = 0; x < 100; ++x)
+                    {
+                        const int sa = stroked.getPixelAt(x, y).getAlpha(), fa = filled.getPixelAt(x, y).getAlpha();
+                        worst = std::max(worst, std::abs(sa - fa));
+                        strokedArea += sa / 255.0;
+                        filledArea += fa / 255.0;
+                    }
+                INFO("scale " << scale << ", value " << value << (bipolar ? ", bipolar" : "") << ": areas " << strokedArea << " and "
+                              << filledArea << ", worst pixel " << worst);
+                const double exact = (3.0 * 14.0 * (b - a) + juce::MathConstants<double>::pi * 1.5 * 1.5) * scale * scale;
+                CHECK(std::abs(filledArea - exact) <= exact * 0.02);
+                CHECK(std::abs(filledArea - strokedArea) <= strokedArea * 0.06);
+                CHECK(worst <= 96); // of 255: no pixel more than about a third of an edge off
+            }
+}

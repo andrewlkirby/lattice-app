@@ -2,6 +2,9 @@
 
 #include "ui/theme/LatticeLookAndFeel.h"
 
+#include <map>
+#include <tuple>
+
 namespace lattice::ui
 {
 
@@ -127,14 +130,32 @@ void drawIcon(juce::Graphics& g, Icon icon, juce::Rectangle<float> area, juce::C
     if (size <= 1.0f)
         return;
     const auto square = area.withSizeKeepingCentre(size, size);
-    auto path = iconPath(icon);
-    path.applyTransform(juce::AffineTransform::scale(size).translated(square.getX(), square.getY()));
+    const float stroke = isStrokedIcon(icon) ? juce::jmax(1.25f, theme.stroke * 1.5f) : 0.0f;
+    // The outline at this size, made once: stroking a path costs several times filling it, and
+    // a list draws the same icon on every row (the browser's 100,000 results, UI benchmarks).
+    // Message thread only, as all drawing is.
+    // Curves are flattened for the pixels they cover (150% and 200% zoom have more of them).
+    const float scale = juce::jmax(1.0f, g.getInternalContext().getPhysicalPixelScaleFactor());
+    using Key = std::tuple<int, float, float, float>;
+    static std::map<Key, juce::Path> outlines;
+    const Key key{static_cast<int>(icon), size, stroke, scale};
+    auto it = outlines.find(key);
+    if (it == outlines.end())
+    {
+        if (outlines.size() >= 1024) // sizes come from the theme and the zoom: a few dozen in use
+            outlines.clear();
+        auto path = iconPath(icon);
+        path.applyTransform(juce::AffineTransform::scale(size));
+        if (stroke > 0.0f)
+        {
+            juce::Path outline;
+            juce::PathStrokeType(stroke, juce::PathStrokeType::curved, juce::PathStrokeType::rounded).createStrokedPath(outline, path, {}, scale);
+            path = std::move(outline);
+        }
+        it = outlines.emplace(key, std::move(path)).first;
+    }
     g.setColour(colour);
-    if (isStrokedIcon(icon))
-        g.strokePath(path, juce::PathStrokeType(juce::jmax(1.25f, theme.stroke * 1.5f), juce::PathStrokeType::curved,
-                                                juce::PathStrokeType::rounded));
-    else
-        g.fillPath(path);
+    g.fillPath(it->second, juce::AffineTransform::translation(square.getX(), square.getY()));
 }
 
 IconButton::IconButton(const juce::String& name, Icon icon, const juce::String& tooltip) : juce::Button(name), shown(icon)

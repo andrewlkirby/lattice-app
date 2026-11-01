@@ -6,8 +6,10 @@
 #include "engine/AudioEngine.h"
 #include "ui/device/DeviceContext.h"
 #include "ui/theme/LatticeLookAndFeel.h"
+#include "ui/widgets/Accessible.h"
 
 #include <cmath>
+#include <unordered_map>
 
 namespace lattice::ui
 {
@@ -109,6 +111,7 @@ public:
     explicit List(BrowserView& b) : owner(b)
     {
         setTitle("Browser items");
+        accessible::markAsView(*this);
         setWantsKeyboardFocus(true);
         addAndMakeVisible(scroll);
         scroll.setAutoHide(true);
@@ -117,6 +120,43 @@ public:
 
     int rowHeight() const { return juce::roundToInt(themeOf(*this).controlHeight); }
     int first() const { return static_cast<int>(scroll.getCurrentRangeStart()); }
+
+    /** A detail's width in the font: measured once, as the same few ("0.25 s · 48 kHz", "Audio
+        Effect") recur down the list and measuring costs as much as drawing. */
+    int widthOfDetail(const juce::Font& font, const juce::String& detail)
+    {
+        if (font != detailFont || detailWidths.size() > 4096)
+        {
+            detailWidths.clear();
+            detailFont = font;
+        }
+        const auto it = detailWidths.find(detail);
+        if (it != detailWidths.end())
+            return it->second;
+        const int w = juce::GlyphArrangement::getStringWidthInt(font, detail);
+        detailWidths.emplace(detail, w);
+        return w;
+    }
+
+    /** The selected row, for screen readers: "Hit 3, 0.25 s · 48 kHz, 4 of 100". */
+    juce::String describeSelection() const
+    {
+        const auto& rows = owner.browser.rows();
+        const int r = owner.browser.selectedRow();
+        if (r < 0 || r >= static_cast<int>(rows.size()))
+            return rows.empty() ? juce::String("No items") : juce::String(static_cast<int>(rows.size())) + " items, none selected";
+        const auto& row = rows[static_cast<std::size_t>(r)];
+        auto text = row.item.name;
+        if (row.item.detail.isNotEmpty())
+            text << ", " << row.item.detail;
+        if (row.expandable)
+            text << (row.expanded ? ", expanded" : ", collapsed");
+        return text << ", " << (r + 1) << " of " << static_cast<int>(rows.size());
+    }
+    std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override
+    {
+        return accessible::viewHandler(*this, juce::AccessibilityRole::list, [this] { return describeSelection(); });
+    }
     int fits() const { return juce::jmax(1, getHeight() / juce::jmax(1, rowHeight())); }
 
     void rowsChanged()
@@ -201,9 +241,7 @@ public:
                     g.fillEllipse(dot);
                 }
             g.setFont(juce::Font(t.font(t.fontSmall)));
-            const auto detailWidth = juce::jmin(content.getWidth() / 2,
-                                                juce::GlyphArrangement::getStringWidthInt(g.getCurrentFont(), row.item.detail) +
-                                                    juce::roundToInt(t.spacing));
+            const auto detailWidth = juce::jmin(content.getWidth() / 2, widthOfDetail(g.getCurrentFont(), row.item.detail) + juce::roundToInt(t.spacing));
             const auto detail = content.removeFromRight(detailWidth);
             g.setColour(isSelected ? t.text : t.textDim);
             g.drawText(row.item.detail, detail, juce::Justification::centredRight, true);
@@ -379,6 +417,8 @@ private:
 
     BrowserView& owner;
     juce::ScrollBar scroll{true};
+    std::unordered_map<juce::String, int> detailWidths;
+    juce::Font detailFont{juce::FontOptions{}};
     int pressedRow = -1;
     bool dragging = false;
 };
@@ -876,6 +916,7 @@ void BrowserView::rowsChanged()
 void BrowserView::selectionChanged()
 {
     list->repaint();
+    accessible::selectionChanged(*list);
     previewSelected();
 }
 
@@ -893,6 +934,11 @@ int BrowserView::firstVisibleRow() const
 int BrowserView::visibleRows() const
 {
     return list->fits();
+}
+
+juce::Component& BrowserView::listComponent() noexcept
+{
+    return *list;
 }
 
 void BrowserView::scrollToRow(int row)

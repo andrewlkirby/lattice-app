@@ -4,6 +4,7 @@
 
 #include "platform/Platform.h"
 #include "ui/prefs/AppSettings.h"
+#include "ui/widgets/Accessible.h"
 #include "ui/clip/ClipCommands.h"
 #include "ui/device/DeviceCommands.h"
 
@@ -35,6 +36,24 @@ public:
 
 private:
     juce::String title, message;
+};
+
+/** Shift+Tab in a control reached with Tab (a knob, a button, a text field) goes back to the one
+    before; in a view (accessible::markAsView), and with nothing focused, it's the Clip/Device
+    switch. */
+class MainShell::ShiftTabBack final : public juce::KeyListener
+{
+public:
+    bool keyPressed(const juce::KeyPress& key, juce::Component*) override
+    {
+        if (key != juce::KeyPress(juce::KeyPress::tabKey, juce::ModifierKeys::shiftModifier, 0))
+            return false;
+        auto* focused = juce::Component::getCurrentlyFocusedComponent();
+        if (focused == nullptr || accessible::isView(focused) || dynamic_cast<MainShell*>(focused) != nullptr)
+            return false;
+        focused->moveKeyboardFocusToSibling(false);
+        return true;
+    }
 };
 
 MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile& settingsFile, TuningRegistry& tunings,
@@ -127,6 +146,8 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
     prefs::restoreShortcuts(settings, registry);
     registry.keyMappings().addChangeListener(this);
     addKeyListener(&registry.keyMappings());
+    shiftTabBack = std::make_unique<ShiftTabBack>();
+    addKeyListener(shiftTabBack.get()); // asked before the key mappings
     menuModel = std::make_unique<CommandMenus>(registry);
     menuModel->addSubmenuAfter("file.open", "Open Recent", [this] { return setFiles->recentMenu(); });
 
@@ -354,6 +375,7 @@ MainShell::~MainShell()
     juce::Desktop::getInstance().removeGlobalMouseListener(this);
     session.set().state().removeListener(this);
     stateFeed.detach();
+    removeKeyListener(shiftTabBack.get());
     removeKeyListener(&registry.keyMappings());
     tabs.clearTabs();
     session_.reset();
@@ -429,6 +451,19 @@ void MainShell::addViewCommands()
                           else
                               detail->toggle();
                       }});
+    registry.add({.id = "view.nextArea",
+                  .name = "Next Area",
+                  .category = "View",
+                  .description = "Moves the keys to the next part of the window: the control bar, the browser, the Session grid, the mixer, "
+                                 "the detail view, the undo history.",
+                  .defaultKeys = {KeyPress(KeyPress::F6Key)},
+                  .perform = [this] { moveFocusToArea(1); }});
+    registry.add({.id = "view.previousArea",
+                  .name = "Previous Area",
+                  .category = "View",
+                  .description = "Moves the keys to the previous part of the window.",
+                  .defaultKeys = {KeyPress(KeyPress::F6Key, ModifierKeys::shiftModifier, 0)},
+                  .perform = [this] { moveFocusToArea(-1); }});
     registry.add({.id = "view.info",
                   .name = "Show Info View",
                   .category = "View",
@@ -1071,6 +1106,76 @@ bool MainShell::dropFromBrowser(const SessionView::Hit& hit, const juce::String&
     const bool inserted = devices->insert(description, LiveSet::chainOf(target), -1);
     showDeviceView();
     return inserted;
+}
+
+std::vector<MainShell::FocusArea> MainShell::focusAreas() const
+{
+    const auto inside = [](juce::Component* area) {
+        return [area](const juce::Component* c) { return c != nullptr && (c == area || area->isParentOf(c)); };
+    };
+    const auto first = [](juce::Component* area) { return [area] { return accessible::focusFirstIn(*area); }; };
+    std::vector<FocusArea> areas;
+    areas.push_back({"Control bar", inside(bar.get()), first(bar.get())});
+    if (showBrowser)
+        areas.push_back({"Browser", inside(browser.get()), first(&browser->listComponent())});
+    areas.push_back({"Session",
+                     [this, in = inside(session_.get())](const juce::Component* c) { return in(c) && !session_->isInMixer(c); },
+                     first(session_.get())});
+    if (session_->isMixerVisible())
+        areas.push_back({"Mixer", [this](const juce::Component* c) { return session_->isInMixer(c); },
+                         [this] {
+                             // The selected track's strip first: the selection is where you're working.
+                             if (auto* strip = session_->stripForColumn(selected.get().track); strip != nullptr && accessible::focusFirstIn(*strip))
+                                 return true;
+                             for (int c = 0; auto* strip = session_->stripForColumn(c); ++c)
+                                 if (accessible::focusFirstIn(*strip))
+                                     return true;
+                             return session_->masterStrip() != nullptr && accessible::focusFirstIn(*session_->masterStrip());
+                         }});
+    if (showDetail)
+        areas.push_back({"Detail", inside(detail.get()), [this] {
+                             switch (detail->page())
+                             {
+                             case DetailView::Page::clip: return accessible::focusFirstIn(clip->pianoRoll());
+                             case DetailView::Page::device: return accessible::focusFirstIn(*devices);
+                             case DetailView::Page::tuning: return accessible::focusFirstIn(tunings_->tableComponent());
+                             }
+                             return false;
+                         }});
+    if (showHistory)
+        areas.push_back({"Undo history", inside(history.get()), first(history.get())});
+    return areas;
+}
+
+void MainShell::moveFocusToArea(int direction)
+{
+    const auto areas = focusAreas();
+    const int n = static_cast<int>(areas.size());
+    const auto* focused = juce::Component::getCurrentlyFocusedComponent();
+    int at = -1;
+    for (int i = 0; i < n; ++i)
+        if (areas[static_cast<std::size_t>(i)].contains(focused))
+            at = i;
+    // From nowhere, F6 starts at the first area and Shift+F6 at the last.
+    int next = at < 0 ? (direction > 0 ? 0 : n - 1) : at + direction;
+    for (int tries = 0; tries < n; ++tries, next += direction)
+    {
+        const auto& area = areas[static_cast<std::size_t>((next % n + n) % n)];
+        if (area.focus())
+        {
+            juce::AccessibilityHandler::postAnnouncement(area.name, juce::AccessibilityHandler::AnnouncementPriority::high);
+            return;
+        }
+    }
+}
+
+juce::String MainShell::focusedArea() const
+{
+    juce::String name;
+    for (const auto& area : focusAreas())
+        if (area.contains(juce::Component::getCurrentlyFocusedComponent()))
+            name = area.name;
+    return name;
 }
 
 juce::Component::SafePointer<juce::Component> MainShell::focusToRestore() const

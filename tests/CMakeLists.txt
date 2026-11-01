@@ -60,7 +60,8 @@ add_executable(lattice_tests
     ui/PreferencesTests.cpp
     ui/ThemeTests.cpp
     ui/TuningViewTests.cpp
-    ui/WidgetTests.cpp)
+    ui/WidgetTests.cpp
+    ui/AccessibilityTests.cpp)
 target_include_directories(lattice_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(lattice_tests PRIVATE lattice_core lattice_ui lattice_app Catch2::Catch2)
 if(NOT LATTICE_TSAN) # ThreadSanitizer's runtime defines operator new/delete itself
@@ -97,3 +98,10 @@ add_executable(lattice_bench bench/DeviceBench.cpp)
 target_include_directories(lattice_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(lattice_bench PRIVATE lattice_core)
 lattice_set_warnings(lattice_bench)
+
+# UI benchmarks (docs/05-m4-ui.md, "Tests" 10): frame times of the busiest views against the
+# charter's 8 ms. scripts/linux-test.sh --callgrind counts its instructions too.
+add_executable(lattice_ui_bench bench/UiBench.cpp)
+target_include_directories(lattice_ui_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(lattice_ui_bench PRIVATE lattice_core lattice_ui)
+lattice_set_warnings(lattice_ui_bench)

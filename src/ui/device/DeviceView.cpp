@@ -6,6 +6,7 @@
 #include "ui/device/DevicePanels.h"
 #include "ui/session/SessionView.h"
 #include "ui/theme/LatticeLookAndFeel.h"
+#include "ui/widgets/Accessible.h"
 
 namespace lattice::ui
 {
@@ -58,6 +59,7 @@ DeviceView::DeviceView(DeviceContext& c, SessionSelectionModel& s) : context(c),
 {
     context.view = this;
     setTitle("Device view");
+    accessible::markAsView(*this);
     setWantsKeyboardFocus(true);
     scroller.setScrollBarsShown(false, true);
     scroller.setWantsKeyboardFocus(false);
@@ -258,6 +260,27 @@ void DeviceView::select(const juce::ValueTree& device)
         focused = device.getParent();
     if (isShowing())
         grabKeyboardFocus();
+    accessible::selectionChanged(*this);
+}
+
+juce::String DeviceView::describeSelection() const
+{
+    if (!selected.isValid() || !selected.isAChildOf(context.set().state()))
+    {
+        const auto location = undoNames::locationOf(shownChain, context.registry());
+        const int n = shownChain.isValid() ? shownChain.getNumChildren() : 0;
+        return (location.isNotEmpty() ? location + ", " : juce::String()) + (n == 0 ? juce::String("no devices") : juce::String(n) + (n == 1 ? " device" : " devices"));
+    }
+    auto text = undoNames::locationOf(selected, context.registry());
+    if (!static_cast<bool>(selected.getProperty(ids::enabled, true)))
+        text << ", off";
+    const auto chain = selected.getParent();
+    return text << ", " << (chain.indexOf(selected) + 1) << " of " << chain.getNumChildren();
+}
+
+std::unique_ptr<juce::AccessibilityHandler> DeviceView::createAccessibilityHandler()
+{
+    return accessible::viewHandler(*this, juce::AccessibilityRole::group, [this] { return describeSelection(); });
 }
 
 void DeviceView::focusChain(const juce::ValueTree& devicesNode)

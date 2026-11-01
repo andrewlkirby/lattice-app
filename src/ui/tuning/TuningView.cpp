@@ -6,6 +6,7 @@
 #include "tuning/parsers/ColundiTextParser.h"
 #include "tuning/parsers/NumberParsing.h"
 #include "ui/theme/LatticeLookAndFeel.h"
+#include "ui/widgets/Accessible.h"
 
 #include <algorithm>
 #include <array>
@@ -111,6 +112,7 @@ public:
     explicit Table(TuningView& v) : view(v)
     {
         setTitle("Tuning table");
+        accessible::markAsView(*this);
         setWantsKeyboardFocus(true);
         setHelpText("Click a row to play it. While editing a copy, double-click a frequency or a label to change it.");
     }
@@ -225,6 +227,28 @@ public:
     }
 
     void mouseUp(const juce::MouseEvent&) override { view.playEntry(-1, 0); }
+
+    /** The chosen rows, for screen readers: each column of one ("Index 47, Hz 440.00, ..."), or
+        how many. */
+    juce::String describeSelection() const
+    {
+        if (view.shown() == nullptr)
+            return "No tuning";
+        const auto entries = view.selectedEntries();
+        if (entries.empty())
+            return juce::String(static_cast<int>(view.rows().size())) + " entries, none selected";
+        if (entries.size() > 1)
+            return juce::String(static_cast<int>(entries.size())) + " entries selected";
+        juce::StringArray cells;
+        for (int c = 0; c < numColumns; ++c)
+            if (const auto text = view.cellText(entries.front(), static_cast<Column>(c)); text.isNotEmpty())
+                cells.add((static_cast<Column>(c) == Column::index ? juce::String("Entry") : columnName(static_cast<Column>(c))) + " " + text);
+        return cells.joinIntoString(", ");
+    }
+    std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override
+    {
+        return accessible::viewHandler(*this, juce::AccessibilityRole::table, [this] { return describeSelection(); });
+    }
 
     void mouseDoubleClick(const juce::MouseEvent& e) override
     {
@@ -736,6 +760,7 @@ void TuningView::selectEntries(const std::vector<int>& entries)
             chosen[static_cast<std::size_t>(e)] = true;
     updateButtons();
     table->repaint();
+    accessible::selectionChanged(*table);
 }
 
 void TuningView::playEntry(int entry, int velocity)

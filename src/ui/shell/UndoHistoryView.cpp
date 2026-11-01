@@ -2,6 +2,7 @@
 
 #include "core/model/UndoNames.h"
 #include "ui/theme/LatticeLookAndFeel.h"
+#include "ui/widgets/Accessible.h"
 
 namespace lattice::ui
 {
@@ -9,7 +10,9 @@ namespace lattice::ui
 UndoHistoryView::UndoHistoryView(juce::UndoManager& u) : undo(u)
 {
     setTitle("Undo history");
-    setHelpText("Every change, oldest first. Click one to go back (or forward) to just after it.");
+    accessible::markAsView(*this);
+    setHelpText("Every change, oldest first. Click one (or use Up and Down) to go back or forward to just after it.");
+    setWantsKeyboardFocus(true);
     undo.addChangeListener(this);
     refresh();
 }
@@ -42,6 +45,7 @@ void UndoHistoryView::refresh()
         scrollRows = juce::jmax(0, at - visible + 1);
     scrollRows = juce::jlimit(0, juce::jmax(0, names.size() - visible), scrollRows);
     repaint();
+    accessible::selectionChanged(*this);
 }
 
 void UndoHistoryView::goTo(int row)
@@ -76,7 +80,7 @@ void UndoHistoryView::paint(juce::Graphics& g)
         const auto row = area.removeFromTop(h);
         if (r == at)
         {
-            g.setColour(t.selection.withAlpha(0.45f));
+            g.setColour(hasKeyboardFocus(false) ? t.selection : t.selection.withAlpha(0.45f));
             g.fillRect(row);
         }
         // What was done, then where, dimmed; the location gives way first when the row is narrow.
@@ -107,6 +111,36 @@ void UndoHistoryView::mouseDown(const juce::MouseEvent& e)
     const int row = scrollRows + (e.y - h) / h;
     if (row < names.size())
         goTo(row);
+}
+
+bool UndoHistoryView::keyPressed(const juce::KeyPress& key)
+{
+    if (key.getModifiers().isAnyModifierKeyDown())
+        return false;
+    const int code = key.getKeyCode();
+    if (code == juce::KeyPress::upKey)
+        goTo(at - 1);
+    else if (code == juce::KeyPress::downKey)
+        goTo(at + 1);
+    else if (code == juce::KeyPress::homeKey)
+        goTo(0);
+    else if (code == juce::KeyPress::endKey)
+        goTo(names.size() - 1);
+    else
+        return false;
+    return true;
+}
+
+juce::String UndoHistoryView::describeCurrent() const
+{
+    if (at == 0)
+        return names.size() > 1 ? "Start, before " + juce::String(names.size() - 1) + " steps" : juce::String("Start, no changes yet");
+    return names[at] + ", step " + juce::String(at) + " of " + juce::String(names.size() - 1);
+}
+
+std::unique_ptr<juce::AccessibilityHandler> UndoHistoryView::createAccessibilityHandler()
+{
+    return accessible::viewHandler(*this, juce::AccessibilityRole::list, [this] { return describeCurrent(); });
 }
 
 void UndoHistoryView::mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& wheel)

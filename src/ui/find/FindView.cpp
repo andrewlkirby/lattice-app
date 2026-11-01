@@ -1,6 +1,7 @@
 #include "ui/find/FindView.h"
 
 #include "ui/theme/LatticeLookAndFeel.h"
+#include "ui/widgets/Accessible.h"
 
 namespace lattice::ui
 {
@@ -55,6 +56,7 @@ void FindView::refresh()
     if (auto* parent = getParentComponent())
         setBounds(getBounds().withHeight(juce::jmin(preferredHeight(), parent->getHeight() - getY())));
     repaint();
+    accessible::selectionChanged(*this);
 }
 
 void FindView::moveSelection(int delta)
@@ -68,6 +70,23 @@ void FindView::moveSelection(int delta)
     else if (selected >= firstShown + rows)
         firstShown = selected - rows + 1;
     repaint();
+    accessible::selectionChanged(*this);
+}
+
+juce::String FindView::describeSelected() const
+{
+    if (shown.empty())
+        return field.isEmpty() ? juce::String() : juce::String("No results");
+    const auto& r = shown[static_cast<std::size_t>(juce::jlimit(0, static_cast<int>(shown.size()) - 1, selected))];
+    auto text = r.name;
+    if (r.location.isNotEmpty())
+        text << ", " << r.location;
+    return text << ", " << (selected + 1) << " of " << static_cast<int>(shown.size());
+}
+
+std::unique_ptr<juce::AccessibilityHandler> FindView::createAccessibilityHandler()
+{
+    return accessible::viewHandler(*this, juce::AccessibilityRole::list, [this] { return describeSelected(); });
 }
 
 void FindView::chooseSelected()

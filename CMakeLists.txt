@@ -354,6 +354,7 @@ add_library(lattice_ui STATIC
     src/ui/tuning/TrackTuningControls.cpp
     src/ui/tuning/TuningDraft.cpp
     src/ui/tuning/TuningView.cpp
+    src/ui/widgets/Accessible.cpp
     src/ui/widgets/BoundControl.cpp
     src/ui/widgets/ControlRegistry.cpp
     src/ui/widgets/Fader.cpp

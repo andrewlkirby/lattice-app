@@ -1,6 +1,7 @@
 #include "ui/clip/PianoRoll.h"
 
 #include "ui/theme/LatticeLookAndFeel.h"
+#include "ui/widgets/Accessible.h"
 #include "ui/widgets/Toggle.h"
 
 #include <algorithm>
@@ -39,6 +40,7 @@ notes::Indices indicesOf(const std::vector<char>& flags)
 PianoRoll::PianoRoll(SessionController& s, EngineStateFeed& f, TuningRegistry& t) : session(s), feed(f), tunings(t)
 {
     setTitle("Piano roll");
+    accessible::markAsView(*this);
     setOpaque(true);
     setWantsKeyboardFocus(true);
     for (auto* bar : {&vertical, &horizontal})
@@ -50,6 +52,7 @@ PianoRoll::PianoRoll(SessionController& s, EngineStateFeed& f, TuningRegistry& t
     clipNotes.onChange = [this] {
         contentChanged();
         triggerAsyncUpdate(); // a fold follows the notes in use
+        accessible::selectionChanged(*this);
     };
     feed.addListener(this, EngineStateFeed::slotsAspect | EngineStateFeed::transportAspect);
     rowsChanged();
@@ -107,6 +110,32 @@ void PianoRoll::valueTreePropertyChanged(juce::ValueTree& tree, const juce::Iden
         rowsChanged();
         contentChanged();
     }
+}
+
+juce::String PianoRoll::describeSelection() const
+{
+    if (!hasClip())
+        return "No clip";
+    const auto& all = clipNotes.notes();
+    const auto selected = clipNotes.selected();
+    const auto count = [](std::size_t n) { return juce::String(static_cast<int>(n)) + (n == 1 ? " note" : " notes"); };
+    if (selected.empty())
+        return count(all.size()) + ", none selected";
+    if (selected.size() > 1)
+        return juce::String(static_cast<int>(selected.size())) + " of " + count(all.size()) + " selected";
+    const auto& n = all[selected.front()];
+    const auto [num, den] = session.set().clipTimeSignature(clip());
+    const BarsBeats bb{num, den};
+    auto text = tuningRow(rowContext(), n.pitch).label + ", velocity " + juce::String(n.velocity) + ", at " + bb.position(n.start) +
+                ", length " + bb.length(n.length);
+    if (n.muted)
+        text << ", muted";
+    return text;
+}
+
+std::unique_ptr<juce::AccessibilityHandler> PianoRoll::createAccessibilityHandler()
+{
+    return accessible::viewHandler(*this, juce::AccessibilityRole::group, [this] { return describeSelection(); });
 }
 
 TuningRowContext PianoRoll::rowContext() const

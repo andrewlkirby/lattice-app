@@ -129,6 +129,9 @@ public:
     std::function<void()> onShowTuning;
     /** Renames what's selected (a prompt), for the Rename command. */
     void renameSelection();
+    /** What's selected, in words, for screen readers: "Bass · Scene 3 · 2 MIDI, playing". */
+    juce::String describeSelection() const;
+    std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
 
     /** Applies pending document changes now (normally the message loop does; tests call it). */
     void flushUpdates() { handleUpdateNowIfNeeded(); }
@@ -143,6 +146,8 @@ public:
     /** The strip under a column (or nullptr), and the master's. */
     MixerStrip* stripForColumn(int column) const;
     MixerStrip* masterStrip() const noexcept { return master.get(); }
+    /** Whether a component is in the mixer (a strip, or the master's). */
+    bool isInMixer(const juce::Component* c) const;
 
     /** Screen areas (local coordinates). */
     juce::Rectangle<int> headerArea() const noexcept { return headers; }

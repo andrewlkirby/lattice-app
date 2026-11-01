@@ -87,6 +87,10 @@ public:
     double playhead() const { return playheadQuarters(); }
     /** What the ruler tells about a row. */
     TuningRowContext rowContext() const;
+    /** The selected notes, in words, for screen readers: "C3, velocity 100, at 1.2.1, length
+        0.1.0" for one, "3 of 16 notes selected" for several. */
+    juce::String describeSelection() const;
+    std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
 
     // --- Editing (the commands call these; each is one undo step) -------------------------------------
     void transposeSteps(int steps);

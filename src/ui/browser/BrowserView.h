@@ -82,6 +82,8 @@ public:
     int visibleRows() const;
     /** Scrolls so the row is in view. */
     void scrollToRow(int row);
+    /** The list (it takes the keys: arrows, Enter, Space). */
+    juce::Component& listComponent() noexcept;
     /** The list's bounds within this component (tests drive clicks there). */
     juce::Rectangle<int> listBounds() const;
     juce::Rectangle<int> rowBounds(int row) const; // in this component's coordinates

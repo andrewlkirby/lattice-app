@@ -38,6 +38,11 @@ public:
     /** The height it wants for its results (the theme's sizes). */
     int preferredHeight() const;
 
+    /** The chosen result, for screen readers (said as Up and Down move): "Release, Synth › Amp
+        Env · 2 MIDI, 2 of 14". */
+    juce::String describeSelected() const;
+    std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
+
     void paint(juce::Graphics&) override;
     void resized() override;
     void mouseDown(const juce::MouseEvent&) override;

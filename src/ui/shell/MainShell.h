@@ -76,6 +76,13 @@ public:
     /** The missing-files window for a set just opened (the default for files().onMissingFiles). */
     void showMissingFiles(std::vector<setfiles::Reference> missing);
 
+    /** F6 and Shift+F6 (docs/05-m4-ui.md, 4h): the keys go to the next or previous area of the
+        window, of those shown: the control bar, the browser, the Session grid, the mixer, the
+        detail view (the piano roll, the Device view or the tuning table), the undo history. */
+    void moveFocusToArea(int direction);
+    /** The area the keys are in now (as F6 names them: "Session", "Mixer"...), or empty. */
+    juce::String focusedArea() const;
+
     /** MIDI Map and Key Map (Ctrl+M, Ctrl+K): the mappings, and the mode. */
     Mappings& mappings() noexcept { return *mapper; }
     void setMapMode(Mappings::Mode mode);
@@ -178,6 +185,15 @@ private:
 
     /** A panel that a later phase fills, saying which. */
     class Placeholder;
+    class ShiftTabBack;
+
+    struct FocusArea
+    {
+        juce::String name;
+        std::function<bool(const juce::Component*)> contains;
+        std::function<bool()> focus;
+    };
+    std::vector<FocusArea> focusAreas() const;
 
     void addViewCommands();
     void addTuningCommands();
@@ -234,6 +250,7 @@ private:
     std::unique_ptr<FindIndex> finder;
     std::unique_ptr<FindView> findBox;
     juce::Component::SafePointer<juce::Component> flashed;
+    std::unique_ptr<juce::KeyListener> shiftTabBack;
     ComputerKeyboardInput* computerKeyboard = nullptr;
     juce::String audioError; // why the audio device didn't open
     std::unique_ptr<juce::FileChooser> chooser;
