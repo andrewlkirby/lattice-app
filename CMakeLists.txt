@@ -64,11 +64,15 @@ if(NOT DEFINED CPM_SOURCE_CACHE AND NOT DEFINED ENV{CPM_SOURCE_CACHE})
 endif()
 include(CPM)
 
+# Patched when downloaded (cmake/patches; each file says why). The patched copy has its own cache
+# folder (CUSTOM_CACHE_KEY): change the key with the patches, and JUCE is fetched and patched again.
 CPMAddPackage(
     NAME JUCE
     GITHUB_REPOSITORY juce-framework/JUCE
     GIT_TAG 8.0.15
-    OPTIONS "JUCE_BUILD_EXTRAS OFF" "JUCE_BUILD_EXAMPLES OFF")
+    OPTIONS "JUCE_BUILD_EXTRAS OFF" "JUCE_BUILD_EXAMPLES OFF"
+    CUSTOM_CACHE_KEY 8.0.15-vblank-1
+    PATCH_COMMAND "${CMAKE_COMMAND}" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/juce-vblank-1.cmake")
 
 if(LATTICE_PROFILE)
     CPMAddPackage(
