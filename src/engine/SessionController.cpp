@@ -586,6 +586,18 @@ juce::Result SessionController::loadSet(const juce::File& source)
     return result;
 }
 
+juce::Result SessionController::restoreSet(const juce::File& copy, const juce::File& original)
+{
+    stop();
+    const auto result = liveSet.loadFromFile(copy);
+    if (result.failed())
+        return result;
+    file = original;
+    afterReplacingSet();
+    savedState = juce::ValueTree("RECOVERED"); // nothing saved matches it: unsaved
+    return result;
+}
+
 bool SessionController::hasUnsavedChanges() const noexcept
 {
     return !liveSet.state().isEquivalentTo(savedState);

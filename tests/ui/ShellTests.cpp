@@ -317,6 +317,8 @@ TEST_CASE("Shell: the menu bar has every command, once, by category", "[ui][shel
         juce::PopupMenu::MenuItemIterator it(menu);
         while (it.next())
         {
+            if (it.getItem().subMenu != nullptr)
+                continue; // File > Open Recent: sets, not commands
             ++items;
             const auto* command = f.shell->commands().find(it.getItem().itemID);
             REQUIRE(command != nullptr);

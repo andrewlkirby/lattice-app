@@ -96,9 +96,11 @@ public:
             quit();
             return;
         }
-        mainWindow->content().sessionView().confirmDiscardingChanges([](bool proceed) {
-            if (proceed)
-                quit();
+        mainWindow->content().shell().files().confirmDiscardingChanges([this](bool proceed) {
+            if (!proceed)
+                return;
+            mainWindow->content().shell().files().quitting(); // a normal quit: no recovery copy
+            quit();
         });
     }
 
@@ -140,6 +142,8 @@ private:
             startSoak();
         else if (quitWhenReady)
             quit();
+        else
+            mainWindow->content().shell().files().offerRecovery(); // after a crash
     }
 
     void startSoak()

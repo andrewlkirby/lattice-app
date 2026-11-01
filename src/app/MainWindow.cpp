@@ -230,11 +230,7 @@ MainComponent::MainComponent(AudioEngine& engine, juce::PropertiesFile& settings
     setWantsKeyboardFocus(true);
 
     auto& view = debug.sessionView();
-    ui::ShellActions actions;
-    actions.newSet = [&view] { view.newSet(); };
-    actions.openSet = [&view] { view.openSet(); };
-    actions.saveSet = [&view] { view.saveSet(); };
-    actions.saveSetAs = [&view] { view.saveSetAs(); };
+    ui::ShellActions actions; // New, Open and Save are the shell's (4g)
     actions.importMidi = [&view] { view.importMidi(view.selection().track, view.selection().scene); };
     mainShell = std::make_unique<ui::MainShell>(session, engine, settings, tunings, std::move(actions));
     mainShell->setDebugUi(&debug);
@@ -352,6 +348,9 @@ MainWindow::MainWindow(const juce::String& name, AudioEngine& engine, juce::Prop
     markStage("content created");
     setContentOwned(component, true);
     setMenuBar(&component->shell().menus());
+    // The title names the set, with a * while it has unsaved changes.
+    setName(component->shell().files().title());
+    component->shell().files().onTitleChanged = [this] { setName(component->shell().files().title()); };
     // The window itself can have the focus (when a dialog closes, Windows may give it back here):
     // its keys still reach the commands.
     addKeyListener(&component->shell().commands().keyMappings());
@@ -365,6 +364,7 @@ MainWindow::MainWindow(const juce::String& name, AudioEngine& engine, juce::Prop
 
 MainWindow::~MainWindow()
 {
+    component->shell().files().onTitleChanged = nullptr;
     setMenuBar(nullptr); // its model belongs to the content, which goes first
 }
 

@@ -47,6 +47,47 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
             if (session_ != nullptr)
                 session_->renameSelection();
         };
+    // The set's files (4g): New, Open, Save and Save As are the shell's own.
+    SetFileActions::Dialogs fileDialogs;
+    fileDialogs.ask = [this](const juce::String& title, const juce::String& message, const juce::StringArray& buttons,
+                             std::function<void(int)> answer) {
+        auto options = juce::MessageBoxOptions().withTitle(title).withMessage(message).withIconType(juce::MessageBoxIconType::QuestionIcon)
+                           .withAssociatedComponent(this);
+        for (const auto& b : buttons)
+            options = options.withButton(b);
+        // JUCE numbers the buttons 1, 2... with the last one 0; as indices: 0, 1... (-1: none).
+        const int count = buttons.size();
+        juce::AlertWindow::showAsync(options, [answer = std::move(answer), count, refocus = [this, before = focusToRestore()] {
+                                                   restoreFocusLater(before);
+                                               }](int result) {
+            refocus();
+            if (answer)
+                answer(result == 0 ? count - 1 : result - 1);
+        });
+    };
+    fileDialogs.chooseFile = [this](const juce::String& title, const juce::File& start, const juce::String& patterns, bool save,
+                                    std::function<void(const juce::File&)> chosen) {
+        chooser = std::make_unique<juce::FileChooser>(title, start, patterns);
+        const int flags = save ? juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles |
+                                     juce::FileBrowserComponent::warnAboutOverwriting
+                               : juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
+        chooser->launchAsync(flags, [this, chosen = std::move(chosen), before = focusToRestore()](const juce::FileChooser& fc) {
+            restoreFocusLater(before);
+            chosen(fc.getResult());
+        });
+    };
+    fileDialogs.tell = [this](const juce::String& title, const juce::String& message) {
+        juce::AlertWindow::showAsync(juce::MessageBoxOptions().withTitle(title).withMessage(message).withButton("OK").withAssociatedComponent(this),
+                                     [this, before = focusToRestore()](int) { restoreFocusLater(before); });
+    };
+    setFiles = std::make_unique<SetFileActions>(session, settings, jobPool, platform::userDataFolder().getChildFile("Recovery"),
+                                                std::move(fileDialogs));
+    setFiles->defaultTuning = [this] { return settings.getValue("tuningId"); };
+    setFiles->onMissingFiles = [this](std::vector<setfiles::Reference> missing) { showMissingFiles(std::move(missing)); };
+    actions.newSet = [this] { setFiles->newSet(); };
+    actions.openSet = [this] { setFiles->open(); };
+    actions.saveSet = [this] { setFiles->save(); };
+    actions.saveSetAs = [this] { setFiles->saveAs(); };
     addSessionCommands(registry, session,
                        {[this] { return selected.get(); }, [this](SessionSelection sel) { selected.set(sel); },
                         [this]() -> EditTarget* {
@@ -58,8 +99,10 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
                         }},
                        std::move(actions));
     addViewCommands();
+    addFileCommands();
     addKeyListener(&registry.keyMappings());
     menuModel = std::make_unique<CommandMenus>(registry);
+    menuModel->addSubmenuAfter("file.open", "Open Recent", [this] { return setFiles->recentMenu(); });
 
     bar = std::make_unique<ControlBar>(session, registry, stateFeed, engine.workerThreads());
     bar->frameSummary = [this] { return frames.summary(); };
@@ -184,6 +227,8 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
 
     info.setTitle("Info view");
     addAndMakeVisible(info);
+    history = std::make_unique<UndoHistoryView>(session.undoManager());
+    addChildComponent(*history);
     status = std::make_unique<StatusBar>(session, jobPool);
     addAndMakeVisible(*status);
     jobPool.onJobsChanged = [this] { status->refresh(); };
@@ -194,6 +239,8 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
     detailHeight = settings.getIntValue(detailHeightKey, 0);
     browserWidth = settings.getIntValue(browserWidthKey, 0);
     showInfo = settings.getBoolValue(infoKey, true);
+    showHistory = settings.getBoolValue(historyKey, false);
+    history->setVisible(showHistory);
     browser->setVisible(showBrowser);
     detail->setVisible(showDetail);
     info.setVisible(showInfo);
@@ -209,6 +256,9 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
 MainShell::~MainShell()
 {
     session.onSetReplaced = nullptr;
+    if (missingWindow != nullptr)
+        delete missingWindow.getComponent();
+    setFiles.reset(); // it waits for an autosave being written
     browser.reset(); // it plays through the engine and reads the library
     selected.removeListener(this);
     juce::Desktop::getInstance().removeGlobalMouseListener(this);
@@ -350,6 +400,79 @@ void MainShell::addViewCommands()
                       .perform = [this, t] { setTheme(*t); },
                       .isTicked = [this, themeName] { return theme().name == themeName; }});
     }
+}
+
+void MainShell::addFileCommands()
+{
+    registry.add({.id = "file.collectAll",
+                  .name = "Collect All and Save",
+                  .category = "File",
+                  .description = "Copies every sample the set uses into a Samples folder beside it, then saves, so the folder holds everything.",
+                  .perform = [this] { setFiles->collectAllAndSave(); }});
+    registry.add({.id = "file.findMissing",
+                  .name = "Find Missing Files...",
+                  .category = "File",
+                  .description = "Lists the samples the set uses that aren't where they were, and finds them in the browser's places.",
+                  .perform =
+                      [this] {
+                          auto missing = setfiles::missing(session.set().state());
+                          if (missing.empty())
+                          {
+                              if (deviceShared->confirm)
+                                  deviceShared->confirm("Find Missing Files", "Every file the set uses is where it should be.", {}, nullptr);
+                              return;
+                          }
+                          showMissingFiles(std::move(missing));
+                      }});
+    registry.add({.id = "view.undoHistory",
+                  .name = "Show Undo History",
+                  .category = "View",
+                  .description = "Shows or hides the list of changes under the browser; click one to go back to it.",
+                  .defaultKeys = {juce::KeyPress('h', juce::ModifierKeys::commandModifier | juce::ModifierKeys::altModifier, 0)},
+                  .perform = [this] { setUndoHistoryVisible(!showHistory); },
+                  .isTicked = [this] { return showHistory; }});
+}
+
+void MainShell::setUndoHistoryVisible(bool visible)
+{
+    showHistory = visible;
+    settings.setValue(historyKey, visible);
+    history->setVisible(visible);
+    resized();
+}
+
+void MainShell::showMissingFiles(std::vector<setfiles::Reference> missing)
+{
+    if (missingWindow != nullptr)
+        delete missingWindow.getComponent();
+    auto* view = new MissingFilesView(session, libraryService->index(), std::move(missing));
+    view->setLookAndFeel(&lookAndFeel);
+    juce::Component::SafePointer<MissingFilesView> safeView(view);
+    view->locate = [this, safeView](int entry) {
+        if (safeView == nullptr)
+            return;
+        const auto wanted = safeView->entries()[static_cast<std::size_t>(entry)].file;
+        chooser = std::make_unique<juce::FileChooser>("Where is " + wanted.getFileName() + "?", wanted.getParentDirectory(),
+                                                      "*" + wanted.getFileExtension());
+        chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                             [safeView, entry](const juce::FileChooser& fc) {
+                                 if (safeView != nullptr && fc.getResult().existsAsFile())
+                                     safeView->relink(entry, fc.getResult());
+                             });
+    };
+    view->onClose = [this] {
+        if (missingWindow != nullptr)
+            missingWindow->exitModalState(0);
+    };
+    juce::DialogWindow::LaunchOptions options;
+    options.dialogTitle = "Missing Files";
+    options.content.setOwned(view);
+    options.componentToCentreAround = this;
+    options.dialogBackgroundColour = theme().surface;
+    options.escapeKeyTriggersCloseButton = true;
+    options.useNativeTitleBar = true;
+    options.resizable = true;
+    missingWindow = options.launchAsync();
 }
 
 void MainShell::addTuningCommands()
@@ -719,7 +842,7 @@ void MainShell::resized()
     const int sideWidth = juce::jlimit(minimumSide, juce::jmax(minimumSide, area.getWidth() / 2),
                                        showBrowser ? (browserWidth > 0 ? browserWidth : defaultSide) : minimumSide);
     browserDivider = {};
-    if (showBrowser || showInfo)
+    if (showBrowser || showInfo || showHistory)
     {
         auto side = area.removeFromLeft(sideWidth);
         if (showBrowser)
@@ -728,6 +851,13 @@ void MainShell::resized()
             area.removeFromLeft(gap);
         if (showInfo)
             info.setBounds(side.removeFromBottom(juce::roundToInt(t.fontNormal * 7.0f)));
+        if (showHistory)
+        {
+            // Under the browser, a third of the column (all of it if the browser is hidden).
+            history->setBounds(showBrowser ? side.removeFromBottom(side.getHeight() / 3) : side);
+            if (showBrowser)
+                side.removeFromBottom(gap);
+        }
         if (showBrowser)
             browser->setBounds(side);
     }

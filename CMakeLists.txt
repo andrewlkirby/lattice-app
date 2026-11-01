@@ -190,6 +190,8 @@ add_library(lattice_core STATIC
     src/core/StartupTimeline.cpp
     src/core/model/LiveSet.cpp
     src/core/model/MidiImport.cpp
+    src/core/model/Recovery.cpp
+    src/core/model/SetFiles.cpp
     src/devices/BuiltinDevices.cpp
     src/devices/ChainEditing.cpp
     src/devices/dsp/Biquad.cpp
@@ -350,7 +352,10 @@ add_library(lattice_ui STATIC
     src/ui/shell/DetailView.cpp
     src/ui/shell/InfoView.cpp
     src/ui/shell/MainShell.cpp
+    src/ui/shell/MissingFilesView.cpp
+    src/ui/shell/SetFileActions.cpp
     src/ui/shell/StatusBar.cpp
+    src/ui/shell/UndoHistoryView.cpp
     src/ui/theme/LatticeLookAndFeel.cpp
     src/ui/theme/Theme.cpp
     src/ui/tuning/TrackTuningControls.cpp

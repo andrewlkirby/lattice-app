@@ -209,7 +209,9 @@ public:
     void resetToDefault(int numTracks = defaultTracks, int numScenes = defaultScenes);
     juce::Result loadFromXml(const juce::XmlElement& xml);
     std::unique_ptr<juce::XmlElement> toXml() const;
-    juce::Result saveToFile(const juce::File& file) const;
+    /** relativePaths: files inside the set's folder are named relative to it (setfiles); a
+        recovery copy, kept elsewhere, names them in full. */
+    juce::Result saveToFile(const juce::File& file, bool relativePaths = true) const;
     juce::Result loadFromFile(const juce::File& file);
 
     // --- Set ---------------------------------------------------------------------------------

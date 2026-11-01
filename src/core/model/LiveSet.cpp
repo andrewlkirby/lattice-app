@@ -1,5 +1,7 @@
 #include "core/model/LiveSet.h"
 
+#include "core/model/SetFiles.h"
+
 #include <algorithm>
 #include <array>
 #include <functional>
@@ -138,11 +140,14 @@ std::unique_ptr<juce::XmlElement> LiveSet::toXml() const
     return root.createXml();
 }
 
-juce::Result LiveSet::saveToFile(const juce::File& file) const
+juce::Result LiveSet::saveToFile(const juce::File& file, bool relativePaths) const
 {
     const auto xml = toXml();
     if (xml == nullptr)
         return juce::Result::fail("Could not serialise the set.");
+    // Files in the set's folder (Collect All's Samples) go with it if it moves.
+    if (relativePaths)
+        setfiles::makeRelative(*xml, file.getParentDirectory());
 
     // Write to a temporary file first so a failed save never destroys the previous one.
     juce::TemporaryFile temp(file);
@@ -158,6 +163,7 @@ juce::Result LiveSet::loadFromFile(const juce::File& file)
     const auto xml = juce::XmlDocument::parse(file);
     if (xml == nullptr)
         return juce::Result::fail("Could not read " + file.getFullPathName());
+    setfiles::makeAbsolute(*xml, file.getParentDirectory());
     return loadFromXml(*xml);
 }
 

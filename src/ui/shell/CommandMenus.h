@@ -21,10 +21,20 @@ public:
     juce::PopupMenu getMenuForIndex(int topLevelMenuIndex, const juce::String& menuName) override;
     void menuItemSelected(int, int) override {}
 
+    /** A submenu after a command's item (File > Open Recent after Open): (command ID, name, the
+        submenu, made when the menu opens). */
+    void addSubmenuAfter(const juce::String& commandId, const juce::String& name, std::function<juce::PopupMenu()> make);
+
 private:
     void changeListenerCallback(juce::ChangeBroadcaster*) override { menuItemsChanged(); }
 
     CommandRegistry& commands;
+    struct Submenu
+    {
+        juce::String after, name;
+        std::function<juce::PopupMenu()> make;
+    };
+    std::vector<Submenu> submenus;
 };
 
 } // namespace lattice::ui

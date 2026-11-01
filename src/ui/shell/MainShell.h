@@ -12,7 +12,10 @@
 #include "ui/shell/ControlBar.h"
 #include "ui/shell/DetailView.h"
 #include "ui/shell/InfoView.h"
+#include "ui/shell/MissingFilesView.h"
+#include "ui/shell/SetFileActions.h"
 #include "ui/shell/StatusBar.h"
+#include "ui/shell/UndoHistoryView.h"
 #include "ui/theme/LatticeLookAndFeel.h"
 #include "ui/tuning/TuningView.h"
 
@@ -62,6 +65,13 @@ public:
     ClipView& clipView() noexcept { return *clip; }
     DeviceView& deviceView() noexcept { return *devices; }
     TuningView& tuningView() noexcept { return *tunings_; }
+    /** New, Open, Save, recent sets, autosave and the window's title. */
+    SetFileActions& files() noexcept { return *setFiles; }
+    UndoHistoryView& undoHistory() noexcept { return *history; }
+    bool isUndoHistoryVisible() const noexcept { return showHistory; }
+    void setUndoHistoryVisible(bool visible);
+    /** The missing-files window for a set just opened (the default for files().onMissingFiles). */
+    void showMissingFiles(std::vector<setfiles::Reference> missing);
     BrowserView& browserView() noexcept { return *browser; }
     library::Library& library() noexcept { return *libraryService; }
     /** Inserts what the browser names (a drag description) where the Device view is looking; a
@@ -117,6 +127,7 @@ public:
     static constexpr auto detailHeightKey = "view.detailHeight";
     static constexpr auto browserWidthKey = "view.browserWidth";
     static constexpr auto infoKey = "view.info";
+    static constexpr auto historyKey = "view.undoHistory";
     static constexpr auto mixerKey = "view.mixer";
     static constexpr auto sendsKey = "view.sends";
     static constexpr auto ioKey = "view.io";
@@ -138,6 +149,7 @@ private:
 
     void addViewCommands();
     void addTuningCommands();
+    void addFileCommands();
     /** A question with a text answer (an asynchronous dialog). */
     void askText(const juce::String& title, const juce::String& message, const juce::String& initial,
                  std::function<void(const juce::String&)> answer);
@@ -175,6 +187,9 @@ private:
     std::unique_ptr<DeviceContext> deviceShared;
     std::unique_ptr<DeviceView> devices;
     std::unique_ptr<TuningView> tunings_;
+    std::unique_ptr<SetFileActions> setFiles; // after the job pool it writes autosaves with
+    std::unique_ptr<UndoHistoryView> history;
+    juce::Component::SafePointer<juce::DialogWindow> missingWindow;
     std::unique_ptr<juce::FileChooser> chooser;
     std::unique_ptr<DetailView> detail; // after what it shows, so it goes first
     juce::Rectangle<int> detailDivider, browserDivider;
@@ -185,7 +200,7 @@ private:
     juce::TabbedComponent tabs{juce::TabbedButtonBar::TabsAtTop};
     InfoView info;
     std::unique_ptr<StatusBar> status;
-    bool showBrowser = false, showDetail = false, showInfo = true;
+    bool showBrowser = false, showDetail = false, showInfo = true, showHistory = false;
     bool autoArm = true;
     AudioCallbackStats frames;
     juce::int64 paintStarted = 0;

@@ -40,8 +40,19 @@ juce::PopupMenu CommandMenus::getMenuForIndex(int, const juce::String& menuName)
     juce::PopupMenu menu;
     for (const auto* c : commands.all())
         if (c->category == menuName)
+        {
             menu.addCommandItem(&commands.manager(), commands.numericIdOf(c->id));
+            for (const auto& s : submenus)
+                if (s.after == c->id && s.make)
+                    menu.addSubMenu(s.name, s.make());
+        }
     return menu;
+}
+
+void CommandMenus::addSubmenuAfter(const juce::String& commandId, const juce::String& name, std::function<juce::PopupMenu()> make)
+{
+    submenus.push_back({commandId, name, std::move(make)});
+    menuItemsChanged();
 }
 
 } // namespace lattice::ui

@@ -100,6 +100,9 @@ public:
     void newSet(int numTracks = LiveSet::defaultTracks, int numScenes = LiveSet::defaultScenes);
     juce::Result saveSet(const juce::File& file);
     juce::Result loadSet(const juce::File& file);
+    /** Opens a recovery copy (docs/05-m4-ui.md, 4g) as the set it was made from: named as
+        `original` (none: never saved), and unsaved until it's saved again. */
+    juce::Result restoreSet(const juce::File& copy, const juce::File& original);
     const juce::File& currentFile() const noexcept { return file; }
     /** True if the document changed since it was last saved or loaded. */
     bool hasUnsavedChanges() const noexcept;
