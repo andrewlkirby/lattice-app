@@ -321,7 +321,7 @@ void PianoRoll::applyEdit(const juce::String& name, const notes::Change& change)
 {
     if (!hasClip() || change.empty())
         return;
-    session.undoManager().beginNewTransaction(name);
+    session.beginEdit(name, clip());
     clipNotes.apply(session.set(), change);
 }
 
@@ -396,7 +396,7 @@ void PianoRoll::doubleLoop()
     if (!hasClip())
         return;
     const double start = clip()[ids::loopStart], end = clip()[ids::loopEnd];
-    session.undoManager().beginNewTransaction("Double loop");
+    session.beginEdit("Double loop", clip());
     session.set().setClipLoop(clip(), start, start + (end - start) * 2.0);
 }
 
@@ -405,7 +405,7 @@ void PianoRoll::halveLoop()
     if (!hasClip())
         return;
     const double start = clip()[ids::loopStart], end = clip()[ids::loopEnd];
-    session.undoManager().beginNewTransaction("Halve loop");
+    session.beginEdit("Halve loop", clip());
     session.set().setClipLoop(clip(), start, start + juce::jmax(LiveSet::minLoopLength, (end - start) * 0.5));
 }
 
@@ -414,7 +414,7 @@ void PianoRoll::duplicateLoop()
     if (!hasClip())
         return;
     const double start = clip()[ids::loopStart], end = clip()[ids::loopEnd];
-    session.undoManager().beginNewTransaction("Duplicate loop");
+    session.beginEdit("Duplicate loop", clip());
     clipNotes.apply(session.set(), notes::duplicateLoop(clipNotes.notes(), start, end));
     session.set().setClipLoop(clip(), start, start + (end - start) * 2.0);
     updateScrollBars();
@@ -453,7 +453,7 @@ void PianoRoll::toggleHighlight(int pitch)
         set.erase(it);
     else
         set.push_back(entry);
-    session.undoManager().beginNewTransaction("Highlight");
+    session.beginEdit("Highlight", clip());
     session.set().setHighlight(clip(), set);
     rowsChanged();
 }
@@ -478,7 +478,7 @@ void PianoRoll::toggleHighlightOfSelectedRows()
         else if (!allIn && it == set.end())
             set.push_back(r);
     }
-    session.undoManager().beginNewTransaction("Highlight");
+    session.beginEdit("Highlight", clip());
     session.set().setHighlight(clip(), set);
     rowsChanged();
 }
@@ -487,7 +487,7 @@ void PianoRoll::clearHighlight()
 {
     if (!hasClip())
         return;
-    session.undoManager().beginNewTransaction("Clear highlight");
+    session.beginEdit("Clear highlight", clip());
     session.set().setHighlight(clip(), {});
     if (trackTree.isValid())
         session.set().setHighlight(trackTree, {});
@@ -498,7 +498,7 @@ void PianoRoll::moveHighlightToTrack()
 {
     if (!hasClip() || !trackTree.isValid())
         return;
-    session.undoManager().beginNewTransaction("Highlight for the track");
+    session.beginEdit("Highlight for the track", clip());
     session.set().setHighlight(trackTree, LiveSet::effectiveHighlight(clip()));
     session.set().setHighlight(clip(), {});
     rowsChanged();
@@ -717,18 +717,17 @@ void PianoRoll::press(juce::Point<float> p, juce::ModifierKeys mods)
     lastDragRows = 0;
     gesture = Gesture::none;
     const bool adding = mods.isShiftDown() || mods.isCommandDown();
-    auto& um = session.undoManager();
 
     switch (pressed.area)
     {
     case Area::startMarker:
-        um.beginNewTransaction("Move start marker");
+        session.beginEdit("Move start marker", clip());
         gesture = Gesture::startMarker;
         break;
     case Area::loopStart:
     case Area::loopEnd:
     case Area::loopBody:
-        um.beginNewTransaction("Change loop");
+        session.beginEdit("Change loop", clip());
         gesture = pressed.area == Area::loopStart ? Gesture::loopStart : pressed.area == Area::loopEnd ? Gesture::loopEnd : Gesture::loopBody;
         break;
     case Area::key:
@@ -756,7 +755,7 @@ void PianoRoll::press(juce::Point<float> p, juce::ModifierKeys mods)
         else if (!clipNotes.isSelected(index))
             clipNotes.select({index}, adding);
         pressSelection = clipNotes.selectionFlags();
-        um.beginNewTransaction(pressed.area == Area::note ? "Move notes" : "Resize notes");
+        session.beginEdit(pressed.area == Area::note ? "Move notes" : "Resize notes", clip());
         gesture = pressed.area == Area::noteStart ? Gesture::resizeStart
                   : pressed.area == Area::noteEnd ? Gesture::resizeEnd
                   : mods.isAltDown()              ? Gesture::copyNotes
@@ -789,7 +788,7 @@ void PianoRoll::press(juce::Point<float> p, juce::ModifierKeys mods)
         break;
     }
     case Area::velocity:
-        um.beginNewTransaction("Change velocity");
+        session.beginEdit("Change velocity", clip());
         if (mods.isShiftDown())
             gesture = Gesture::velocityRamp;
         else if (drawMode)

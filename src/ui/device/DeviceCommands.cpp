@@ -55,7 +55,7 @@ void addDeviceCommands(CommandRegistry& registry, DeviceView& view)
                   .perform =
                       [&view, &context] {
                           auto d = view.selectedDevice();
-                          context.undo().beginNewTransaction("Device on/off");
+                          context.beginEdit(static_cast<bool>(d.getProperty(ids::enabled, true)) ? "Device off" : "Device on", d);
                           context.set().setDeviceEnabled(d, !static_cast<bool>(d.getProperty(ids::enabled, true)));
                       },
                   .isEnabled = hasSelection,

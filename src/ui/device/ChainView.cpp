@@ -207,7 +207,7 @@ void ChainView::filesDropped(const juce::StringArray& files, int x, int)
             presets::Preset p;
             if (presets::read(file, p).failed())
                 continue;
-            context.undo().beginNewTransaction("Load preset");
+            context.beginEdit("Load preset " + p.name, devices);
             if (chains::insertCopy(context.set(), devices, p.device, index, context.registry()).isValid())
                 ++index;
         }

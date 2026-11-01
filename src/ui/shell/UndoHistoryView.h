@@ -7,7 +7,8 @@ namespace lattice::ui
 
 /** The undo history (docs/05-m4-ui.md, 4g), in the side column under the browser: every step, the
     oldest first, from "Start" (the set as it was opened); the steps that can be redone follow,
-    dimmed. Clicking a step undoes or redoes to just after it. Follows the undo manager as it
+    dimmed. Each step reads what was done, then where, dimmed (undoNames). Clicking a step undoes
+    or redoes to just after it. Follows the undo manager as it
     changes. Message thread only. */
 class UndoHistoryView final : public juce::Component, private juce::ChangeListener
 {

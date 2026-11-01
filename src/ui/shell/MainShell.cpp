@@ -1,5 +1,7 @@
 #include "ui/shell/MainShell.h"
 
+#include "core/model/UndoNames.h"
+
 #include "platform/Platform.h"
 #include "ui/prefs/AppSettings.h"
 #include "ui/clip/ClipCommands.h"
@@ -1007,7 +1009,7 @@ bool MainShell::setTrackTuningFrom(int track, const juce::String& idOrPath)
     }
     if (tuning == nullptr)
         return false;
-    session.undoManager().beginNewTransaction("Tuning");
+    session.beginEdit(undoNames::withValue("Tuning", tuning->name), set.track(track));
     set.setTrackTuning(track, tuning->id);
     return true;
 }

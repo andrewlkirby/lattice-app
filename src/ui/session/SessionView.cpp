@@ -1,5 +1,7 @@
 #include "ui/session/SessionView.h"
 
+#include "core/model/UndoNames.h"
+
 #include "ui/device/DeviceContext.h"
 
 #include "ui/theme/LatticeLookAndFeel.h"
@@ -419,7 +421,10 @@ void SessionView::dragClipsTo(const Hit& target, bool copy)
             if (set.clip(t, sc).isValid())
                 moves.push_back({t, sc, to, sc + dScene});
     }
-    session.undoManager().beginNewTransaction(copy ? "Copy clips" : "Move clips");
+    if (moves.size() == 1)
+        session.beginEdit(copy ? "Copy clip" : "Move clip", set.clip(moves.front().fromTrack, moves.front().fromScene));
+    else
+        session.beginEdit((copy ? "Copy " : "Move ") + juce::String(moves.size()) + " clips");
     if (copy)
     {
         std::vector<std::pair<juce::ValueTree, LiveSet::ClipMove>> sources;
@@ -458,10 +463,10 @@ juce::PopupMenu SessionView::tuningMenu(int track)
     const auto shown = tunings.findById(current) != nullptr ? current : tunings.defaultTuning()->id;
     juce::Component::SafePointer<SessionView> safe(this);
     for (const auto& tuning : tunings.getAll())
-        menu.addItem(tuning->name, true, tuning->id == shown, [safe, track, id = tuning->id] {
+        menu.addItem(tuning->name, true, tuning->id == shown, [safe, track, id = tuning->id, name = tuning->name] {
             if (safe == nullptr || track >= safe->session.set().numTracks())
                 return;
-            safe->session.undoManager().beginNewTransaction("Tuning");
+            safe->session.beginEdit(undoNames::withValue("Tuning", name), safe->session.set().track(track));
             safe->session.set().setTrackTuning(track, id);
         });
 
@@ -471,7 +476,7 @@ juce::PopupMenu SessionView::tuningMenu(int track)
         return [safe, track, step, change = std::move(change)] {
             if (safe == nullptr || track >= safe->session.set().numTracks())
                 return;
-            safe->session.undoManager().beginNewTransaction(step);
+            safe->session.beginEdit(step, safe->session.set().track(track));
             change(safe->session.set());
         };
     };
@@ -504,7 +509,14 @@ void SessionView::colourSelection(int paletteIndex)
     auto& set = session.set();
     const auto argb = LiveSet::paletteColour(paletteIndex);
     const auto s = selection.get();
-    session.undoManager().beginNewTransaction("Colour");
+    // One item: where it is; more: how many.
+    const int count = s.kind == Kind::slot    ? (s.lastTrack() - s.firstTrack() + 1) * (s.lastScene() - s.firstScene() + 1)
+                      : s.kind == Kind::track ? s.lastTrack() - s.firstTrack() + 1
+                                              : s.lastScene() - s.firstScene() + 1;
+    if (count == 1)
+        session.beginEdit("Colour", s.kind == Kind::slot ? set.clip(s.track, s.scene) : s.kind == Kind::track ? set.track(s.track) : set.scene(s.scene));
+    else
+        session.beginEdit("Colour " + juce::String(count) + (s.kind == Kind::slot ? " clips" : s.kind == Kind::track ? " tracks" : " scenes"));
     switch (s.kind)
     {
     case Kind::slot:
@@ -536,7 +548,7 @@ void SessionView::importMidiFiles(const juce::StringArray& files, const Hit& at)
     const int track = trackOf(at.column);
     if (track < 0 || at.scene < 0)
         return;
-    session.undoManager().beginNewTransaction("Import MIDI");
+    session.beginEdit("Import MIDI", session.set().slot(track, at.scene));
     int scene = at.scene;
     for (const auto& f : files)
         if (isMidiFile(f) && scene < session.set().numScenes())
@@ -688,9 +700,9 @@ void SessionView::renameSelection()
     }
     if (!node.isValid())
         return;
-    askForText(*this, what, node[ids::name].toString(), [this, s, what](const juce::String& text) {
+    askForText(*this, what, node[ids::name].toString(), [this, s, what, node](const juce::String& text) {
         auto& liveSet = session.set();
-        session.undoManager().beginNewTransaction(what);
+        session.beginEdit(what, node);
         if (s.kind == Kind::track)
             liveSet.setTrackName(s.track, text);
         else if (s.kind == Kind::scene)
@@ -748,7 +760,7 @@ void SessionView::showMenu(const Hit& hit)
         auto& set = session.set();
         const bool has = set.hasStopButton(track, hit.scene);
         menu.addItem("Stop Button", !set.clip(track, hit.scene).isValid(), has, [this, track, scene = hit.scene, has] {
-            session.undoManager().beginNewTransaction("Stop button");
+            session.beginEdit(has ? "Remove stop button" : "Add stop button", session.set().slot(track, scene));
             session.set().setHasStopButton(track, scene, !has);
         });
         break;

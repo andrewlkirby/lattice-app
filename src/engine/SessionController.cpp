@@ -1,5 +1,7 @@
 #include "engine/SessionController.h"
 
+#include "core/model/UndoNames.h"
+
 #include <algorithm>
 #include <cmath>
 #include <numeric>
@@ -361,6 +363,16 @@ void SessionController::startRecording(int trackIndex, int sceneIndex)
     send(c);
 }
 
+juce::String SessionController::editName(const juce::String& action, const juce::ValueTree& where) const
+{
+    return undoNames::make(action, where, deviceTypes);
+}
+
+void SessionController::beginEdit(const juce::String& action, const juce::ValueTree& where)
+{
+    undo.beginNewTransaction(editName(action, where));
+}
+
 void SessionController::tapTempo(double nowSeconds)
 {
     if (nowSeconds < 0.0)
@@ -493,13 +505,13 @@ void SessionController::finishCapture(std::int64_t clipId, double finalLength)
             liveSet.setClipLoop(clip, 0.0, finalLength, false);
             liveSet.setClipProperty(clip, ids::looping, true, false);
         }
-        undo.beginNewTransaction("Record clip");
+        beginEdit("Record clip", clip);
         undo.perform(new RecordClipAction(clip.getParent(), clip));
         newRecordings.erase(rec);
     }
     else if (clip.isValid() && !capture.added.empty())
     {
-        undo.beginNewTransaction("Overdub");
+        beginEdit("Overdub", clip);
         undo.perform(new OverdubAction(clip.getChildWithName(ids::notes), capture.added));
     }
     captures.erase(clipId);
@@ -611,7 +623,7 @@ void SessionController::markClean()
 
 MidiImportResult SessionController::importMidiFile(const juce::File& midiFile, int trackIndex, int sceneIndex)
 {
-    undo.beginNewTransaction("Import MIDI file");
+    beginEdit("Import MIDI file", liveSet.slot(trackIndex, sceneIndex));
     auto result = lattice::importMidiFile(liveSet, midiFile, trackIndex, sceneIndex);
     flush();
     return result;

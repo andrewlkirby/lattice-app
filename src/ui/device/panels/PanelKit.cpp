@@ -59,7 +59,7 @@ SidechainPicker::SidechainPicker(DeviceContext& c, juce::ValueTree device) : con
     preFx.setWantsKeyboardFocus(false);
     preFx.setTooltip("Takes the source before its audio effects (right after its instrument).");
     preFx.onClick = [this] {
-        context.undo().beginNewTransaction("Sidechain tap");
+        context.beginEdit("Sidechain tap", node);
         chains::setSidechainSource(context.set(), node, source(),
                                    !static_cast<bool>(node.getChildWithName(ids::deviceState).getProperty(ids::sidechainPreFx, false)));
     };
@@ -102,7 +102,7 @@ juce::PopupMenu SidechainPicker::sourceMenu()
             if (safe == nullptr)
                 return;
             auto& c = safe->context;
-            c.undo().beginNewTransaction("Sidechain source");
+            c.beginEdit("Sidechain source", safe->node);
             chains::setSidechainSource(c.set(), safe->node, id,
                                        safe->node.getChildWithName(ids::deviceState).getProperty(ids::sidechainPreFx, false));
         };

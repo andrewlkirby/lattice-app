@@ -40,6 +40,8 @@ public:
                                                   juce::Identifier id, Setter set);
 
     const ParameterSpec& spec() const noexcept { return parameterSpec; }
+    /** The tree whose changes can change the value (a device, a track, the set...). */
+    const juce::ValueTree& watchedTree() const noexcept { return watched; }
 
     float value() const;                 // plain, in the spec's units
     float normalised() const;            // 0..1 along the spec's (skewed) range
@@ -69,6 +71,13 @@ public:
     /** The address of a model node's property (a track, a return, the master). */
     static juce::String targetOf(const juce::ValueTree& node, const juce::Identifier& property);
 
+    /** Where the value is, for its undo steps' names (undoNames::locationOf): by default the
+        watched node's place in the set, with the spec's group after a device or clip. Read when
+        each edit is made. */
+    std::function<juce::String()> location;
+    /** The name an edit to `plain` gets: "Cutoff → 1.20 kHz · Synth › Filter · 2 MIDI". */
+    juce::String undoName(float plain, const juce::String& action = {}) const;
+
 private:
     void write(float plain);
     void valueTreePropertyChanged(juce::ValueTree& tree, const juce::Identifier& property) override;
@@ -85,6 +94,8 @@ private:
     juce::ValueTree watched;
     std::function<bool(const juce::ValueTree&, const juce::Identifier&)> matches;
     bool gesture = false;
+    juce::String gestureLocation; // where the gesture's value was when it began
+    juce::String gestureName;     // its step's name now: renamed with the value as it moves
     float lastValue = 0.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ValueBinding)

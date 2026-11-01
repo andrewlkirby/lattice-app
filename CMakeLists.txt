@@ -190,6 +190,7 @@ add_library(lattice_core STATIC
     src/core/StartupTimeline.cpp
     src/core/model/LiveSet.cpp
     src/core/model/MidiImport.cpp
+    src/core/model/UndoNames.cpp
     src/core/model/Recovery.cpp
     src/core/model/SetFiles.cpp
     src/devices/BuiltinDevices.cpp

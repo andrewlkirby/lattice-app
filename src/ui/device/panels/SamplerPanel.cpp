@@ -216,7 +216,7 @@ public:
         for (const auto p : points)
             text.add(juce::String(p));
         if (newStep)
-            context.undo().beginNewTransaction("Slices");
+            context.beginEdit("Slices", device);
         device.getChildWithName(ids::deviceState).setProperty("slices", text.joinIntoString(","), context.set().undoManager());
     }
 
@@ -227,9 +227,10 @@ public:
         lastX = e.position.x;
         if (dragged == Marker::none)
             return;
-        context.undo().beginNewTransaction("Move marker");
         for (auto& [id, b] : values)
             b->beginGesture();
+        // One step for the markers together (each binding's gesture would name it for itself).
+        context.beginEdit("Move marker", device);
     }
     void mouseDrag(const juce::MouseEvent& e) override
     {

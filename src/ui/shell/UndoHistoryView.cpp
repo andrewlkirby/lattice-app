@@ -1,5 +1,6 @@
 #include "ui/shell/UndoHistoryView.h"
 
+#include "core/model/UndoNames.h"
 #include "ui/theme/LatticeLookAndFeel.h"
 
 namespace lattice::ui
@@ -78,8 +79,18 @@ void UndoHistoryView::paint(juce::Graphics& g)
             g.setColour(t.selection.withAlpha(0.45f));
             g.fillRect(row);
         }
+        // What was done, then where, dimmed; the location gives way first when the row is narrow.
+        const auto [action, location] = undoNames::split(names[r]);
+        auto text = row.reduced(juce::roundToInt(t.padding), 0);
+        const auto font = t.font(t.fontNormal);
+        const int actionWidth = juce::jmin(text.getWidth(), juce::roundToInt(std::ceil(juce::GlyphArrangement::getStringWidth(font, action))));
         g.setColour(r > at ? t.textDisabled : t.text);
-        g.drawText(names[r], row.reduced(juce::roundToInt(t.padding), 0), juce::Justification::centredLeft, true);
+        g.drawText(action, text.removeFromLeft(actionWidth), juce::Justification::centredLeft, true);
+        if (location.isNotEmpty() && text.getWidth() > 0)
+        {
+            g.setColour(r > at ? t.textDisabled.withMultipliedAlpha(0.7f) : t.textDim);
+            g.drawText(undoNames::dot() + location, text, juce::Justification::centredLeft, true);
+        }
     }
 }
 

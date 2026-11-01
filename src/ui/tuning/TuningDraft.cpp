@@ -1,5 +1,7 @@
 #include "ui/tuning/TuningDraft.h"
 
+#include "core/model/UndoNames.h"
+
 #include "tuning/parsers/ColundiTextParser.h"
 
 namespace lattice::ui
@@ -63,19 +65,19 @@ juce::String TuningDraft::name() const
 
 void TuningDraft::setName(const juce::String& n)
 {
-    undo.beginNewTransaction("Rename Tuning");
+    undo.beginNewTransaction(undoNames::make(undoNames::withValue("Rename Tuning", n.trim()), name()));
     tree.setProperty(nameId, n.trim(), &undo);
 }
 
 void TuningDraft::setPeriod(double ratio)
 {
-    undo.beginNewTransaction("Tuning Period");
+    undo.beginNewTransaction(undoNames::make(undoNames::withValue("Tuning Period", juce::String(ratio, 6)), name()));
     tree.setProperty(periodId, juce::jmax(1.000001, ratio), &undo);
 }
 
 void TuningDraft::setKeyboardPage(int size)
 {
-    undo.beginNewTransaction("Keyboard Page");
+    undo.beginNewTransaction(undoNames::make(undoNames::withValue("Keyboard Page", juce::String(size)), name()));
     tree.setProperty(pageId, juce::jlimit(1, TuningTable::numNotes, size), &undo);
 }
 
@@ -83,7 +85,7 @@ void TuningDraft::setHz(int index, double hz)
 {
     if (!open || index < 0 || index >= TuningTable::numNotes)
         return;
-    undo.beginNewTransaction("Edit Frequency");
+    undo.beginNewTransaction(undoNames::make(undoNames::withValue("Frequency of " + juce::String(index), juce::String(hz, 3) + " Hz"), name()));
     tree.getChild(index).setProperty(hzId, juce::jmax(0.0, hz), &undo);
 }
 
@@ -91,7 +93,7 @@ void TuningDraft::setLabel(int index, const juce::String& label)
 {
     if (!open || index < 0 || index >= TuningTable::numNotes)
         return;
-    undo.beginNewTransaction("Edit Label");
+    undo.beginNewTransaction(undoNames::make(undoNames::withValue("Label of " + juce::String(index), label.trim()), name()));
     tree.getChild(index).setProperty(labelId, label.trim(), &undo);
 }
 
@@ -99,7 +101,7 @@ void TuningDraft::replaceEntries(const TuningTable& edited, const juce::String& 
 {
     if (!open)
         return;
-    undo.beginNewTransaction(stepName);
+    undo.beginNewTransaction(undoNames::make(stepName, name()));
     rebuilding = true; // one table at the end, not 256
     for (int i = 0; i < TuningTable::numNotes; ++i)
     {

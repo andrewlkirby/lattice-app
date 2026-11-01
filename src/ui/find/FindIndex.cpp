@@ -1,5 +1,7 @@
 #include "ui/find/FindIndex.h"
 
+#include "core/model/UndoNames.h"
+
 #include <algorithm>
 #include <functional>
 
@@ -7,8 +9,9 @@ namespace lattice::ui
 {
 namespace
 {
-const juce::String arrow = juce::String::fromUTF8(" \xe2\x80\xba ");
-const juce::String dot = juce::String::fromUTF8(" \xc2\xb7 ");
+// The undo history's location format (undoNames).
+const juce::String arrow = undoNames::arrow();
+const juce::String dot = undoNames::dot();
 } // namespace
 
 int FindIndex::scoreFor(const juce::String& name, const juce::String& typed)
@@ -112,12 +115,13 @@ std::vector<FindIndex::Result> FindIndex::search(const juce::String& text, int s
     if (!commandsOnly)
     {
         // Every device: in each chain, and inside racks' chains.
-        std::function<void(const juce::ValueTree&, const juce::String&, int)> devicesIn = [&](const juce::ValueTree& node, const juce::String& ownerName,
-                                                                                               int section) {
+        std::function<void(const juce::ValueTree&, int)> devicesIn = [&](const juce::ValueTree& node, int section) {
             if (node.hasType(ids::device))
             {
                 const auto deviceName = context.nameOf(node);
                 const auto deviceWords = wordsOf(deviceName);
+                // What it's in: a rack's chain and the rack, then the track (undoNames::locationOf).
+                const auto outer = undoNames::locationOf(node.getParent(), context.registry());
                 for (const auto& p : parametersOf(node[ids::deviceType].toString()))
                 {
                     bool all = true;
@@ -128,7 +132,7 @@ std::vector<FindIndex::Result> FindIndex::search(const juce::String& text, int s
                     Result r;
                     r.kind = Kind::parameter;
                     r.name = p.name;
-                    r.location = deviceName + (p.group.isNotEmpty() ? arrow + p.group : juce::String()) + dot + ownerName;
+                    r.location = deviceName + (p.group.isNotEmpty() ? arrow + p.group : juce::String()) + (outer.isNotEmpty() ? dot + outer : juce::String());
                     r.section = section;
                     r.score = scoreFor(p.name, text);
                     r.device = node;
@@ -137,7 +141,7 @@ std::vector<FindIndex::Result> FindIndex::search(const juce::String& text, int s
                 }
             }
             for (const auto& child : node)
-                devicesIn(child, ownerName, section);
+                devicesIn(child, section);
         };
         // Mixer controls of one track, return or the master.
         const auto mixer = [&](const juce::ValueTree& owner, const juce::String& ownerName, int section, bool isTrack, bool isGroup) {
@@ -178,16 +182,16 @@ std::vector<FindIndex::Result> FindIndex::search(const juce::String& text, int s
             const auto track = set.track(t);
             const int section = t == selectedTrack ? 0 : 1;
             const auto name = track[ids::name].toString();
-            devicesIn(LiveSet::chainOf(track), name, section);
+            devicesIn(LiveSet::chainOf(track), section);
             mixer(track, name, section, true, set.isGroupTrack(t));
         }
         for (int r = 0; r < set.numReturns(); ++r)
         {
             const auto ret = set.returnTrack(r);
-            devicesIn(LiveSet::chainOf(ret), ret[ids::name].toString(), 1);
+            devicesIn(LiveSet::chainOf(ret), 1);
             mixer(ret, ret[ids::name].toString(), 1, false, false);
         }
-        devicesIn(LiveSet::chainOf(set.master()), "Master", 1);
+        devicesIn(LiveSet::chainOf(set.master()), 1);
         mixer(set.master(), "Master", 1, false, false);
         if (extra)
             for (auto& r : extra(words, text))

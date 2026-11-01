@@ -244,7 +244,7 @@ private:
             askForText(*safe, "Store Variation", "Variation " + juce::String(racks::numVariations(safe->rack) + 1), [safe](const juce::String& name) {
                 if (safe == nullptr)
                     return;
-                safe->context.undo().beginNewTransaction("Store variation");
+                safe->context.beginEdit("Store variation " + name, safe->rack);
                 racks::storeVariation(safe->context.set(), safe->rack, name);
             });
         });
@@ -254,7 +254,7 @@ private:
             m.addItem("Recall " + racks::variationName(rack, i), [safe, i] {
                 if (safe == nullptr)
                     return;
-                safe->context.undo().beginNewTransaction("Recall variation");
+                safe->context.beginEdit("Recall " + racks::variationName(safe->rack, i), safe->rack);
                 racks::recallVariation(safe->context.set(), safe->rack, i);
             });
         return m;
@@ -270,7 +270,7 @@ private:
             askForText(*safe, "Rename Macro", racks::macroName(safe->rack, m), [safe, m](const juce::String& name) {
                 if (safe == nullptr)
                     return;
-                safe->context.undo().beginNewTransaction("Rename macro");
+                safe->context.beginEdit("Rename " + racks::macroName(safe->rack, m), safe->rack);
                 racks::setMacroName(safe->context.set(), safe->rack, m, name);
             });
         });
@@ -278,7 +278,7 @@ private:
         colours.addItem("Default", [safe, m] {
             if (safe != nullptr)
             {
-                safe->context.undo().beginNewTransaction("Macro colour");
+                safe->context.beginEdit(racks::macroName(safe->rack, m) + " colour", safe->rack);
                 racks::setMacroColour(safe->context.set(), safe->rack, m, 0);
             }
         });
@@ -290,7 +290,7 @@ private:
             item.action = [safe, m, argb] {
                 if (safe == nullptr)
                     return;
-                safe->context.undo().beginNewTransaction("Macro colour");
+                safe->context.beginEdit(racks::macroName(safe->rack, m) + " colour", safe->rack);
                 racks::setMacroColour(safe->context.set(), safe->rack, m, argb);
             };
             colours.addItem(std::move(item));
@@ -306,7 +306,7 @@ private:
             menu.addItem("Unmap " + context.nameOf(target) + " " + mapping[ids::parameter].toString(), [safe, mapping] {
                 if (safe == nullptr)
                     return;
-                safe->context.undo().beginNewTransaction("Remove mapping");
+                safe->context.beginEdit("Unmap from " + racks::macroName(safe->rack, mapping[ids::macro]), safe->rack);
                 racks::removeMapping(safe->context.set(), mapping);
             });
         }
@@ -365,7 +365,7 @@ public:
                 }
                 row.remove = std::make_unique<IconButton>("Unmap", Icon::cross, "Removes this mapping.");
                 row.remove->onClick = [this, mapping] {
-                    context.undo().beginNewTransaction("Remove mapping");
+                    context.beginEdit("Unmap from " + racks::macroName(mapping.getParent().getParent(), mapping[ids::macro]), mapping);
                     racks::removeMapping(context.set(), mapping);
                 };
                 addAndMakeVisible(*row.remove);
@@ -532,7 +532,7 @@ public:
         askForText(*this, pad ? "Rename Pad" : "Rename Chain", chain[ids::name].toString(), [safe](const juce::String& name) {
             if (safe == nullptr)
                 return;
-            safe->context.undo().beginNewTransaction("Rename chain");
+            safe->context.beginEdit(safe->pad ? "Rename pad" : "Rename chain", safe->chain);
             safe->chain.setProperty(ids::name, name, safe->context.set().undoManager());
         });
     }
@@ -549,7 +549,7 @@ public:
             if (safe == nullptr)
                 return;
             auto& c = safe->context;
-            c.undo().beginNewTransaction("Duplicate chain");
+            c.beginEdit("Duplicate chain", safe->chain);
             auto copy = racks::addChain(c.set(), safe->rack, safe->chain[ids::name].toString() + " Copy");
             for (const auto& d : racks::devicesOf(safe->chain))
                 c.set().insertDeviceCopy(racks::devicesOf(copy), -1, d);
@@ -564,7 +564,7 @@ public:
         m.addItem(pad ? "Remove Pad" : "Delete Chain", [safe] {
             if (safe == nullptr)
                 return;
-            safe->context.undo().beginNewTransaction(safe->pad ? "Remove pad" : "Delete chain");
+            safe->context.beginEdit(safe->pad ? "Remove pad" : "Delete chain", safe->chain);
             racks::removeChain(safe->context.set(), safe->chain);
         });
         return m;
@@ -586,7 +586,7 @@ public:
     {
         setTitle(pads ? "Pads" : "Chains");
         add.onClick = [this] {
-            context.undo().beginNewTransaction("Add chain");
+            context.beginEdit("Add chain", rack);
             const auto chain = racks::addChain(context.set(), rack);
             if (context.view != nullptr)
                 context.view->selectChain(rack, chain);
@@ -803,7 +803,7 @@ public:
                 handle = h;
                 start = zoneOf(chain);
                 startValue = rackmath::zoneValueAt(e.position.x, bar.getX(), bar.getWidth(), minimum());
-                context.undo().beginNewTransaction(velocity() ? "Velocity zone" : "Key zone");
+                context.beginEdit(velocity() ? "Velocity zone" : "Key zone", chain);
                 if (context.view != nullptr)
                     context.view->selectChain(rack, chain);
                 return;
@@ -1008,7 +1008,7 @@ public:
     void assign(int note, const juce::File& file, bool newTransaction)
     {
         if (newTransaction)
-            context.undo().beginNewTransaction("Load sample");
+            context.beginEdit("Load sample " + file.getFileName(), racks::padFor(rack, note).isValid() ? racks::padFor(rack, note) : rack);
         auto pad = racks::padFor(rack, note);
         if (!pad.isValid())
         {
@@ -1033,7 +1033,7 @@ public:
     {
         if (from == to || from < 0 || to < 0)
             return;
-        context.undo().beginNewTransaction("Move pad");
+        context.beginEdit("Move pad", racks::padFor(rack, from));
         racks::movePad(context.set(), rack, from, to);
     }
 
@@ -1064,7 +1064,7 @@ public:
         setHover(-1);
         if (note < 0)
             return;
-        context.undo().beginNewTransaction("Load samples");
+        context.beginEdit("Load samples", rack);
         for (const auto& f : files)
             if (isSampleFile(juce::File(f)) && note <= 127)
                 assign(note++, juce::File(f), false);
@@ -1121,7 +1121,7 @@ private:
             m.addItem("Add Empty Pad", [safe, note] {
                 if (safe == nullptr)
                     return;
-                safe->context.undo().beginNewTransaction("Add pad");
+                safe->context.beginEdit("Add pad", safe->rack);
                 const auto added = racks::addDrumPad(safe->context.set(), safe->rack, note);
                 if (safe->context.view != nullptr)
                     safe->context.view->selectChain(safe->rack, added);
@@ -1134,14 +1134,14 @@ private:
                 choke.addItem(group == 0 ? juce::String("None") : juce::String(group), true, group == current, [safe, pad, group] {
                     if (safe == nullptr)
                         return;
-                    safe->context.undo().beginNewTransaction("Choke group");
+                    safe->context.beginEdit(group == 0 ? juce::String("No choke group") : "Choke group " + juce::String(group), pad);
                     racks::setChokeGroup(safe->context.set(), pad, group);
                 });
             m.addSubMenu("Choke Group", choke);
             m.addItem("Remove Pad", [safe, pad] {
                 if (safe == nullptr)
                     return;
-                safe->context.undo().beginNewTransaction("Remove pad");
+                safe->context.beginEdit("Remove pad", pad);
                 racks::removeChain(safe->context.set(), pad);
             });
         }
@@ -1150,7 +1150,7 @@ private:
         m.addItem("Tuned Pads (follow the track's tuning)", true, tuned, [safe, tuned] {
             if (safe == nullptr)
                 return;
-            safe->context.undo().beginNewTransaction("Tuned pads");
+            safe->context.beginEdit(tuned ? "Untuned pads" : "Tuned pads", safe->rack);
             racks::setTunedPads(safe->context.set(), safe->rack, !tuned);
         });
         return m;

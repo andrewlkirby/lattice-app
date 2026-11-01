@@ -40,6 +40,12 @@ public:
     /** The device types this session creates devices from. */
     const DeviceRegistry& deviceRegistry() const noexcept { return deviceTypes; }
 
+    /** Begins an undo step named for what's done and where, as `where` is now (undoNames):
+        "Rename device · Synth · 2 MIDI". An invalid `where` (the whole set): the action alone. */
+    void beginEdit(const juce::String& action, const juce::ValueTree& where = {});
+    /** The name beginEdit gives. */
+    juce::String editName(const juce::String& action, const juce::ValueTree& where) const;
+
     /** Publishes any pending document change to the engine now. */
     void flush() { builder.rebuildIfNeeded(); }
 

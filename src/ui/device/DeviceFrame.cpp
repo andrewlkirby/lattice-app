@@ -55,7 +55,7 @@ DeviceFrame::DeviceFrame(DeviceContext& c, juce::ValueTree device) : context(c),
 
     power.setClickingTogglesState(false);
     power.onClick = [this] {
-        context.undo().beginNewTransaction("Device on/off");
+        context.beginEdit(static_cast<bool>(node.getProperty(ids::enabled, true)) ? "Device off" : "Device on", node);
         context.set().setDeviceEnabled(node, !static_cast<bool>(node.getProperty(ids::enabled, true)));
     };
     fold.onClick = [this] { LiveSet::setDeviceFolded(node, !isFolded()); };
@@ -148,7 +148,7 @@ void DeviceFrame::rebuildBody()
                         const int count = racks::macroCount(r);
                         for (int macro = 0; macro < count; ++macro)
                             sub.addItem(racks::macroName(r, macro), [this, r, macro, id] {
-                                context.undo().beginNewTransaction("Map to macro");
+                                context.beginEdit("Map to " + racks::macroName(r, macro), node);
                                 racks::addMapping(context.set(), r, macro, node, id);
                             });
                         if (count == 0)
@@ -156,8 +156,8 @@ void DeviceFrame::rebuildBody()
                         m.addSubMenu("Map to " + context.nameOf(r) + " Macro", sub);
                         for (const auto& mapping : racks::mappingsOf(r))
                             if (static_cast<juce::int64>(mapping[ids::targetDevice]) == deviceId && mapping[ids::parameter].toString() == id)
-                                m.addItem("Unmap from " + racks::macroName(r, mapping[ids::macro]), [this, mapping] {
-                                    context.undo().beginNewTransaction("Remove mapping");
+                                m.addItem("Unmap from " + racks::macroName(r, mapping[ids::macro]), [this, r, mapping] {
+                                    context.beginEdit("Unmap from " + racks::macroName(r, mapping[ids::macro]), node);
                                     racks::removeMapping(context.set(), mapping);
                                 });
                     }
@@ -367,7 +367,7 @@ juce::PopupMenu DeviceFrame::buildMenu()
     const auto type = node[ids::deviceType].toString();
     m.addItem("Rename...", [this] {
         askForText(*this, "Rename Device", context.nameOf(node), [this](const juce::String& name) {
-            context.undo().beginNewTransaction("Rename device");
+            context.beginEdit("Rename device", node);
             context.set().setDeviceName(node, name);
         });
     });

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/JobPool.h"
+#include "core/model/UndoNames.h"
 #include "devices/framework/DeviceSpecs.h"
 #include "devices/presets/Presets.h"
 #include "engine/SessionController.h"
@@ -89,17 +90,12 @@ struct DeviceContext
 
     LiveSet& set() const { return session.set(); }
     juce::UndoManager& undo() const { return session.undoManager(); }
+    /** Begins an undo step named for what's done and where `where` is (SessionController::beginEdit). */
+    void beginEdit(const juce::String& action, const juce::ValueTree& where) const { session.beginEdit(action, where); }
     const DeviceRegistry& registry() const { return specs.devices(); }
 
     /** The device's name: the user's, or its type's ("Synth"). */
-    juce::String nameOf(const juce::ValueTree& device) const
-    {
-        if (const auto own = device[ids::name].toString(); own.isNotEmpty())
-            return own;
-        const auto type = device[ids::deviceType].toString();
-        const auto* info = registry().find(type);
-        return info != nullptr ? info->name : type + " (missing)";
-    }
+    juce::String nameOf(const juce::ValueTree& device) const { return undoNames::deviceName(device, registry()); }
 
     /** The track (or return, or master) a device is on, as the info view and Find name it. */
     juce::String ownerNameOf(const juce::ValueTree& device) const

@@ -1,5 +1,8 @@
 #include "ui/clip/ClipPropertiesPanel.h"
 
+#include "core/model/UndoNames.h"
+#include "devices/framework/DeviceRegistry.h"
+
 #include "ui/clip/NoteGrid.h"
 #include "ui/session/SessionView.h"
 #include "ui/theme/LatticeLookAndFeel.h"
@@ -27,7 +30,7 @@ public:
         onClick = [this] {
             askForText(*this, "Rename clip", clip[ids::name].toString(), [this](const juce::String& typed) {
                 if (auto* um = set.undoManager())
-                    um->beginNewTransaction("Rename clip");
+                    um->beginNewTransaction(undoNames::make("Rename clip", clip, DeviceRegistry::builtin()));
                 set.setClipProperty(clip, ids::name, typed.trim());
             });
         };
@@ -72,7 +75,7 @@ public:
                                    if (safe == nullptr || chosen <= 0)
                                        return;
                                    if (auto* um = safe->set.undoManager())
-                                       um->beginNewTransaction("Clip colour");
+                                       um->beginNewTransaction(undoNames::make("Clip colour", safe->clip, DeviceRegistry::builtin()));
                                    safe->set.setColour(safe->clip, LiveSet::paletteColour(chosen - 1));
                                });
         };

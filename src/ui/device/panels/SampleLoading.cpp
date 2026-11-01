@@ -9,7 +9,7 @@ void loadSampleInto(DeviceContext& context, juce::ValueTree sampler, const juce:
     auto& set = context.set();
     auto& undo = context.undo();
     if (newTransaction)
-        undo.beginNewTransaction("Load sample");
+        context.beginEdit("Load sample " + file.getFileName(), sampler);
     auto state = sampler.getChildWithName(ids::deviceState);
     if (!state.isValid())
     {
@@ -38,7 +38,7 @@ void loadSampleInto(DeviceContext& context, juce::ValueTree sampler, const juce:
             LiveSet::deviceParameter(sampler, "sample.root", 261.6256) != rootBefore)
             return;
         if (um.getCurrentTransactionName() != transaction)
-            um.beginNewTransaction("Root from sample");
+            session->beginEdit("Root from sample", sampler);
         liveSet.setDeviceParameter(sampler, "sample.root", sample->suggestedRootHz);
     });
 }

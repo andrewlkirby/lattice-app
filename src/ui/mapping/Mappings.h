@@ -112,6 +112,8 @@ private:
     /** Plays a mapping: a CC's value (0..127), or a press (value > 0) and release (0). */
     void play(const juce::ValueTree& mapping, int value, bool isNote);
     ValueBinding* bindingFor(const juce::String& target);
+    /** An undo step for a mapping of `target`: "MIDI Map Cutoff · Synth › Filter · 2 MIDI". */
+    void beginEdit(const juce::String& action, const juce::String& target);
     bool press(const juce::String& target, bool down);
     void timerCallback() override;
     void changed();

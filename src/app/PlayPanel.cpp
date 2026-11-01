@@ -1,5 +1,7 @@
 #include "app/PlayPanel.h"
 
+#include "core/model/UndoNames.h"
+
 namespace lattice
 {
 
@@ -112,7 +114,7 @@ void PlayPanel::selectTuning(const TuningPtr& tuning)
 {
     if (tuning == nullptr || track >= session.set().numTracks())
         return;
-    session.undoManager().beginNewTransaction("Tuning");
+    session.beginEdit(undoNames::withValue("Tuning", tuning->name), session.set().track(track));
     session.set().setTrackTuning(track, tuning->id);
     settings.setValue(tuningIdKey, tuning->id);
     refresh();

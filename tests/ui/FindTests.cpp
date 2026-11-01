@@ -3,6 +3,7 @@
 // choosing one shows and flashes the control; mixer controls, settings and commands; the command
 // palette; and a 32-track set with 64-macro racks searched within a frame.
 
+#include "core/model/UndoNames.h"
 #include "devices/racks/Rack.h"
 #include "devices/racks/RackEditing.h"
 #include "support/TestDevices.h"
@@ -121,6 +122,15 @@ TEST_CASE("Find: devices on a return, the master and inside a rack chain", "[ui]
     }
     // The rack's own macros too.
     CHECK(f.finds("Macro 1", rack, "macro1"));
+
+    // Inside a rack: its chain and the rack, as the undo history names them (undoNames).
+    const auto& cutoff = specs.forType("lattice.synth")->findParameter("filter.cutoff")->spec();
+    bool named = false;
+    for (const auto& r : f.find().search("cutoff", -1))
+        if (r.device == inRack)
+            named = r.location == undoNames::locationOf(inRack, DeviceRegistry::builtin(), cutoff.group);
+    CHECK(named);
+    CHECK(undoNames::locationOf(inRack, DeviceRegistry::builtin()).contains(chain[ids::name].toString()));
 
     // Where it lives.
     const auto results = f.find().search("Macro 1", -1);

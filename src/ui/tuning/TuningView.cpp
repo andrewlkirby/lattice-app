@@ -1,5 +1,7 @@
 #include "ui/tuning/TuningView.h"
 
+#include "core/model/UndoNames.h"
+
 #include "tuning/TrackTuning.h"
 #include "tuning/parsers/ColundiTextParser.h"
 #include "tuning/parsers/NumberParsing.h"
@@ -982,7 +984,7 @@ bool TuningView::writeAndUse(const juce::File& file)
     // The track gets the saved tuning, and so does every track that had the version it replaces.
     auto& set = session.set();
     const auto replaced = draft.basedOn();
-    session.undoManager().beginNewTransaction("Save Tuning");
+    session.beginEdit(undoNames::withValue("Save Tuning", loaded.table->name), set.track(t));
     for (int other = 0; other < set.numTracks(); ++other)
         if (other == t || (replaced.isNotEmpty() && set.track(other)[ids::tuningId].toString() == replaced))
             set.setTrackTuning(other, loaded.table->id);

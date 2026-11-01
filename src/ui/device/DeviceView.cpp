@@ -374,7 +374,8 @@ bool DeviceView::insertNow(const juce::String& description, const juce::ValueTre
     juce::ValueTree added;
     if (drag::is(description, "device"))
     {
-        context.undo().beginNewTransaction("Insert device");
+        const auto* info = registry.find(payload);
+        context.beginEdit("Insert " + (info != nullptr ? info->name : juce::String("device")), chain);
         added = chains::insert(set, chain, payload, index, registry);
     }
     else if (drag::is(description, "preset"))
@@ -382,7 +383,7 @@ bool DeviceView::insertNow(const juce::String& description, const juce::ValueTre
         presets::Preset p;
         if (typeOfDescription(context, description, &p).isEmpty())
             return false;
-        context.undo().beginNewTransaction("Load preset");
+        context.beginEdit("Load preset " + p.name, chain);
         added = chains::insertCopy(set, chain, p.device, index, registry);
     }
     else if (drag::is(description, "sample"))
@@ -390,7 +391,7 @@ bool DeviceView::insertNow(const juce::String& description, const juce::ValueTre
         const juce::File file(payload);
         if (!isSampleFile(file))
             return false;
-        context.undo().beginNewTransaction("Load sample");
+        context.beginEdit("Load sample " + file.getFileName(), chain);
         added = chains::insert(set, chain, samplerType, index, registry);
         if (added.isValid())
             panels::loadSampleInto(context, added, file, false);
@@ -400,7 +401,7 @@ bool DeviceView::insertNow(const juce::String& description, const juce::ValueTre
         const auto device = set.deviceById(payload.getLargeIntValue());
         if (!device.isValid())
             return false;
-        context.undo().beginNewTransaction("Move device");
+        context.beginEdit("Move device", device);
         if (chains::move(set, device, chain, index, registry))
             added = device;
     }
@@ -425,7 +426,7 @@ bool DeviceView::replaceDevice(const juce::ValueTree& target, const juce::String
     const auto type = typeOfDescription(context, description, &preset);
     if (type.isEmpty())
         return false;
-    context.undo().beginNewTransaction("Hot-swap");
+    context.beginEdit("Hot-swap", target);
     set.removeDevice(target);
     juce::ValueTree added;
     if (drag::is(description, "preset"))
@@ -555,11 +556,11 @@ bool DeviceView::mapTo(const juce::ValueTree& device, const juce::String& parame
     for (const auto& m : racks::mappingsOf(mapRack, mapMacro))
         if (static_cast<juce::int64>(m[ids::targetDevice]) == LiveSet::idOf(device) && m[ids::parameter].toString() == parameterId)
         {
-            context.undo().beginNewTransaction("Remove mapping");
+            context.beginEdit("Unmap from " + racks::macroName(mapRack, mapMacro), device);
             racks::removeMapping(context.set(), m);
             return true;
         }
-    context.undo().beginNewTransaction("Map to macro");
+    context.beginEdit("Map to " + racks::macroName(mapRack, mapMacro), device);
     racks::addMapping(context.set(), mapRack, mapMacro, device, parameterId);
     return true;
 }
@@ -648,7 +649,7 @@ void DeviceView::pasteHere()
     auto chain = insertionChain();
     if (!clipboard.isValid() || !chain.isValid())
         return;
-    context.undo().beginNewTransaction("Paste device");
+    context.beginEdit("Paste device", chain);
     const auto added = chains::insertCopy(context.set(), chain, clipboard, insertionIndex(), context.registry());
     if (added.isValid())
     {
@@ -661,7 +662,7 @@ void DeviceView::renameSelected()
 {
     const auto device = selected;
     askForText(*this, "Rename Device", context.nameOf(device), [this, device](const juce::String& name) {
-        context.undo().beginNewTransaction("Rename device");
+        context.beginEdit("Rename device", device);
         context.set().setDeviceName(device, name);
     });
 }
@@ -679,7 +680,7 @@ void DeviceView::edit(const juce::String& id)
     else if (id == "edit.duplicate")
     {
         auto chain = selected.getParent();
-        context.undo().beginNewTransaction("Duplicate device");
+        context.beginEdit("Duplicate device", selected);
         const auto copy = chains::insertCopy(context.set(), chain, selected, chain.indexOf(selected) + 1, context.registry());
         if (copy.isValid())
         {
@@ -693,7 +694,7 @@ void DeviceView::edit(const juce::String& id)
             copySelected();
         auto chain = selected.getParent();
         const int index = chain.indexOf(selected);
-        context.undo().beginNewTransaction(id == "edit.cut" ? "Cut device" : "Delete device");
+        context.beginEdit(id == "edit.cut" ? "Cut device" : "Delete device", selected);
         context.set().removeDevice(selected);
         selected = {};
         // The next one along takes the selection, as in Live.

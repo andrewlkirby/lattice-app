@@ -1,5 +1,8 @@
 #include "ui/widgets/ValueBinding.h"
 
+#include "core/model/UndoNames.h"
+#include "devices/framework/DeviceRegistry.h"
+
 namespace lattice::ui
 {
 
@@ -16,6 +19,9 @@ ValueBinding::ValueBinding(ParameterSpec spec, Getter getter, Setter setter, juc
 {
     lastValue = value();
     watched.addListener(this);
+    location = [node = watched, group = parameterSpec.group] {
+        return undoNames::locationOf(node, DeviceRegistry::builtin(), group);
+    };
 }
 
 ValueBinding::~ValueBinding()
@@ -93,31 +99,51 @@ float ValueBinding::fromNormalised(float normalisedValue) const
     return parameterSpec.constrain(range.convertFrom0to1(juce::jlimit(0.0f, 1.0f, normalisedValue)));
 }
 
+juce::String ValueBinding::undoName(float plain, const juce::String& action) const
+{
+    const auto what = action.isNotEmpty() ? action : parameterSpec.name;
+    return undoNames::make(undoNames::withValue(what, textFor(plain)), location ? location() : juce::String());
+}
+
 void ValueBinding::beginGesture()
 {
     if (gesture)
         return;
     gesture = true;
-    if (undo != nullptr)
-        undo->beginNewTransaction(parameterSpec.name);
+    if (undo == nullptr)
+        return;
+    // Where it is is fixed now; the value is added as it moves (write()).
+    gestureLocation = location ? location() : juce::String();
+    gestureName = undoNames::make(parameterSpec.name, gestureLocation);
+    undo->beginNewTransaction(gestureName);
 }
 
 void ValueBinding::endGesture()
 {
     gesture = false;
+    gestureLocation = {};
+    gestureName = {};
 }
 
 void ValueBinding::write(float plain)
 {
     const float v = parameterSpec.constrain(plain);
-    if (v != value())
-        set(static_cast<double>(v));
+    if (v == value())
+        return;
+    set(static_cast<double>(v));
+    // Just after the write the gesture's step is the current one, if the write made it (a step
+    // begun by someone else since, or a write that changed nothing, keeps its own name).
+    if (gesture && undo != nullptr && undo->getCurrentTransactionName() == gestureName)
+    {
+        gestureName = undoNames::make(undoNames::withValue(parameterSpec.name, textFor(v)), gestureLocation);
+        undo->setCurrentTransactionName(gestureName);
+    }
 }
 
 void ValueBinding::setValue(float plain)
 {
     if (!gesture && undo != nullptr)
-        undo->beginNewTransaction(parameterSpec.name);
+        undo->beginNewTransaction(undoName(plain));
     write(plain);
 }
 
@@ -129,15 +155,16 @@ void ValueBinding::setNormalised(float normalisedValue)
 void ValueBinding::resetToDefault()
 {
     if (undo != nullptr)
-        undo->beginNewTransaction("Reset " + parameterSpec.name);
+        undo->beginNewTransaction(undoName(parameterSpec.defaultValue, "Reset " + parameterSpec.name));
     write(parameterSpec.defaultValue);
 }
 
 void ValueBinding::setFromText(const juce::String& typed)
 {
+    const float plain = parameterSpec.parse(typed);
     if (undo != nullptr)
-        undo->beginNewTransaction(parameterSpec.name);
-    write(parameterSpec.parse(typed));
+        undo->beginNewTransaction(undoName(plain));
+    write(plain);
 }
 
 void ValueBinding::valueTreePropertyChanged(juce::ValueTree& tree, const juce::Identifier& property)

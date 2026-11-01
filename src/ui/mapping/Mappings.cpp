@@ -1,5 +1,7 @@
 #include "ui/mapping/Mappings.h"
 
+#include "core/model/UndoNames.h"
+
 #include "ui/session/MixerStrip.h"
 
 #include <cmath>
@@ -116,12 +118,19 @@ juce::String Mappings::sourceText(const juce::ValueTree& m)
     return what + juce::String::fromUTF8(" \xc2\xb7 Ch ") + juce::String(s.channel);
 }
 
+void Mappings::beginEdit(const juce::String& action, const juce::String& target)
+{
+    // Where the target is, as its control's own steps say; a clip slot, scene or command has none.
+    auto* binding = bindingFor(target);
+    session.undoManager().beginNewTransaction(undoNames::make(action, binding != nullptr && binding->location ? binding->location() : juce::String()));
+}
+
 void Mappings::learn(const Source& source)
 {
     if (learning.isEmpty())
         return;
     auto& undo = session.undoManager();
-    undo.beginNewTransaction(source.key ? "Key Map" : "MIDI Map");
+    beginEdit((source.key ? "Key Map " : "MIDI Map ") + learningName, learning);
     auto node = list(true);
     // One source plays one target, and a target has one MIDI and one key mapping: either one
     // already there is replaced.
@@ -159,7 +168,7 @@ void Mappings::remove(const juce::ValueTree& mapping)
     auto node = list(false);
     if (!node.isValid() || mapping.getParent() != node)
         return;
-    session.undoManager().beginNewTransaction("Remove Mapping");
+    beginEdit("Remove Mapping of " + mapping[nameId].toString(), mapping[targetId].toString());
     node.removeChild(mapping, &session.undoManager());
     changed();
 }
@@ -167,7 +176,7 @@ void Mappings::remove(const juce::ValueTree& mapping)
 void Mappings::setRange(const juce::ValueTree& mapping, double min, double max)
 {
     auto m = mapping;
-    session.undoManager().beginNewTransaction("Mapping Range");
+    beginEdit("Mapping Range of " + mapping[nameId].toString(), mapping[targetId].toString());
     m.setProperty(minId, juce::jlimit(0.0, 1.0, min), &session.undoManager());
     m.setProperty(maxId, juce::jlimit(0.0, 1.0, max), &session.undoManager());
     changed();
@@ -176,7 +185,7 @@ void Mappings::setRange(const juce::ValueTree& mapping, double min, double max)
 void Mappings::setTakeover(const juce::ValueTree& mapping, Takeover t)
 {
     auto m = mapping;
-    session.undoManager().beginNewTransaction("Mapping Takeover");
+    beginEdit("Mapping Takeover of " + mapping[nameId].toString(), mapping[targetId].toString());
     m.setProperty(takeoverId, static_cast<int>(t), &session.undoManager());
     changed();
 }
@@ -184,7 +193,7 @@ void Mappings::setTakeover(const juce::ValueTree& mapping, Takeover t)
 void Mappings::setEncoder(const juce::ValueTree& mapping, Encoder e)
 {
     auto m = mapping;
-    session.undoManager().beginNewTransaction("Mapping Encoder");
+    beginEdit("Mapping Encoder of " + mapping[nameId].toString(), mapping[targetId].toString());
     m.setProperty(encoderId, static_cast<int>(e), &session.undoManager());
     changed();
 }
@@ -362,13 +371,14 @@ void Mappings::play(const juce::ValueTree& m, int value, bool isNote)
 
 ValueBinding* Mappings::bindingFor(const juce::String& target)
 {
+    auto& set = session.set();
     if (auto it = bindings.find(target); it != bindings.end())
     {
-        // Still valid (the device or track may have been deleted since).
-        if (it->second != nullptr)
+        // Still in the set (the device or track may have been deleted since, or another set loaded).
+        const auto* binding = it->second.get();
+        if (binding != nullptr && (binding->watchedTree() == set.state() || binding->watchedTree().isAChildOf(set.state())))
             return it->second.get();
     }
-    auto& set = session.set();
     auto* undo = &session.undoManager();
     std::unique_ptr<ValueBinding> made;
     const auto afterColon = target.fromFirstOccurrenceOf(":", false, false);
