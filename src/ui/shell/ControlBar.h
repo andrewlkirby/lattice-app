@@ -9,6 +9,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <memory>
+#include <tuple>
 
 namespace lattice::ui
 {
@@ -32,7 +33,7 @@ private:
 class LoadMeter final : public juce::Component, public juce::SettableTooltipClient
 {
 public:
-    explicit LoadMeter(int workerThreads);
+    LoadMeter();
     /** frames: the UI's frame times, as shares of the frame budget (see MainShell). */
     void setLoad(const EngineStateFeed::Load& load, const AudioCallbackStats::Summary& frames = {},
                  double frameBudgetSeconds = 0.0);
@@ -41,7 +42,9 @@ public:
     void paint(juce::Graphics&) override;
 
 private:
-    int workers;
+    /** What paint() shows of the load: the percentage, the bar's length in its pixels, the dropouts. */
+    std::tuple<int, int, std::uint64_t> shown() const;
+
     double p99 = 0.0;
     std::uint64_t drops = 0;
 };
@@ -54,7 +57,7 @@ private:
 class ControlBar final : public juce::Component, private EngineStateFeed::Listener
 {
 public:
-    ControlBar(SessionController& session, CommandRegistry& registry, EngineStateFeed& feed, int workerThreads);
+    ControlBar(SessionController& session, CommandRegistry& registry, EngineStateFeed& feed);
     ~ControlBar() override;
 
     /** The computer keyboard whose state the bar shows and switches (may be null). */

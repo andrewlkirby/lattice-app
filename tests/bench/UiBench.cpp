@@ -3,6 +3,7 @@
 // charter's 8 ms frame time while busy.
 //
 //   lattice_ui_bench [--frames N] [--filter name]
+//   lattice_ui_bench --idle SECONDS [--audio [--device-type TYPE]]
 //
 // Each case paints its view headless (JUCE's software renderer into an image: the app's own
 // renderer on Windows is Direct2D, usually faster) once per frame while the view changes, and
@@ -11,8 +12,18 @@
 // untimed. A case is over budget when its 95th
 // percentile is above 8 ms. The run fails (exit code 1) if any case is over. scripts/linux-test.sh
 // --callgrind counts the instructions in runFrames() against docs/perf/baselines/ui-callgrind.txt.
+//
+// --idle measures idle CPU (charter §1: under 1% of one core with the transport stopped and
+// nothing moving): the window on screen over a set with clips, its refresh running as in the app,
+// nothing touched. After a 3 s settle it reports the process's CPU time and the message thread's
+// over SECONDS, as shares of one core, and fails if the process's is 1% or more. --audio also opens
+// the audio device the app uses (its saved setup) and the app's worker threads, as when the app
+// sits open with the transport stopped; --device-type opens the same device through another type
+// (e.g. "Windows Audio", which doesn't take the device from other programs as exclusive mode does).
 
 #include "devices/racks/Rack.h"
+#include "engine/WorkerPool.h"
+#include "platform/Platform.h"
 #include "devices/racks/RackEditing.h"
 #include "support/OfflineRenderer.h"
 #include "support/TestDevices.h"
@@ -25,6 +36,17 @@
 #include <memory>
 #include <string>
 #include <vector>
+
+#if JUCE_WINDOWS
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <tlhelp32.h>
+#include <map>
+#else
+#include <ctime>
+#endif
 
 using namespace lattice;
 using namespace lattice::ui;
@@ -242,20 +264,268 @@ Result measure(const Case& c, int frames)
     r.worst = ms.back();
     return r;
 }
+
+// --- Idle CPU --------------------------------------------------------------------------------------
+
+/** CPU time used so far, in seconds: the whole process's, and the calling thread's. */
+struct CpuTimes
+{
+    double process = 0.0, thread = 0.0;
+};
+
+#if JUCE_WINDOWS
+/** The cycle counter's rate. Windows' CPU times (GetProcessTimes) are sampled at the clock tick
+    (about 16 ms), too coarse for a 1% share; its cycle times are exact, and count the invariant
+    time-stamp counter, so a busy spin calibrates them. */
+double cyclesPerSecond()
+{
+    static const double rate = [] {
+        ULONG64 fromCycles = 0, toCycles = 0;
+        QueryThreadCycleTime(GetCurrentThread(), &fromCycles);
+        const auto from = juce::Time::getHighResolutionTicks();
+        while (juce::Time::highResolutionTicksToSeconds(juce::Time::getHighResolutionTicks() - from) < 0.2)
+        {
+        }
+        QueryThreadCycleTime(GetCurrentThread(), &toCycles);
+        return static_cast<double>(toCycles - fromCycles) /
+               juce::Time::highResolutionTicksToSeconds(juce::Time::getHighResolutionTicks() - from);
+    }();
+    return rate;
+}
+#endif
+
+#if JUCE_WINDOWS
+/** Every thread of this process: its name and its CPU time so far, in seconds. */
+std::map<DWORD, std::pair<std::string, double>> threadTimes()
+{
+    std::map<DWORD, std::pair<std::string, double>> out;
+    const auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snapshot == INVALID_HANDLE_VALUE)
+        return out;
+    THREADENTRY32 entry{};
+    entry.dwSize = sizeof(entry);
+    for (auto more = Thread32First(snapshot, &entry); more; more = Thread32Next(snapshot, &entry))
+    {
+        if (entry.th32OwnerProcessID != GetCurrentProcessId())
+            continue;
+        const auto thread = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ThreadID);
+        if (thread == nullptr)
+            continue;
+        ULONG64 cycles = 0;
+        QueryThreadCycleTime(thread, &cycles);
+        std::string name = "thread " + std::to_string(entry.th32ThreadID);
+        PWSTR description = nullptr;
+        if (SUCCEEDED(GetThreadDescription(thread, &description)) && description != nullptr)
+        {
+            if (description[0] != 0)
+                name = juce::String(description).toStdString();
+            LocalFree(description);
+        }
+        CloseHandle(thread);
+        out[entry.th32ThreadID] = {name, static_cast<double>(cycles) / cyclesPerSecond()};
+    }
+    CloseHandle(snapshot);
+    return out;
+}
+#endif
+
+CpuTimes cpuTimes()
+{
+    CpuTimes t;
+#if JUCE_WINDOWS
+    ULONG64 cycles = 0;
+    if (QueryProcessCycleTime(GetCurrentProcess(), &cycles))
+        t.process = static_cast<double>(cycles) / cyclesPerSecond();
+    if (QueryThreadCycleTime(GetCurrentThread(), &cycles))
+        t.thread = static_cast<double>(cycles) / cyclesPerSecond();
+#else
+    timespec ts{};
+    if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts) == 0)
+        t.process = static_cast<double>(ts.tv_sec) + static_cast<double>(ts.tv_nsec) * 1.0e-9;
+    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) == 0)
+        t.thread = static_cast<double>(ts.tv_sec) + static_cast<double>(ts.tv_nsec) * 1.0e-9;
+#endif
+    return t;
+}
+
+/** Calls each step after its delay, one after another, on the message thread; then stops the loop. */
+class Steps final : private juce::Timer
+{
+public:
+    void add(int milliseconds, std::function<void()> step) { steps.push_back({milliseconds, std::move(step)}); }
+    void run()
+    {
+        next();
+        juce::MessageManager::getInstance()->runDispatchLoop();
+    }
+
+private:
+    void next()
+    {
+        if (at < steps.size())
+            startTimer(steps[at].first);
+        else
+            juce::MessageManager::getInstance()->stopDispatchLoop();
+    }
+    void timerCallback() override
+    {
+        stopTimer();
+        steps[at++].second();
+        next();
+    }
+    std::vector<std::pair<int, std::function<void()>>> steps;
+    std::size_t at = 0;
+};
+
+int measureIdle(double seconds, bool audio, const juce::String& deviceType)
+{
+    constexpr double budget = 0.01; // of one core
+    juce::PropertiesFile::Options options;
+    options.applicationName = "LatticeBench";
+    const auto settingsFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("lattice-ui-idle", ".settings");
+    auto settings = std::make_unique<juce::PropertiesFile>(settingsFile, options);
+    TuningRegistry tunings;
+    AudioEngine engine;
+    SessionController session{engine, tunings}; // the app's devices
+    // A set as you'd leave it: clips in the grid, a Colundi track, one clip open in the Clip view.
+    session.newSet(8, 8);
+    session.set().setTrackTuning(1, TuningRegistry::colundiId);
+    for (int t = 0; t < 6; ++t)
+        for (int c = 0; c < 4; ++c)
+            if ((t + c) % 3 != 0)
+            {
+                auto clip = session.set().createClip(t, c, 4.0);
+                for (int n = 0; n < 8; ++n)
+                    session.set().addNote(clip, {48 + (n * 5) % 24, n * 0.5, 0.5, 100, false});
+            }
+    session.flush();
+    juce::String deviceInfo = "no audio device";
+    if (audio)
+    {
+        // The app's own setup, read only.
+        juce::PropertiesFile::Options appOptions;
+        appOptions.applicationName = "Lattice";
+        appOptions.storageFormat = juce::PropertiesFile::storeAsXML;
+        appOptions.millisecondsBeforeSaving = -1;
+        juce::PropertiesFile app(platform::defaultPaths().settingsFile(), appOptions);
+        engine.setWorkerThreads(WorkerPool::defaultWorkers());
+        auto saved = app.getXmlValue("audioDeviceState");
+        if (saved != nullptr && deviceType.isNotEmpty())
+            saved->setAttribute("deviceType", deviceType);
+        const auto error = engine.openDevice(saved.get());
+        if (error.isNotEmpty())
+        {
+            std::printf("The audio device didn't open: %s\n", error.toRawUTF8());
+            return 1;
+        }
+        auto* device = engine.getDeviceManager().getCurrentAudioDevice();
+        deviceInfo = device == nullptr ? juce::String("no audio device")
+                                       : device->getTypeName() + " " + device->getName() + ", " + juce::String(device->getCurrentBufferSizeSamples()) +
+                                             " samples at " + juce::String(device->getCurrentSampleRate(), 0) + " Hz, " +
+                                             juce::String(engine.workerThreads()) + " worker threads";
+    }
+
+    auto shell = std::make_unique<MainShell>(session, engine, *settings, tunings, ShellActions{});
+    shell->setDetailVisible(true);
+    shell->setBrowserVisible(true);
+    const auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+    shell->setBounds(display != nullptr ? display->userBounds.reduced(display->userBounds.getWidth() / 10.0f).toNearestInt() : juce::Rectangle<int>(1280, 800));
+    shell->addToDesktop(juce::ComponentPeer::windowAppearsOnTaskbar | juce::ComponentPeer::windowHasTitleBar);
+    shell->setVisible(true);
+    shell->selection().set({SessionSelection::Kind::slot, 0, 1});
+    shell->showClipView();
+
+#if JUCE_WINDOWS
+    cyclesPerSecond(); // calibrated before, not during
+#endif
+    CpuTimes from, to;
+    double tickWork = 0.0;
+#if JUCE_WINDOWS
+    std::map<DWORD, std::pair<std::string, double>> threadsFrom, threadsTo;
+#endif
+    double fromWall = 0.0, toWall = 0.0;
+    std::uint64_t fromTicks = 0, ticks = 0;
+    AudioCallbackStats::Summary paints, callbacks;
+    Steps steps;
+    steps.add(3000, [&] { // settled: the window drawn, the library indexed, the device started
+#if JUCE_WINDOWS
+        threadsFrom = threadTimes();
+#endif
+        from = cpuTimes();
+        fromWall = juce::Time::getMillisecondCounterHiRes();
+        fromTicks = shell->feed().ticks();
+        shell->feed().takeTickWorkSeconds();
+        shell->resetLoadStatistics();
+    });
+    steps.add(juce::roundToInt(seconds * 1000.0), [&] {
+        to = cpuTimes();
+        toWall = juce::Time::getMillisecondCounterHiRes();
+#if JUCE_WINDOWS
+        threadsTo = threadTimes();
+#endif
+        ticks = shell->feed().ticks() - fromTicks;
+        tickWork = shell->feed().takeTickWorkSeconds(); // all of it: nothing painted to take it
+        paints = shell->frameStats().summary();
+        callbacks = engine.callbackStats().summary();
+    });
+    steps.run();
+    shell.reset();
+    engine.getDeviceManager().closeAudioDevice();
+    settings.reset();
+    settingsFile.deleteFile();
+
+    const double wall = (toWall - fromWall) / 1000.0;
+    const double process = (to.process - from.process) / wall;
+    const double thread = (to.thread - from.thread) / wall;
+    std::printf("Idle CPU over %.1f s (%s), share of one core:\n", wall, deviceInfo.toRawUTF8());
+    std::printf("  %-28s %6.2f%%  (budget %.0f%%)%s\n", "process", process * 100.0, budget * 100.0, process < budget ? "" : "  OVER");
+    std::printf("  %-28s %6.2f%%\n", "message thread", thread * 100.0);
+    std::printf("  %-28s %6.2f%%  (%.1f us a tick)\n", "the feed's ticks", tickWork / wall * 100.0,
+                ticks > 0 ? tickWork / static_cast<double>(ticks) * 1.0e6 : 0.0);
+    if (callbacks.callbacks > 0)
+        std::printf("  %-28s %6.2f%%  (the median callback's share of its period)\n", "audio callbacks", callbacks.p50 * 100.0);
+#if JUCE_WINDOWS
+    // The busiest threads (the message thread is the one this runs on).
+    std::vector<std::pair<double, std::string>> busiest;
+    for (const auto& [id, t] : threadsTo)
+        if (const auto f = threadsFrom.find(id); f != threadsFrom.end())
+            busiest.push_back({(t.second - f->second.second) / wall, id == GetCurrentThreadId() ? "(message thread)" : t.first});
+    std::sort(busiest.begin(), busiest.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    std::printf("  by thread:\n");
+    for (std::size_t i = 0; i < std::min<std::size_t>(busiest.size(), 8); ++i)
+        if (busiest[i].first >= 0.0001)
+            std::printf("    %-40s %6.2f%%\n", busiest[i].second.c_str(), busiest[i].first * 100.0);
+#endif
+    std::printf("  %.0f refresh ticks a second; the window painted %llu times in all, %llu of them over the frame budget\n",
+                static_cast<double>(ticks) / wall, static_cast<unsigned long long>(paints.callbacks),
+                static_cast<unsigned long long>(paints.overruns));
+    return process < budget ? 0 : 1;
+}
 } // namespace
 
 int main(int argc, char* argv[])
 {
     int frames = 120;
     std::string filter;
+    double idleSeconds = 0.0;
+    bool audio = false;
+    juce::String deviceType;
     for (int i = 1; i < argc; ++i)
     {
         if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc)
             frames = std::max(10, std::atoi(argv[++i]));
         else if (std::strcmp(argv[i], "--filter") == 0 && i + 1 < argc)
             filter = argv[++i];
+        else if (std::strcmp(argv[i], "--idle") == 0 && i + 1 < argc)
+            idleSeconds = std::max(1.0, std::atof(argv[++i]));
+        else if (std::strcmp(argv[i], "--audio") == 0)
+            audio = true;
+        else if (std::strcmp(argv[i], "--device-type") == 0 && i + 1 < argc)
+            deviceType = juce::String::fromUTF8(argv[++i]);
     }
     const juce::ScopedJuceInitialiser_GUI juceInit;
+    if (idleSeconds > 0.0)
+        return measureIdle(idleSeconds, audio, deviceType);
     std::printf("%-42s %9s %9s %9s %8s\n", "UI frame (ms)", "median", "p95", "worst", "budget");
     bool allWithin = true;
     for (const auto& c : cases())

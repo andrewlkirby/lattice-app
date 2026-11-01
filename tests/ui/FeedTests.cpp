@@ -169,3 +169,61 @@ TEST_CASE("Feed: a listener can come and go while the feed is telling", "[ui][fe
     a.during = nullptr;
     f.feed.removeListener(&c);
 }
+
+TEST_CASE("Feed: the load reading has each thread's time in track work", "[ui][feed]")
+{
+    Fixture f;
+    f.engine.setWorkerThreads(2);
+    f.render(480);
+    f.tick(); // the first reading: no interval to share out yet
+    CHECK(f.feed.load().workerThreads == 2);
+    CHECK(f.feed.load().threadLoads.empty());
+
+    f.render(4800);
+    f.now += Feed::loadIntervalSeconds;
+    f.tick();
+    const auto& loads = f.feed.load().threadLoads;
+    REQUIRE(loads.size() == 3); // the audio thread, then each worker
+    double total = 0.0;
+    for (const auto l : loads)
+    {
+        CHECK(l >= 0.0);
+        total += l;
+    }
+    CHECK(total > 0.0);
+
+    // A new worker count starts over: no shares until the next interval.
+    f.engine.setWorkerThreads(1);
+    f.render(480);
+    f.now += Feed::loadIntervalSeconds;
+    f.tick();
+    CHECK(f.feed.load().workerThreads == 1);
+    CHECK(f.feed.load().threadLoads.empty());
+    f.render(480);
+    f.now += Feed::loadIntervalSeconds;
+    f.tick();
+    CHECK(f.feed.load().threadLoads.size() == 2);
+}
+
+TEST_CASE("Feed: ticks faster than any display (the display asleep) read the engine ten times a second", "[ui][feed]")
+{
+    Fixture f;
+    f.tick();
+    const auto read = f.feed.ticks();
+    // Two seconds of ticks 1 to 2 ms apart, as JUCE gives them with the display off: after the
+    // first quarter second (every tick read while the rate is taken), ten a second.
+    double at = f.now;
+    for (int i = 0; i < 1333; ++i)
+        f.feed.tick(at += (i % 2 == 0 ? 0.001 : 0.002));
+    const auto inStorm = f.feed.ticks() - read;
+    CHECK(inStorm >= 160);  // the first quarter second's 166
+    CHECK(inStorm <= 190); // then ten a second
+    f.now = at;
+    // The display back: every tick is read again (once the next quarter second has shown it).
+    for (int i = 0; i < 30; ++i)
+        f.tick();
+    const auto before = f.feed.ticks();
+    for (int i = 0; i < 60; ++i)
+        f.tick();
+    CHECK(f.feed.ticks() - before == 60);
+}

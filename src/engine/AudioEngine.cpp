@@ -13,6 +13,12 @@ namespace lattice
 
 AudioEngine::AudioEngine() = default;
 
+std::vector<std::uint64_t> AudioEngine::workerBusyNanoseconds() const
+{
+    const auto& pool = workers.published();
+    return pool != nullptr ? pool->busyNanoseconds() : std::vector<std::uint64_t>{};
+}
+
 void AudioEngine::setWorkerThreads(int count)
 {
     RT_ASSERT_NOT_AUDIO_THREAD();

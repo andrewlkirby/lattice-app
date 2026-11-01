@@ -51,6 +51,11 @@ public:
     {
         AudioCallbackStats::Summary callback{};
         int deviceXruns = 0;
+        int workerThreads = 0;
+        /** Each thread's time in track work over the last interval, as a share of it (of one
+            core): [0] the audio thread, then each worker. Empty with no workers, and for the
+            first interval after the worker count changed. */
+        std::vector<double> threadLoads;
     };
     static constexpr double loadIntervalSeconds = 0.25;
 
@@ -150,10 +155,18 @@ private:
     std::vector<std::array<float, 2>> returns;
     std::array<float, 2> master{};
     Load loadState{};
+    std::vector<std::uint64_t> lastBusy; // the workers' times at the last load reading
+    double lastBusySeconds = 0.0;
     std::vector<std::pair<int, int>> slotChanges;
     double lastTickSeconds = -1.0;
     double lastLoadSeconds = -1.0e9;
     double lastFrameSeconds = 0.0;
+    // Ticks faster than any display refreshes (the display asleep): see tick().
+    double rateFromSeconds = -1.0;
+    int ticksInRate = 0;
+    bool storm = false;
+    static constexpr double stormTicksPerSecond = 600.0; // displays go up to 540 Hz
+    static constexpr double stormReadSeconds = 0.1;
     std::uint64_t tickCount = 0;
     double tickWork = 0.0;
     bool metersWereMoving = false;

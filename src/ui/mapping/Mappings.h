@@ -34,7 +34,7 @@ namespace lattice::ui
     In map mode a target is chosen (setLearnTarget) and the next note, CC or key is mapped to it;
     a source already mapped moves to the new target. MIDI comes from the inputs whose Remote switch
     is on (the Preferences' MIDI tab). Message thread only. */
-class Mappings final : private juce::Timer
+class Mappings final
 {
 public:
     enum class Mode
@@ -57,7 +57,11 @@ public:
     };
 
     Mappings(SessionController& session, CommandRegistry& commands, DeviceSpecs& specs);
-    ~Mappings() override;
+    ~Mappings();
+
+    /** Once per display refresh (the shell's, with the engine state feed's: one wake-up a frame):
+        plays the MIDI that came from the remote inputs, and ends the gestures of controls at rest. */
+    void tick();
 
     void setMode(Mode m);
     Mode mode() const noexcept { return current; }
@@ -83,8 +87,7 @@ public:
     bool handleKey(const juce::KeyPress& key);
     /** Keys the computer keyboard plays while it's on, which Key Map leaves to it. */
     std::function<bool(const juce::KeyPress&)> isKeyboardKey;
-    /** Where MIDI from the remote inputs comes from (AudioEngine::takeRemoteMidi), read about 60
-        times a second. */
+    /** Where MIDI from the remote inputs comes from (AudioEngine::takeRemoteMidi), read every tick(). */
     std::function<std::vector<std::pair<juce::String, juce::MidiMessage>>()> pullMidi;
 
     /** Tests: ends the gestures under way now (as a control at rest does). */
@@ -115,7 +118,6 @@ private:
     /** An undo step for a mapping of `target`: "MIDI Map Cutoff · Synth › Filter · 2 MIDI". */
     void beginEdit(const juce::String& action, const juce::String& target);
     bool press(const juce::String& target, bool down);
-    void timerCallback() override;
     void changed();
 
     SessionController& session;

@@ -29,10 +29,7 @@ juce::ValueTree findDevice(const juce::ValueTree& node, std::int64_t id)
 const juce::Identifier Mappings::mappingsType{"MAPPINGS"};
 const juce::Identifier Mappings::mappingType{"MAPPING"};
 
-Mappings::Mappings(SessionController& s, CommandRegistry& c, DeviceSpecs& d) : session(s), commands(c), specs(d)
-{
-    startTimer(16);
-}
+Mappings::Mappings(SessionController& s, CommandRegistry& c, DeviceSpecs& d) : session(s), commands(c), specs(d) {}
 
 Mappings::~Mappings()
 {
@@ -479,7 +476,7 @@ void Mappings::endGestures()
             binding->endGesture();
 }
 
-void Mappings::timerCallback()
+void Mappings::tick()
 {
     if (pullMidi)
         for (const auto& [input, message] : pullMidi())
@@ -487,6 +484,8 @@ void Mappings::timerCallback()
     // A control at rest has ended its gesture: the turn so far is one undo step. Bindings are
     // made again later (a device may have been deleted, or a set loaded).
     const auto now = juce::Time::currentTimeMillis();
+    if (state.empty() && bindings.empty())
+        return; // nothing held: nothing to end
     bool resting = true;
     for (const auto& [uid, held] : state)
         if (now - held.touched < restMs)

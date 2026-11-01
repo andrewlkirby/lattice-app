@@ -271,6 +271,14 @@ TEST_CASE("Shell: every frame's UI work is measured against the frame budget", "
     f.tick();
     CHECK(f.shell->controlBar().loadMeter().getTooltip().contains("UI frames"));
 
+    // With workers, each thread's share of its core in track work.
+    LoadMeter meter;
+    EngineStateFeed::Load load;
+    load.workerThreads = 2;
+    load.threadLoads = {0.3, 0.2, 0.1};
+    meter.setLoad(load);
+    CHECK(meter.getTooltip().contains("2 worker threads; track work: audio thread 30%, workers 20%, 10%"));
+
     CHECK(f.shell->commands().perform("view.resetLoad"));
     CHECK(f.shell->frameStats().summary().callbacks == 0);
 }

@@ -245,6 +245,7 @@ private:
     juce::Component::SafePointer<juce::DialogWindow> missingWindow;
     std::unique_ptr<juce::DocumentWindow> preferencesWindow;
     std::unique_ptr<Mappings> mapper;
+    std::unique_ptr<juce::VBlankAttachment> mapperTick; // the feed's refresh, so one wake-up a frame
     std::unique_ptr<MapOverlay> overlay;
     std::unique_ptr<MappingsView> mappingList;
     std::unique_ptr<FindIndex> finder;

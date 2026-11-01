@@ -611,21 +611,24 @@ void SynthDevice::process(DeviceBuffers& io, const DeviceTimeInfo& time) noexcep
         std::fill_n(right, n, 0.0f);
 
     int pos = 0;
+    bool sounded = false;
     for (const auto& e : *io.midiIn)
     {
         const int at = std::clamp(e.sampleOffset, 0, n);
         if (at > pos)
         {
-            renderSegment(left + pos, right + pos, at - pos, time, pos);
+            sounded = renderSegment(left + pos, right + pos, at - pos, time, pos) || sounded;
             pos = at;
         }
         handleEvent(e, time);
     }
     if (pos < n)
-        renderSegment(left + pos, right + pos, n - pos, time, pos);
+        sounded = renderSegment(left + pos, right + pos, n - pos, time, pos) || sounded;
 
-    // Output level and pan, smoothed.
-    for (int i = 0; i < n; ++i)
+    // Output level and pan, smoothed. Silence at settled gains stays silence, so it's skipped: a
+    // synth with no notes costs next to nothing (charter §1, idle CPU).
+    const bool settled = outGainLeft == targetGainLeft && outGainRight == targetGainRight;
+    for (int i = 0; i < ((sounded || !settled) ? n : 0); ++i)
     {
         outGainLeft += std::clamp(targetGainLeft - outGainLeft, -gainStep, gainStep);
         outGainRight += std::clamp(targetGainRight - outGainRight, -gainStep, gainStep);
@@ -648,9 +651,10 @@ void SynthDevice::process(DeviceBuffers& io, const DeviceTimeInfo& time) noexcep
     }
 }
 
-void SynthDevice::renderSegment(float* left, float* right, int numSamples, const DeviceTimeInfo& time,
+bool SynthDevice::renderSegment(float* left, float* right, int numSamples, const DeviceTimeInfo& time,
                                 int offset) noexcept
 {
+    bool sounded = false;
     const bool ladder = patch.filter == FilterType::Ladder;
     const bool steep = patch.filter == FilterType::LowPass24 || patch.filter == FilterType::HighPass24;
     dsp::SvfMode svfMode = dsp::SvfMode::LowPass;
@@ -672,7 +676,8 @@ void SynthDevice::renderSegment(float* left, float* right, int numSamples, const
             if (v.isActive())
                 active[static_cast<std::size_t>(numActive++)] = &v;
         if (numActive == 0)
-            return;
+            return sounded; // the rest stays silent (as before: no voice to tidy)
+        sounded = true;
 
         std::array<dsp::FilterLane, voiceSlots * 2> lanes{};
         int numLanes = 0;
@@ -708,6 +713,7 @@ void SynthDevice::renderSegment(float* left, float* right, int numSamples, const
             v.stealing = false;
             v.gate = v.keyDown = false;
         }
+    return sounded;
 }
 
 void SynthDevice::renderVoiceBlock(Voice& v, int start, int m, const DeviceTimeInfo& time, int offset) noexcept

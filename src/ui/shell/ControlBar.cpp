@@ -37,14 +37,21 @@ CommandButton::CommandButton(CommandRegistry& registry, const juce::String& comm
 
 // --- LoadMeter -------------------------------------------------------------------------------------
 
-LoadMeter::LoadMeter(int workerThreads) : workers(workerThreads)
+LoadMeter::LoadMeter()
 {
     setTitle("Audio load");
     setHelpText("How long the audio callback takes, as a share of the time it has (99th percentile), and dropouts.");
 }
 
+std::tuple<int, int, std::uint64_t> LoadMeter::shown() const
+{
+    const auto level = juce::jlimit(0.0, 1.0, p99);
+    return {juce::roundToInt(p99 * 100.0), juce::roundToInt(level * getWidth() * 4.0), drops}; // a quarter-pixel step shows at 4x zoom
+}
+
 void LoadMeter::setLoad(const EngineStateFeed::Load& l, const AudioCallbackStats::Summary& frames, double budget)
 {
+    const auto before = shown();
     p99 = l.callback.p99;
     drops = l.callback.overruns + static_cast<std::uint64_t>(juce::jmax(0, l.deviceXruns));
     setTooltip("Audio callback, share of the buffer period: median " + juce::String(juce::roundToInt(l.callback.p50 * 100.0)) +
@@ -52,14 +59,28 @@ void LoadMeter::setLoad(const EngineStateFeed::Load& l, const AudioCallbackStats
                juce::String(juce::roundToInt(l.callback.p999 * 100.0)) + "%, worst " +
                juce::String(juce::roundToInt(l.callback.max * 100.0)) + "%\n" + juce::String(l.callback.overruns) +
                " callbacks over time, " + juce::String(juce::jmax(0, l.deviceXruns)) + " device dropouts\n" +
-               juce::String(workers) + (workers == 1 ? " worker thread" : " worker threads") +
+               juce::String(l.workerThreads) + (l.workerThreads == 1 ? " worker thread" : " worker threads") +
+               [&l] {
+                   if (l.threadLoads.empty())
+                       return juce::String();
+                   // Each thread's share of its core in track work (the audio thread's is inside
+                   // the callback's share above).
+                   juce::StringArray shares;
+                   for (std::size_t i = 1; i < l.threadLoads.size(); ++i)
+                       shares.add(juce::String(juce::roundToInt(l.threadLoads[i] * 100.0)) + "%");
+                   return "; track work: audio thread " + juce::String(juce::roundToInt(l.threadLoads[0] * 100.0)) +
+                          "%, workers " + shares.joinIntoString(", ");
+               }() +
                (frames.callbacks == 0 || budget <= 0.0
                     ? juce::String()
                     : "\nUI frames: median " + juce::String(frames.p50 * budget * 1000.0, 1) + " ms, 99th percentile " +
                           juce::String(frames.p99 * budget * 1000.0, 1) + " ms, worst " +
                           juce::String(frames.max * budget * 1000.0, 1) + " ms; " + juce::String(frames.overruns) +
                           " over " + juce::String(juce::roundToInt(budget * 1000.0)) + " ms"));
-    repaint();
+    // Read four times a second, but redrawn only when what it shows changed: an idle window
+    // stays still (charter §1).
+    if (shown() != before)
+        repaint();
 }
 
 juce::String LoadMeter::text() const
@@ -99,9 +120,9 @@ void LoadMeter::paint(juce::Graphics& g)
 
 // --- ControlBar ------------------------------------------------------------------------------------
 
-ControlBar::ControlBar(SessionController& s, CommandRegistry& registry, EngineStateFeed& f, int workerThreads)
+ControlBar::ControlBar(SessionController& s, CommandRegistry& registry, EngineStateFeed& f)
     : session(s), commands(registry), feed(f), tap(registry, "transport.tapTempo", "Tap"),
-      stop(registry, "transport.stop", juce::String::fromUTF8("\xe2\x96\xa0")), load(workerThreads)
+      stop(registry, "transport.stop", juce::String::fromUTF8("\xe2\x96\xa0"))
 {
     auto& set = session.set();
     auto* undo = &session.undoManager();

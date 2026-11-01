@@ -96,6 +96,10 @@ public:
         with it. */
     void setWorkerThreads(int count);
     int workerThreads() const noexcept { return workerCount; }
+    /** Message thread. Each thread's time in track work so far, in nanoseconds: [0] the audio
+        thread, then each worker (WorkerPool::busyNanoseconds()). Empty with no workers; starts
+        over when the worker count changes. */
+    std::vector<std::uint64_t> workerBusyNanoseconds() const;
 
     /** Message thread. A new track processor, already prepared for the current device settings,
         and re-prepared whenever they change. */

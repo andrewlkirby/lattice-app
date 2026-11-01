@@ -230,7 +230,8 @@ private:
     void startVoice(Voice& v, int note, float velocity, int channel, bool retrigger) noexcept LATTICE_NONBLOCKING;
     Voice* allocateVoice() noexcept LATTICE_NONBLOCKING;
     void setSustain(bool down) noexcept LATTICE_NONBLOCKING;
-    void renderSegment(float* left, float* right, int numSamples, const DeviceTimeInfo& time,
+    /** False if no voice sounded (the segment stays silent). */
+    bool renderSegment(float* left, float* right, int numSamples, const DeviceTimeInfo& time,
                        int offset) noexcept LATTICE_NONBLOCKING;
     /** One control block of a voice up to its filter: modulation, oscillators, sub and noise into
         the voice's buffers, and the filter and amplitude settings for the block. */

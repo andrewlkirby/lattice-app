@@ -125,23 +125,105 @@ TEST_CASE("WorkerPool: every task of every job runs exactly once, on any thread"
         struct Context
         {
             std::vector<std::atomic<int>> hits = std::vector<std::atomic<int>>(64);
+            bool slow = false;
         } context;
         for (int job = 0; job < 2000; ++job)
         {
             const int count = 1 + job % 40;
             for (auto& h : context.hits)
                 h.store(0);
+            // Runs of slow jobs (each task busy 10 us: long enough to wake the workers) and of
+            // instant ones (which the audio thread finishes alone, or with workers still awake).
+            context.slow = (job / 100) % 2 == 0;
             pool.run(
                 count,
                 [](void* c, int i) noexcept {
                     auto& ctx = *static_cast<Context*>(c);
+                    if (ctx.slow)
+                    {
+                        const auto until = std::chrono::steady_clock::now() + std::chrono::microseconds(10);
+                        while (std::chrono::steady_clock::now() < until)
+                        {
+                        }
+                    }
                     ctx.hits[static_cast<std::size_t>(i)].fetch_add(1);
                 },
                 &context);
             for (int i = 0; i < 64; ++i)
                 REQUIRE(context.hits[static_cast<std::size_t>(i)].load() == (i < count ? 1 : 0));
         }
+        if (workers > 0) // the workers took part
+        {
+            const auto busy = pool.busyNanoseconds();
+            std::uint64_t theirs = 0;
+            for (std::size_t i = 1; i < busy.size(); ++i)
+                theirs += busy[i];
+            CHECK(theirs > 0);
+        }
     }
+}
+
+TEST_CASE("WorkerPool: each thread's time in tasks is counted, for the time per worker", "[engine][parallel]")
+{
+    CHECK(WorkerPool(0).busyNanoseconds().empty()); // everything is in the callback's own time
+
+    const WorkerPool pool(2);
+    REQUIRE(pool.busyNanoseconds() == std::vector<std::uint64_t>(3, 0));
+    // 100 jobs of 4 tasks, each busy for 200 us: 80 ms of task time, however it's shared out.
+    constexpr auto taskTime = std::chrono::microseconds(200);
+    for (int job = 0; job < 100; ++job)
+        pool.run(
+            4,
+            [](void*, int) noexcept {
+                const auto until = std::chrono::steady_clock::now() + taskTime;
+                while (std::chrono::steady_clock::now() < until)
+                {
+                }
+            },
+            nullptr);
+    const auto busy = pool.busyNanoseconds();
+    REQUIRE(busy.size() == 3);
+    CHECK(busy[0] > 0); // the audio thread always helps
+    std::uint64_t total = 0;
+    for (const auto b : busy)
+        total += b;
+    const auto expected = static_cast<std::uint64_t>(std::chrono::nanoseconds(taskTime).count()) * 400;
+    CHECK(total >= expected);
+    CHECK(total < expected * 3); // and not much more (a preempted task counts its wait)
+}
+
+TEST_CASE("WorkerPool: short jobs leave the workers asleep; long ones wake them", "[engine][parallel]")
+{
+    const WorkerPool pool(3);
+    const auto spin = [](void* microseconds, int) noexcept {
+        const auto until = std::chrono::steady_clock::now() + std::chrono::microseconds(*static_cast<int*>(microseconds));
+        while (std::chrono::steady_clock::now() < until)
+        {
+        }
+    };
+    const auto workersTime = [&pool] {
+        const auto busy = pool.busyNanoseconds();
+        std::uint64_t theirs = 0;
+        for (std::size_t i = 1; i < busy.size(); ++i)
+            theirs += busy[i];
+        return theirs;
+    };
+    // A quiet set's blocks: 16 tasks of next to nothing, every 1.3 ms (64 samples at 48 kHz). The
+    // audio thread does them; the workers, asleep, never run (idle CPU).
+    int quiet = 0;
+    std::this_thread::sleep_for(std::chrono::milliseconds(20)); // the workers have gone to sleep
+    for (int block = 0; block < 200; ++block)
+    {
+        pool.run(16, spin, &quiet);
+        std::this_thread::sleep_for(std::chrono::microseconds(1300));
+    }
+    CHECK(workersTime() == 0);
+
+    // A busy set's: 16 tasks of 50 us. The workers are woken and share them.
+    int busy = 50;
+    for (int block = 0; block < 50; ++block)
+        pool.run(16, spin, &busy);
+    CHECK(workersTime() > 0);
 }
 
 TEST_CASE("Parallel processing: the reference set renders identical output with 0, 1, 2, 4 and N workers",

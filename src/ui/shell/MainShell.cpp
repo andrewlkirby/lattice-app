@@ -151,7 +151,7 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
     menuModel = std::make_unique<CommandMenus>(registry);
     menuModel->addSubmenuAfter("file.open", "Open Recent", [this] { return setFiles->recentMenu(); });
 
-    bar = std::make_unique<ControlBar>(session, registry, stateFeed, engine.workerThreads());
+    bar = std::make_unique<ControlBar>(session, registry, stateFeed);
     bar->frameSummary = [this] { return frames.summary(); };
     bar->frameBudgetSeconds = frameBudgetSeconds;
     addAndMakeVisible(*bar);
@@ -242,6 +242,7 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
             out.emplace_back(std::move(m.input), std::move(m.message));
         return out;
     };
+    mapperTick = std::make_unique<juce::VBlankAttachment>(this, [this](double) { mapper->tick(); });
     overlay = std::make_unique<MapOverlay>(*mapper, controls, *session_);
     overlay->onExit = [this] { setMapMode(Mappings::Mode::off); };
     overlay->passesThrough = [this](const juce::KeyPress& key) {

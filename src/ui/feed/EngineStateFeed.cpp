@@ -94,6 +94,21 @@ std::array<float, 2> EngineStateFeed::returnPeaks(int returnIndex) const
 
 void EngineStateFeed::tick(double nowSeconds)
 {
+    // With the display asleep, Windows' vblank wait returns at once and JUCE ticks up to a
+    // thousand times a second. No display refreshes that fast, and nothing is seen: the feed then
+    // reads the engine ten times a second, until the ticks slow down again (idle CPU, charter §1).
+    // The rate is taken over a quarter of a second (JUCE's ticks then come 1 to 2 ms apart).
+    if (rateFromSeconds < 0.0 || nowSeconds < rateFromSeconds)
+        rateFromSeconds = nowSeconds, ticksInRate = 0;
+    ++ticksInRate;
+    if (nowSeconds - rateFromSeconds >= 0.25)
+    {
+        storm = ticksInRate / (nowSeconds - rateFromSeconds) > stormTicksPerSecond;
+        rateFromSeconds = nowSeconds;
+        ticksInRate = 0;
+    }
+    if (storm && lastTickSeconds >= 0.0 && nowSeconds - lastTickSeconds < stormReadSeconds)
+        return;
     const auto started = juce::Time::getHighResolutionTicks();
     tickBody(nowSeconds);
     tickWork += juce::Time::highResolutionTicksToSeconds(juce::Time::getHighResolutionTicks() - started);
@@ -190,6 +205,13 @@ void EngineStateFeed::tickBody(double nowSeconds)
         Load l;
         l.callback = engine.callbackStats().summary();
         l.deviceXruns = engine.getDeviceManager().getXRunCount();
+        l.workerThreads = engine.workerThreads();
+        auto busy = engine.workerBusyNanoseconds();
+        if (busy.size() == lastBusy.size() && nowSeconds > lastBusySeconds)
+            for (std::size_t i = 0; i < busy.size(); ++i)
+                l.threadLoads.push_back(static_cast<double>(busy[i] - lastBusy[i]) * 1.0e-9 / (nowSeconds - lastBusySeconds));
+        lastBusy = std::move(busy);
+        lastBusySeconds = nowSeconds;
         // Every interval, changed or not: what's shown with it (the UI's frame times) moves anyway.
         changed |= loadAspect;
         loadState = l;
