@@ -124,6 +124,9 @@ public:
     /** Called when a click on a track's, a return's or the master's header asks to see its
         devices (the shell switches the detail view to the Device view, as Live does). */
     std::function<void()> onShowDevices;
+    /** The tuning badge's menu: "Load Tuning File..." for a track, and "Show in Tuning View". */
+    std::function<void(int track)> onLoadTuning;
+    std::function<void()> onShowTuning;
     /** Renames what's selected (a prompt), for the Rename command. */
     void renameSelection();
 

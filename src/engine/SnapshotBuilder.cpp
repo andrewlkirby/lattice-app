@@ -156,6 +156,7 @@ void SnapshotBuilder::valueTreeRedirected(juce::ValueTree&)
 void SnapshotBuilder::forgetAll()
 {
     tracks.clear();
+    tuningOverrides.clear(); // by track ID, which another set uses for other tracks
     clipCache.clear();
     dirtyClips.clear();
     deviceIndex.clear();
@@ -328,6 +329,25 @@ void SnapshotBuilder::rebuildChain(const juce::ValueTree& owner, TrackCache& cac
     engine.installChain(*cache.processor, build.fresh, build.freshChains, std::move(layout));
 }
 
+void SnapshotBuilder::setTuningOverride(std::int64_t trackId, TuningPtr tuning)
+{
+    if (tuning == nullptr)
+        tuningOverrides.erase(trackId);
+    else
+        tuningOverrides[trackId] = std::move(tuning);
+    if (!dirty)
+    {
+        dirty = true;
+        triggerAsyncUpdate();
+    }
+}
+
+TuningPtr SnapshotBuilder::tuningOverride(std::int64_t trackId) const
+{
+    const auto it = tuningOverrides.find(trackId);
+    return it != tuningOverrides.end() ? it->second : nullptr;
+}
+
 void SnapshotBuilder::setAutoArmTrack(std::int64_t trackId)
 {
     if (trackId == autoArm)
@@ -412,8 +432,11 @@ void SnapshotBuilder::rebuildNow()
         }
 
         // Tuning: re-resolve every time (a tuning file may have been loaded since), publish on change.
+        // The tuning editor's draft, while it's open for this track, comes first.
         const juce::String tuningId = trackNode[ids::tuningId].toString();
-        auto tuning = resolveTuning(tuningId);
+        auto tuning = tuningOverride(ts.id);
+        if (tuning == nullptr)
+            tuning = resolveTuning(tuningId);
         if (tuning != cache.tuning || tuningId != cache.tuningId)
         {
             cache.processor->tuning().setTuning(tuning);
@@ -424,6 +447,9 @@ void SnapshotBuilder::rebuildNow()
         cache.processor->tuning().setHighNotePolicy(static_cast<int>(trackNode[ids::highNotePolicy]) == 1
                                                         ? HighNotePolicy::FoldDown
                                                         : HighNotePolicy::Mute);
+        cache.processor->tuning().setBendMode(LiveSet::bendModeOf(trackNode) == 1 ? BendMode::TableSteps : BendMode::Cents);
+        cache.processor->tuning().setBendRangeCents(static_cast<float>(LiveSet::bendRangeCentsOf(trackNode)));
+        cache.processor->tuning().setBendRangeSteps(static_cast<float>(LiveSet::bendRangeStepsOf(trackNode)));
         if (chainDirty)
             rebuildChain(trackNode, cache);
 

@@ -253,6 +253,7 @@ add_library(lattice_core STATIC
     src/platform/PathsCommon.cpp
     src/tuning/TrackTuning.cpp
     src/tuning/Tet12.cpp
+    src/tuning/TuningEdits.cpp
     src/tuning/TuningRegistry.cpp
     src/tuning/TuningTable.cpp
     src/tuning/parsers/ColundiTextParser.cpp
@@ -352,6 +353,9 @@ add_library(lattice_ui STATIC
     src/ui/shell/StatusBar.cpp
     src/ui/theme/LatticeLookAndFeel.cpp
     src/ui/theme/Theme.cpp
+    src/ui/tuning/TrackTuningControls.cpp
+    src/ui/tuning/TuningDraft.cpp
+    src/ui/tuning/TuningView.cpp
     src/ui/widgets/BoundControl.cpp
     src/ui/widgets/ControlRegistry.cpp
     src/ui/widgets/Fader.cpp

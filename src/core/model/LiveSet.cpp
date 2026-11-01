@@ -599,6 +599,9 @@ juce::ValueTree LiveSet::makeTrack(int number)
     t.setProperty(ids::tuningId, juce::String(), nullptr);
     t.setProperty(ids::noteOffset, 0, nullptr);
     t.setProperty(ids::highNotePolicy, 0, nullptr);
+    t.setProperty(ids::bendMode, 0, nullptr);
+    t.setProperty(ids::bendRangeCents, defaultBendRangeCents, nullptr);
+    t.setProperty(ids::bendRangeSteps, defaultBendRangeSteps, nullptr);
     juce::ValueTree slotsNode(ids::slots);
     for (int s = 0; s < numScenes(); ++s)
         slotsNode.appendChild(makeSlot(), nullptr);
@@ -948,6 +951,21 @@ void LiveSet::setTrackMonitoring(int index, Monitoring m)
 void LiveSet::setTrackHighNotePolicy(int index, int policy)
 {
     track(index).setProperty(ids::highNotePolicy, juce::jlimit(0, 1, policy), undo);
+}
+
+void LiveSet::setTrackBendMode(int index, int mode)
+{
+    track(index).setProperty(ids::bendMode, juce::jlimit(0, 1, mode), undo);
+}
+
+void LiveSet::setTrackBendRangeCents(int index, double cents)
+{
+    track(index).setProperty(ids::bendRangeCents, juce::jlimit(0.0, maxBendRangeCents, cents), undo);
+}
+
+void LiveSet::setTrackBendRangeSteps(int index, double steps)
+{
+    track(index).setProperty(ids::bendRangeSteps, juce::jlimit(0.0, maxBendRangeSteps, steps), undo);
 }
 
 juce::ValueTree LiveSet::master() const

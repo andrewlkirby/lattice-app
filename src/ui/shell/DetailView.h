@@ -7,18 +7,20 @@
 namespace lattice::ui
 {
 
-/** The detail view along the bottom of the window (docs/05-m4-ui.md, 4a): the Clip view or the
-    Device view, one at a time; Shift+Tab switches between them, as in Live. */
+/** The detail view along the bottom of the window (docs/05-m4-ui.md, 4a): the Clip view, the
+    Device view or the Tuning view (4f), one at a time; Shift+Tab switches between the Clip and
+    Device views, as in Live. */
 class DetailView final : public juce::Component
 {
 public:
-    /** device: what shows for the Device view. */
-    DetailView(ClipView& clipView, juce::Component& device);
+    /** device, tuning: what shows for the Device and Tuning views. */
+    DetailView(ClipView& clipView, juce::Component& device, juce::Component& tuning);
 
     enum class Page
     {
         clip,
-        device
+        device,
+        tuning
     };
     Page page() const noexcept { return shown; }
     void show(Page p);
@@ -33,13 +35,15 @@ public:
     /** The switch's two halves (local coordinates). */
     juce::Rectangle<int> clipTab() const noexcept { return clipButton; }
     juce::Rectangle<int> deviceTab() const noexcept { return deviceButton; }
+    juce::Rectangle<int> tuningTab() const noexcept { return tuningButton; }
 
 private:
     ClipView& clip;
     juce::Component& device;
+    juce::Component& tuning;
     Page shown = Page::clip;
     juce::String deviceTitle;
-    juce::Rectangle<int> clipButton, deviceButton;
+    juce::Rectangle<int> clipButton, deviceButton, tuningButton;
 };
 
 } // namespace lattice::ui

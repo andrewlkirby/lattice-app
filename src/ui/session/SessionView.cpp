@@ -115,7 +115,7 @@ void SessionView::rebuildStrips()
         auto strip = std::make_unique<MixerStrip>(session,
                                                   col.kind == SessionLayout::Column::Kind::track ? MixerStrip::Kind::track
                                                                                                  : MixerStrip::Kind::returnTrack,
-                                                  col.index);
+                                                  col.index, &tunings);
         strip->setShowsSends(showSends);
         strip->setShowsIO(showIO);
         stripArea.addAndMakeVisible(*strip);
@@ -464,6 +464,38 @@ juce::PopupMenu SessionView::tuningMenu(int track)
             safe->session.undoManager().beginNewTransaction("Tuning");
             safe->session.set().setTrackTuning(track, id);
         });
+
+    // The rest of the track's tuning settings (as in the mixer's I/O section).
+    const auto node = session.set().track(track);
+    const auto setting = [safe, track](const char* step, std::function<void(LiveSet&)> change) {
+        return [safe, track, step, change = std::move(change)] {
+            if (safe == nullptr || track >= safe->session.set().numTracks())
+                return;
+            safe->session.undoManager().beginNewTransaction(step);
+            change(safe->session.set());
+        };
+    };
+    juce::PopupMenu high, bend;
+    const int policy = static_cast<int>(node[ids::highNotePolicy]);
+    high.addItem("Mute", true, policy == 0, setting("High Notes", [track](LiveSet& s) { s.setTrackHighNotePolicy(track, 0); }));
+    high.addItem("Fold Down", true, policy == 1, setting("High Notes", [track](LiveSet& s) { s.setTrackHighNotePolicy(track, 1); }));
+    const int mode = LiveSet::bendModeOf(node);
+    bend.addItem("Cents (" + juce::String(juce::roundToInt(LiveSet::bendRangeCentsOf(node))) + ")", true, mode == 0,
+                 setting("Pitch Bend", [track](LiveSet& s) { s.setTrackBendMode(track, 0); }));
+    bend.addItem("Table Steps (" + juce::String(LiveSet::bendRangeStepsOf(node), 2) + ")", true, mode == 1,
+                 setting("Pitch Bend", [track](LiveSet& s) { s.setTrackBendMode(track, 1); }));
+    menu.addSeparator();
+    menu.addSubMenu("High Notes", high);
+    menu.addSubMenu("Pitch Bend", bend);
+    menu.addSeparator();
+    menu.addItem("Load Tuning File...", onLoadTuning != nullptr, false, [safe, track] {
+        if (safe != nullptr && safe->onLoadTuning)
+            safe->onLoadTuning(track);
+    });
+    menu.addItem("Show in Tuning View", onShowTuning != nullptr, false, [safe] {
+        if (safe != nullptr && safe->onShowTuning)
+            safe->onShowTuning();
+    });
     return menu;
 }
 

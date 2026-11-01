@@ -2,6 +2,7 @@
 
 #include "engine/SessionController.h"
 #include "ui/feed/EngineStateFeed.h"
+#include "ui/tuning/TrackTuningControls.h"
 #include "ui/widgets/Fader.h"
 #include "ui/widgets/Knob.h"
 #include "ui/widgets/NumberBox.h"
@@ -20,7 +21,8 @@ namespace lattice::ui
     track, return or the master:
 
     - I/O (a MIDI track's): where its live MIDI comes from (every input, the computer keyboard, or
-      one MIDI input), on which channel, and its monitoring (In, Auto, Off).
+      one MIDI input), on which channel, and its monitoring (In, Auto, Off); then its tuning, high
+      notes and pitch bend (TrackTuningControls, 4f), given the tuning registry.
     - Sends: a knob per return, with the return's name and the level in dB (the M3 hands-on
       checks found unlabelled sends hard to use).
     - Main: pan; the fader with its meter and a dB box; the track activator (lit while the track
@@ -40,7 +42,7 @@ public:
         master
     };
 
-    MixerStrip(SessionController& session, Kind kind, int index);
+    MixerStrip(SessionController& session, Kind kind, int index, TuningRegistry* tunings = nullptr);
 
     Kind kind() const noexcept { return stripKind; }
     int index() const noexcept { return stripIndex; }
@@ -59,6 +61,8 @@ public:
 
     /** The height the strip wants with the I/O and sends shown or not, in the theme's sizes. */
     static int heightFor(const juce::Component& themed, int numReturns, bool showSends, bool showIO);
+    /** The I/O section's rows: MIDI from, channel, monitoring and the tuning settings' three. */
+    static constexpr int ioRows = 3 + TrackTuningControls::stackedRows;
 
     Fader* fader() noexcept { return volume.get(); }
     Knob* panKnob() noexcept { return pan.get(); }
@@ -72,6 +76,8 @@ public:
     NumberBox* channelBox() noexcept { return channel.get(); }
     /** The monitoring button for Auto, In or Off. */
     Toggle* monitorButton(Monitoring m) noexcept { return monitor[static_cast<std::size_t>(m)].get(); }
+    /** The track's tuning settings (a MIDI track's, given the registry). */
+    TrackTuningControls* tuningControls() noexcept { return tuning.get(); }
     bool feedsSidechain() const noexcept { return sidechainBadge; }
 
     void paint(juce::Graphics&) override;
@@ -94,6 +100,7 @@ private:
     std::unique_ptr<Toggle> on, solo, arm, pre;
     std::unique_ptr<NumberBox> input, channel;
     std::array<std::unique_ptr<Toggle>, 3> monitor; // by Monitoring
+    std::unique_ptr<TrackTuningControls> tuning;
 };
 
 } // namespace lattice::ui

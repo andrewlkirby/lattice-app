@@ -7,11 +7,12 @@
 namespace lattice::ui
 {
 
-DetailView::DetailView(ClipView& c, juce::Component& d) : clip(c), device(d)
+DetailView::DetailView(ClipView& c, juce::Component& d, juce::Component& t) : clip(c), device(d), tuning(t)
 {
     setTitle("Detail view");
     addAndMakeVisible(clip);
     addChildComponent(device);
+    addChildComponent(tuning);
 }
 
 void DetailView::show(Page p)
@@ -19,6 +20,7 @@ void DetailView::show(Page p)
     shown = p;
     clip.setVisible(p == Page::clip);
     device.setVisible(p == Page::device);
+    tuning.setVisible(p == Page::tuning);
     repaint();
 }
 
@@ -36,8 +38,10 @@ void DetailView::resized()
     const int tabWidth = juce::roundToInt(t.controlHeight * 3.0f);
     clipButton = strip.removeFromLeft(tabWidth);
     deviceButton = strip.removeFromLeft(tabWidth);
+    tuningButton = strip.removeFromLeft(tabWidth);
     clip.setBounds(r);
     device.setBounds(r);
+    tuning.setBounds(r);
 }
 
 void DetailView::paint(juce::Graphics& g)
@@ -48,7 +52,8 @@ void DetailView::paint(juce::Graphics& g)
     g.setColour(t.surfaceRaised);
     g.fillRect(strip);
     g.setFont(t.font(t.fontSmall));
-    for (const auto& [r, name, on] : {std::tuple{clipButton, "Clip", shown == Page::clip}, std::tuple{deviceButton, "Device", shown == Page::device}})
+    for (const auto& [r, name, on] : {std::tuple{clipButton, "Clip", shown == Page::clip}, std::tuple{deviceButton, "Device", shown == Page::device},
+                                      std::tuple{tuningButton, "Tuning", shown == Page::tuning}})
     {
         if (on)
         {
@@ -63,7 +68,7 @@ void DetailView::paint(juce::Graphics& g)
     if (shown == Page::device && deviceTitle.isNotEmpty())
     {
         g.setColour(t.textDim);
-        g.drawText(deviceTitle, strip.withLeft(deviceButton.getRight()).reduced(juce::roundToInt(t.padding), 0),
+        g.drawText(deviceTitle, strip.withLeft(tuningButton.getRight()).reduced(juce::roundToInt(t.padding), 0),
                    juce::Justification::centredLeft, true);
     }
     g.setColour(t.border);
@@ -76,6 +81,8 @@ void DetailView::mouseDown(const juce::MouseEvent& e)
         show(Page::clip);
     else if (deviceButton.contains(e.getPosition()))
         show(Page::device);
+    else if (tuningButton.contains(e.getPosition()))
+        show(Page::tuning);
 }
 
 } // namespace lattice::ui

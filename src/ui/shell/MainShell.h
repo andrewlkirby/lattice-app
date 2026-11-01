@@ -14,6 +14,7 @@
 #include "ui/shell/InfoView.h"
 #include "ui/shell/StatusBar.h"
 #include "ui/theme/LatticeLookAndFeel.h"
+#include "ui/tuning/TuningView.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -60,6 +61,7 @@ public:
     DetailView& detailView() noexcept { return *detail; }
     ClipView& clipView() noexcept { return *clip; }
     DeviceView& deviceView() noexcept { return *devices; }
+    TuningView& tuningView() noexcept { return *tunings_; }
     BrowserView& browserView() noexcept { return *browser; }
     library::Library& library() noexcept { return *libraryService; }
     /** Inserts what the browser names (a drag description) where the Device view is looking; a
@@ -75,6 +77,12 @@ public:
     void showDeviceView();
     /** Shows the Clip view with the selected clip, and gives it the keys (double-clicking a clip). */
     void showClipView();
+    /** Shows the Tuning view (with the selected track's tuning). */
+    void showTuningView();
+    /** Asks for a tuning file (.scl or Colundi .txt) and gives it to a track. */
+    void chooseTuningFile(int track);
+    /** Where the tuning editor saves (the User Library's Tunings folder, which the browser shows). */
+    juce::File userTuningsFolder() const;
 
     /** The old views, in a "Debug UI" tab, until the new ones cover everything they do. */
     void setDebugUi(juce::Component* debugUi);
@@ -129,6 +137,10 @@ private:
     class Placeholder;
 
     void addViewCommands();
+    void addTuningCommands();
+    /** A question with a text answer (an asynchronous dialog). */
+    void askText(const juce::String& title, const juce::String& message, const juce::String& initial,
+                 std::function<void(const juce::String&)> answer);
     void selectionChanged(const SessionSelection& now) override;
     /** Also the global mouse listener's: every move anywhere, shown if it's inside this window. */
     void mouseMove(const juce::MouseEvent&) override;
@@ -162,6 +174,7 @@ private:
     std::unique_ptr<BrowserView> browser;
     std::unique_ptr<DeviceContext> deviceShared;
     std::unique_ptr<DeviceView> devices;
+    std::unique_ptr<TuningView> tunings_;
     std::unique_ptr<juce::FileChooser> chooser;
     std::unique_ptr<DetailView> detail; // after what it shows, so it goes first
     juce::Rectangle<int> detailDivider, browserDivider;

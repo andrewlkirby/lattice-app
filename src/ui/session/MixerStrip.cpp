@@ -62,7 +62,7 @@ std::vector<MixerStrip::MidiInputInfo> MixerStrip::availableMidiInputs()
     return out;
 }
 
-MixerStrip::MixerStrip(SessionController& s, Kind k, int i) : session(s), stripKind(k), stripIndex(i)
+MixerStrip::MixerStrip(SessionController& s, Kind k, int i, TuningRegistry* tunings) : session(s), stripKind(k), stripIndex(i)
 {
     auto& set = session.set();
     auto* undo = &session.undoManager();
@@ -113,6 +113,11 @@ MixerStrip::MixerStrip(SessionController& s, Kind k, int i) : session(s), stripK
         addAndMakeVisible(*channel);
         for (auto& b : monitor)
             addAndMakeVisible(*b);
+        if (tunings != nullptr)
+        {
+            tuning = std::make_unique<TrackTuningControls>(session, *tunings, i, TrackTuningControls::Layout::stacked);
+            addAndMakeVisible(*tuning);
+        }
     }
 
     // Sends: a track's, to each return.
@@ -194,7 +199,7 @@ void MixerStrip::setShowsIO(bool show)
     showIO = show;
     for (juce::Component* c : {static_cast<juce::Component*>(input.get()), static_cast<juce::Component*>(channel.get()),
                                static_cast<juce::Component*>(monitor[0].get()), static_cast<juce::Component*>(monitor[1].get()),
-                               static_cast<juce::Component*>(monitor[2].get())})
+                               static_cast<juce::Component*>(monitor[2].get()), static_cast<juce::Component*>(tuning.get())})
         if (c != nullptr)
             c->setVisible(show);
     resized();
@@ -221,7 +226,9 @@ int MixerStrip::heightFor(const juce::Component& themed, int numReturns, bool wi
 {
     const auto& t = themeOf(themed);
     const float knob = t.controlHeight * 1.6f + 2.0f * (t.fontSmall + 4.0f) + t.spacing;
-    const float ioHeight = withIO ? 3.0f * (t.controlHeight + t.spacing) + t.spacing : 0.0f;
+    // MIDI from, channel, monitoring; then the tuning settings (with a gap between).
+    const auto rows = static_cast<float>(ioRows);
+    const float ioHeight = withIO ? rows * (t.controlHeight + t.spacing) + t.spacing * 3.0f : 0.0f;
     const float sendsHeight = ioHeight + (withSends ? static_cast<float>(numReturns) * (knob * 0.75f) : 0.0f);
     const float main = knob * 0.8f + t.controlHeight * 7.0f + t.controlHeight + t.spacing * 4.0f;
     return juce::roundToInt(sendsHeight + main + t.padding * 2.0f);
@@ -247,9 +254,15 @@ void MixerStrip::resized()
             const int third = row.getWidth() / 3;
             for (auto& b : monitor)
                 b->setBounds(row.removeFromLeft(third).reduced(1, 0));
+            area.removeFromTop(gap * 3);
+            const int tuningHeight = TrackTuningControls::stackedRows * (h + gap) - gap;
+            if (tuning != nullptr)
+                tuning->setBounds(area.removeFromTop(tuningHeight));
+            else
+                area.removeFromTop(tuningHeight);
         }
         else
-            area.removeFromTop(3 * (h + gap) - gap); // keeps the strips lined up
+            area.removeFromTop(ioRows * (h + gap) - gap + gap * 2); // keeps the strips lined up
         area.removeFromTop(gap * 2);
     }
     if (showSends)

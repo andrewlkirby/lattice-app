@@ -424,7 +424,10 @@ bool dispatchNextMessageOnSystemQueue(bool returnIfNoPendingMessages); // juce_e
 
 TEST_CASE("Hands-on 4e, 5.7: with the keys in the browser, letters play the computer keyboard", "[app][handson]")
 {
-    // Through the window's peer, as Windows sends keys: to the focused component, then up.
+    // Through the window's peer, as Windows sends keys: to the focused component, then up. A dialog
+    // another test left open would be modal and take the keys (a test once left an alert up).
+    INFO("a dialog is still open from an earlier test");
+    REQUIRE(juce::ModalComponentManager::getInstance()->getNumModalComponents() == 0);
     App app;
     app.window->addToDesktop(juce::ComponentPeer::windowIsTemporary);
     app.window->setVisible(true);

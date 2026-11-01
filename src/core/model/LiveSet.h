@@ -66,6 +66,9 @@ inline const juce::Identifier arm{"arm"};
 inline const juce::Identifier tuningId{"tuningId"};
 inline const juce::Identifier noteOffset{"noteOffset"};
 inline const juce::Identifier highNotePolicy{"highNotePolicy"};
+inline const juce::Identifier bendMode{"bendMode"};             // 0 cents, 1 table steps (BendMode)
+inline const juce::Identifier bendRangeCents{"bendRangeCents"}; // the bend's reach in Cents mode
+inline const juce::Identifier bendRangeSteps{"bendRangeSteps"}; // and in Table Steps mode
 inline const juce::Identifier trackKind{"kind"};  // "group" for a group track; absent for a MIDI track
 inline const juce::Identifier groupId{"groupId"}; // the ID of the group track a track is in (0: none)
 inline const juce::Identifier folded{"folded"};   // a group track shown folded (not undoable)
@@ -289,6 +292,23 @@ public:
     void setTrackTuning(int index, const juce::String& tuningId);
     void setTrackNoteOffset(int index, int offset);
     void setTrackHighNotePolicy(int index, int policy);
+    /** Pitch bend: 0 in cents, 1 in table steps (BendMode), and how far a full bend reaches in
+        each (both are kept, so switching back finds the range used before). */
+    void setTrackBendMode(int index, int mode);
+    void setTrackBendRangeCents(int index, double cents);
+    void setTrackBendRangeSteps(int index, double steps);
+    static constexpr double defaultBendRangeCents = 200.0, maxBendRangeCents = 4800.0;
+    static constexpr double defaultBendRangeSteps = 2.0, maxBendRangeSteps = 48.0;
+    /** A track's bend settings, with the defaults for sets saved before they existed. */
+    static int bendModeOf(const juce::ValueTree& track) { return static_cast<int>(track.getProperty(ids::bendMode, 0)); }
+    static double bendRangeCentsOf(const juce::ValueTree& track)
+    {
+        return static_cast<double>(track.getProperty(ids::bendRangeCents, defaultBendRangeCents));
+    }
+    static double bendRangeStepsOf(const juce::ValueTree& track)
+    {
+        return static_cast<double>(track.getProperty(ids::bendRangeSteps, defaultBendRangeSteps));
+    }
     /** Where a track's live MIDI comes from: "" for every input, "computer" for the computer and
         on-screen keyboards, or a MIDI input's identifier. */
     void setTrackMidiInput(int index, const juce::String& input);

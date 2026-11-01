@@ -46,6 +46,10 @@ public:
         armed in the document. Not part of the document (no undo step, nothing to save). */
     void setAutoArmTrack(std::int64_t trackId);
     std::int64_t autoArmTrack() const noexcept { return autoArm; }
+    /** A tuning a track plays instead of the one the document names (nullptr: none), while the
+        tuning editor's draft is open for it (docs/05-m4-ui.md, 4f). Not part of the document. */
+    void setTuningOverride(std::int64_t trackId, TuningPtr tuning);
+    TuningPtr tuningOverride(std::int64_t trackId) const;
     void rebuildNow();
     /** Forces a rebuild on the next turn (e.g. a tuning file was loaded that tracks may refer to). */
     void invalidate() { markDirty(set.state()); }
@@ -119,6 +123,7 @@ private:
     const DeviceRegistry& registry;
     bool dirty = true;
     std::int64_t autoArm = 0;
+    std::unordered_map<std::int64_t, TuningPtr> tuningOverrides; // by track ID
     bool allChainsDirty = true;
     std::unordered_set<std::int64_t> dirtyChains; // IDs of chain owners (tracks)
     std::unordered_map<std::int64_t, StudioDevice*> deviceIndex;

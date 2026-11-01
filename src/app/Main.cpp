@@ -47,6 +47,8 @@ public:
 
         tunings = std::make_unique<TuningRegistry>();
         tunings->loadFolder(paths.userData.getChildFile("Tunings"));
+        // What the tuning editor saved (docs/05-m4-ui.md, 4f): in the User Library, where the browser shows it.
+        tunings->loadFolder(paths.userData.getChildFile("Library").getChildFile("Tunings"));
         PlayPanel::loadRememberedTunings(*tunings, *settings);
         timeline.mark("tunings loaded");
 

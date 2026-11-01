@@ -52,6 +52,8 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
                         [this]() -> EditTarget* {
                             if (auto* t = clip != nullptr ? clip->editTargetIfFocused() : nullptr)
                                 return t;
+                            if (auto* t = tunings_ != nullptr ? tunings_->editTargetIfFocused() : nullptr)
+                                return t;
                             return devices != nullptr ? devices->editTargetIfFocused() : nullptr;
                         }},
                        std::move(actions));
@@ -105,7 +107,23 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
     };
     deviceShared->peaks = &libraryService->peaks();
     devices = std::make_unique<DeviceView>(*deviceShared, selected);
-    detail = std::make_unique<DetailView>(*clip, *devices);
+    TuningView::Actions tuningActions;
+    tuningActions.sampleRate = [this] {
+        auto* device = engine.getDeviceManager().getCurrentAudioDevice();
+        return device != nullptr ? device->getCurrentSampleRate() : 48000.0;
+    };
+    // Through the device context's, whatever it is at the time (tests answer it themselves).
+    tuningActions.confirm = [this](const juce::String& title, const juce::String& message, const juce::String& yes,
+                                   std::function<void()> then) {
+        if (deviceShared->confirm)
+            deviceShared->confirm(title, message, yes, std::move(then));
+    };
+    tuningActions.ask = [this](const juce::String& title, const juce::String& message, const juce::String& initial,
+                               std::function<void(const juce::String&)> answer) { askText(title, message, initial, std::move(answer)); };
+    tuningActions.loadFile = [this](int track) { chooseTuningFile(track); };
+    tuningActions.userTunings = userTuningsFolder();
+    tunings_ = std::make_unique<TuningView>(session, tunings, selected, std::move(tuningActions));
+    detail = std::make_unique<DetailView>(*clip, *devices, *tunings_);
     devices->onTitleChanged = [this](const juce::String& title) { detail->setDeviceTitle(title); };
     detail->setDeviceTitle(devices->ownerName());
     devices->onShowRequested = [this] { showDeviceView(); };
@@ -125,6 +143,14 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
     };
     session_->onBrowserDrop = [this](const SessionView::Hit& hit, const juce::String& description) {
         return dropFromBrowser(hit, description);
+    };
+    session_->onLoadTuning = [this](int track) { chooseTuningFile(track); };
+    session_->onShowTuning = [this] { showTuningView(); };
+    addTuningCommands();
+    session.onSetReplaced = [this, before = session.onSetReplaced] {
+        tunings_->setReplaced();
+        if (before)
+            before();
     };
 
     BrowserView::Actions browsing;
@@ -182,6 +208,7 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
 
 MainShell::~MainShell()
 {
+    session.onSetReplaced = nullptr;
     browser.reset(); // it plays through the engine and reads the library
     selected.removeListener(this);
     juce::Desktop::getInstance().removeGlobalMouseListener(this);
@@ -323,6 +350,118 @@ void MainShell::addViewCommands()
                       .perform = [this, t] { setTheme(*t); },
                       .isTicked = [this, themeName] { return theme().name == themeName; }});
     }
+}
+
+void MainShell::addTuningCommands()
+{
+    using juce::KeyPress;
+    using juce::ModifierKeys;
+    const auto editing = [this] { return tunings_ != nullptr && tunings_->isEditing(); };
+    const auto hasTrack = [this] {
+        const auto s = selected.get();
+        return s.kind != SessionSelection::Kind::scene && s.track >= 0 && s.track < session.set().numTracks() &&
+               !session.set().isGroupTrack(s.track);
+    };
+    registry.add({.id = "view.tuning",
+                  .name = "Show Tuning View",
+                  .category = "View",
+                  .description = "Shows the selected track's tuning in the detail view: every entry, and the tuning editor.",
+                  .defaultKeys = {KeyPress('t', ModifierKeys::commandModifier | ModifierKeys::altModifier, 0)},
+                  .perform = [this] { showTuningView(); },
+                  .isTicked = [this] { return showDetail && detail != nullptr && detail->page() == DetailView::Page::tuning; }});
+    registry.add({.id = "tuning.load",
+                  .name = "Load Tuning File...",
+                  .category = "Tuning",
+                  .description = "Loads a Scala (.scl) or Colundi (.txt) tuning file and gives it to the selected track.",
+                  .perform = [this] { chooseTuningFile(selected.get().track); },
+                  .isEnabled = hasTrack});
+    registry.add({.id = "tuning.duplicate",
+                  .name = "Duplicate Tuning to Edit",
+                  .category = "Tuning",
+                  .description = "Makes a copy of the selected track's tuning in the Tuning view, to edit and save as your own.",
+                  .perform =
+                      [this] {
+                          showTuningView();
+                          tunings_->duplicate();
+                      },
+                  .isEnabled = [hasTrack, editing] { return hasTrack() && !editing(); }});
+    registry.add({.id = "tuning.edit",
+                  .name = "Edit Tuning",
+                  .category = "Tuning",
+                  .description = "Edits the selected track's tuning in the Tuning view, if it's one you saved from the editor.",
+                  .perform =
+                      [this] {
+                          showTuningView();
+                          tunings_->editInPlace();
+                      },
+                  .isEnabled = [this] { return tunings_ != nullptr && tunings_->canEditInPlace(); }});
+    registry.add({.id = "tuning.save",
+                  .name = "Save Tuning",
+                  .category = "Tuning",
+                  .description = "Saves the tuning being edited to your Tunings folder and gives it to its track.",
+                  .perform = [this] { tunings_->save(); },
+                  .isEnabled = editing});
+    registry.add({.id = "tuning.discard",
+                  .name = "Discard Tuning Changes",
+                  .category = "Tuning",
+                  .description = "Drops the tuning being edited; its track plays its own tuning again.",
+                  .perform = [this] { tunings_->discard(); },
+                  .isEnabled = editing});
+    registry.add({.id = "tuning.copyTable",
+                  .name = "Copy Tuning Table",
+                  .category = "Tuning",
+                  .description = "Copies the Tuning view's rows (or the selected ones) as tab-separated text.",
+                  .perform = [this] { tunings_->copyToClipboard(); },
+                  .isEnabled = [this] { return tunings_ != nullptr && tunings_->shown() != nullptr; }});
+}
+
+juce::File MainShell::userTuningsFolder() const
+{
+    return libraryService->userLibrary().getChildFile("Tunings");
+}
+
+void MainShell::showTuningView()
+{
+    if (!showDetail)
+        setDetailVisible(true);
+    detail->show(DetailView::Page::tuning);
+    tunings_->flushUpdates();
+    if (tunings_->tableComponent().isShowing())
+        tunings_->tableComponent().grabKeyboardFocus();
+}
+
+void MainShell::chooseTuningFile(int track)
+{
+    if (track < 0 || track >= session.set().numTracks() || session.set().isGroupTrack(track))
+        return;
+    const auto trackId = session.set().trackId(track);
+    chooser = std::make_unique<juce::FileChooser>("Load a tuning file", juce::File::getSpecialLocation(juce::File::userMusicDirectory),
+                                                  "*.scl;*.txt");
+    chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                         [this, trackId, before = focusToRestore()](const juce::FileChooser& fc) {
+                             // By ID: the set may have changed while the dialog was open.
+                             auto& set = session.set();
+                             for (int t = 0; t < set.numTracks(); ++t)
+                                 if (set.trackId(t) == trackId && fc.getResult().existsAsFile())
+                                     setTrackTuningFrom(t, fc.getResult().getFullPathName());
+                             restoreFocusLater(before);
+                         });
+}
+
+void MainShell::askText(const juce::String& title, const juce::String& message, const juce::String& initial,
+                        std::function<void(const juce::String&)> answer)
+{
+    auto* window = new juce::AlertWindow(title, message, juce::MessageBoxIconType::QuestionIcon, this);
+    window->addTextEditor("answer", initial);
+    window->addButton("OK", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    window->enterModalState(true,
+                            juce::ModalCallbackFunction::create([window, answer = std::move(answer), this, before = focusToRestore()](int result) {
+                                if (result == 1 && answer)
+                                    answer(window->getTextEditorContents("answer"));
+                                restoreFocusLater(before);
+                            }),
+                            true);
 }
 
 void MainShell::setAutoArm(bool on)

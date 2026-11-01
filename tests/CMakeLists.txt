@@ -37,11 +37,13 @@ add_executable(lattice_tests
     engine/SessionEngineTests.cpp
     engine/SnapshotStressTests.cpp
     engine/TestToneTests.cpp
+    engine/TrackTuningSettingsTests.cpp
     library/LibraryTests.cpp
     platform/PathsTests.cpp
     resources/ResourceTests.cpp
     tuning/ColundiParserTests.cpp
     tuning/ScalaAndRegistryTests.cpp
+    tuning/TuningEditsTests.cpp
     tuning/TrackTuningTests.cpp
     ui/BrowserTests.cpp
     ui/ClipViewTests.cpp
@@ -51,6 +53,7 @@ add_executable(lattice_tests
     ui/SessionViewTests.cpp
     ui/ShellTests.cpp
     ui/ThemeTests.cpp
+    ui/TuningViewTests.cpp
     ui/WidgetTests.cpp)
 target_include_directories(lattice_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(lattice_tests PRIVATE lattice_core lattice_debug_ui lattice_ui lattice_app Catch2::Catch2)

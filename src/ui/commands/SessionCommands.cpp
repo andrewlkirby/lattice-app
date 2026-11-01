@@ -134,20 +134,22 @@ void addSessionCommands(CommandRegistry& registry, SessionController& session, S
                   .perform = [&session] { session.stopAllClips(); }});
 
     // --- Edit -----------------------------------------------------------------------------------
-    registry.add({.id = "edit.undo",
-                  .name = "Undo",
-                  .category = "Edit",
-                  .description = "Undoes the last change.",
-                  .defaultKeys = {ctrl('z')},
-                  .perform = [&undo] { undo.undo(); },
-                  .isEnabled = [&undo] { return undo.canUndo(); }});
-    registry.add({.id = "edit.redo",
-                  .name = "Redo",
-                  .category = "Edit",
-                  .description = "Redoes the last undone change.",
-                  .defaultKeys = {ctrl('y'), ctrlShift('z')},
-                  .perform = [&undo] { undo.redo(); },
-                  .isEnabled = [&undo] { return undo.canRedo(); }});
+    // Undo and Redo: the view with the keys takes them if it has a history of its own (the Tuning
+    // view's copy of a tuning); otherwise the set's.
+    registry.add(routedIfTaken({.id = "edit.undo",
+                                .name = "Undo",
+                                .category = "Edit",
+                                .description = "Undoes the last change.",
+                                .defaultKeys = {ctrl('z')},
+                                .perform = [&undo] { undo.undo(); },
+                                .isEnabled = [&undo] { return undo.canUndo(); }}));
+    registry.add(routedIfTaken({.id = "edit.redo",
+                                .name = "Redo",
+                                .category = "Edit",
+                                .description = "Redoes the last undone change.",
+                                .defaultKeys = {ctrl('y'), ctrlShift('z')},
+                                .perform = [&undo] { undo.redo(); },
+                                .isEnabled = [&undo] { return undo.canRedo(); }}));
     // A clipboard of clips, as offsets from the copied range's top-left slot.
     struct ClipboardCell
     {

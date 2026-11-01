@@ -4,7 +4,7 @@ namespace lattice::ui
 {
 namespace
 {
-const juce::StringArray categoryOrder{"File", "Edit", "Create", "Session", "Clip", "Device", "Transport", "View"};
+const juce::StringArray categoryOrder{"File", "Edit", "Create", "Session", "Clip", "Device", "Tuning", "Transport", "View"};
 }
 
 CommandMenus::CommandMenus(CommandRegistry& registry) : commands(registry)
