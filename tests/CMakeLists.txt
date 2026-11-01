@@ -52,7 +52,9 @@ add_executable(lattice_tests
     ui/SessionViewTests.cpp
     ui/ShellTests.cpp
     ui/FilesTests.cpp
+    ui/EngineEditTests.cpp
     ui/FindTests.cpp
+    ui/UndoFuzzTests.cpp
     ui/UndoNamesTests.cpp
     ui/MappingTests.cpp
     ui/PreferencesTests.cpp
