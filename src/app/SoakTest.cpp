@@ -40,6 +40,7 @@ bool SoakTest::parseCommandLine(const juce::String& commandLine, Options& option
         options.levelDb = v.getFloatValue();
     options.uiStress = args.contains("--ui-stress");
     options.setFile = valueOf("--set");
+    options.recordFile = valueOf("--record");
     return true;
 }
 
@@ -51,6 +52,41 @@ SoakTest::SoakTest(AudioEngine& e, Options o, juce::File log, std::function<void
 SoakTest::~SoakTest()
 {
     stopTimer();
+    stopRecording();
+}
+
+void SoakTest::startRecording()
+{
+    auto* device = engine.getDeviceManager().getCurrentAudioDevice();
+    if (options.recordFile.isEmpty() || device == nullptr)
+        return;
+    const auto file = juce::File::getCurrentWorkingDirectory().getChildFile(options.recordFile);
+    file.deleteFile();
+    std::unique_ptr<juce::OutputStream> stream = file.createOutputStream();
+    if (stream == nullptr)
+        return;
+    juce::WavAudioFormat wav;
+    auto writer = wav.createWriterFor(stream, juce::AudioFormatWriterOptions{}
+                                                  .withSampleRate(device->getCurrentSampleRate())
+                                                  .withNumChannels(2)
+                                                  .withBitsPerSample(24));
+    if (writer == nullptr)
+        return;
+    recordThread.startThread();
+    recorder = std::make_unique<Recorder>();
+    // A second of audio in the FIFO: the background thread writes it out.
+    recorder->writer = std::make_unique<juce::AudioFormatWriter::ThreadedWriter>(
+        writer.release(), recordThread, juce::roundToInt(device->getCurrentSampleRate()));
+    engine.setOutputTap(recorder.get());
+}
+
+void SoakTest::stopRecording()
+{
+    if (recorder == nullptr)
+        return;
+    engine.setOutputTap(nullptr);
+    recorder.reset(); // the writer writes what's left and closes the file
+    recordThread.stopThread(2000);
 }
 
 void SoakTest::start()
@@ -134,6 +170,7 @@ void SoakTest::timerCallback()
         measuring = true;
         overrunsSeen = 0;
         xrunsSeen = 0;
+        startRecording(); // from the start line's time
         writeLine("start");
         return;
     }
@@ -214,6 +251,7 @@ void SoakTest::writeLine(const juce::String& kind)
 void SoakTest::finish()
 {
     stopTimer();
+    stopRecording();
     engine.testTone().setEnabled(false);
 
     const auto s = engine.callbackStats().summary();

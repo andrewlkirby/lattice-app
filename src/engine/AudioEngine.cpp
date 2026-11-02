@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <thread>
 #include <utility>
 
 namespace lattice
@@ -214,6 +215,15 @@ void AudioEngine::publishSnapshot(std::shared_ptr<const EngineSnapshot> snapshot
     noteActivity();
 }
 
+void AudioEngine::setOutputTap(OutputTap* tap)
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+    outputTap.store(tap);
+    // A callback that took the old tap counted itself first: once none is counted, none has it.
+    while (outputTapUsers.load() != 0)
+        std::this_thread::yield();
+}
+
 void AudioEngine::addActivityListener(juce::AsyncUpdater* listener)
 {
     RT_ASSERT_NOT_AUDIO_THREAD();
@@ -329,6 +339,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext(const float* const* inputs, i
     const auto start = std::chrono::steady_clock::now();
     process(outputs, numOutputs, numSamples);
     const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+
+    // Counted before the tap is read, so setOutputTap() can tell when the old one is free.
+    outputTapUsers.fetch_add(1);
+    if (auto* tap = outputTap.load())
+        tap->write(outputs, numOutputs, numSamples);
+    outputTapUsers.fetch_sub(1);
 
     stats.recordCallback(elapsed, static_cast<double>(numSamples) / sampleRate);
 }

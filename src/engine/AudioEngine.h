@@ -95,6 +95,17 @@ public:
         so less often while nothing happens, and wakes on this: each listener's update is
         triggered. Any thread but the audio thread. */
     void addActivityListener(juce::AsyncUpdater* listener);
+
+    /** Something that takes what the device plays, each callback, on the audio thread (the soak's
+        recording: SoakTest). It must not block or allocate. */
+    struct OutputTap
+    {
+        virtual ~OutputTap() = default;
+        virtual void write(const float* const* channels, int numChannels, int numSamples) noexcept = 0;
+    };
+    /** From the next callback on (nullptr: none). Message thread; returns once the audio thread
+        no longer uses the tap before, so it can be deleted. */
+    void setOutputTap(OutputTap* tap);
     void removeActivityListener(const juce::AsyncUpdater* listener);
     void noteActivity();
     /** Message thread (the single consumer). Events from the audio thread. */
@@ -178,6 +189,8 @@ private:
     std::mutex remoteLock; // MIDI threads and the message thread; never the audio thread
     std::mutex activityLock; // the same threads
     std::vector<juce::AsyncUpdater*> activityListeners;
+    std::atomic<OutputTap*> outputTap{nullptr};
+    std::atomic<int> outputTapUsers{0}; // callbacks between taking the tap and finishing with it
     juce::StringArray remoteInputs, nonTrackInputs;
     std::vector<RemoteMidi> remoteInbox;
     MidiInputQueue midiQueue;

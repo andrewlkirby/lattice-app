@@ -2,6 +2,8 @@
 
 #include "engine/AudioEngine.h"
 
+#include <juce_audio_formats/juce_audio_formats.h>
+
 #include <juce_events/juce_events.h>
 
 #include <functional>
@@ -30,10 +32,12 @@ public:
             setFile plays while UiStress works the window. */
         bool uiStress = false;
         juce::String setFile;
+        /** A WAV file of what the device plays, from the start line to the result (24-bit). */
+        juce::String recordFile;
     };
 
     /** Reads --soak-seconds, --buffer-size, --sample-rate, --device-type, --device-name,
-        --soak-level-db, --ui-stress and --set. Returns false if --soak-seconds is absent. */
+        --soak-level-db, --ui-stress, --set and --record. Returns false if --soak-seconds is absent. */
     static bool parseCommandLine(const juce::String& commandLine, Options& options);
 
     SoakTest(AudioEngine& engine, Options options, juce::File logFile, std::function<void(bool passed)> onFinished);
@@ -48,6 +52,21 @@ private:
     void timerCallback() override;
     void writeLine(const juce::String& kind);
     void finish();
+    void startRecording();
+    void stopRecording();
+
+    /** What the device plays, into the WAV file (lock-free on the audio thread). */
+    struct Recorder final : AudioEngine::OutputTap
+    {
+        std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> writer;
+        void write(const float* const* channels, int numChannels, int numSamples) noexcept override
+        {
+            if (numChannels >= 2)
+                writer->write(channels, numSamples);
+        }
+    };
+    juce::TimeSliceThread recordThread{"Lattice soak recording"};
+    std::unique_ptr<Recorder> recorder;
 
     AudioEngine& engine;
     Options options;

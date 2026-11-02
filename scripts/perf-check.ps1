@@ -15,6 +15,9 @@
     "Windows Audio (Low Latency Mode)" or "ASIO", and -DeviceName the device (for ASIO, the driver:
     "ASIO4ALL v2" or "FlexASIO").
 
+    -Record FILE writes what the device plays to a WAV file, from the start line to the result;
+    -LevelDb sets the tone's level, or the master fader's with -UiStress (default -40 dB).
+
     UI stress (-Soak -UiStress, docs/05-m4-ui.md Tests 11): instead of the tone, the reference set
     plays (written first by lattice_engine_bench --write-set; the master fader at -40 dB) while the
     window is worked every frame (src/app/UiStress.h). Same pass rule: 0 overruns, 0 xruns.
@@ -41,7 +44,9 @@ param(
     [int]$BufferSize = 64,
     [double]$SampleRate = 0,
     [string]$DeviceType = '',
-    [string]$DeviceName = ''
+    [string]$DeviceName = '',
+    [string]$Record = '',
+    [double]$LevelDb = 0
 )
 $ErrorActionPreference = 'Stop'
 
@@ -62,6 +67,8 @@ if ($Soak) {
     if ($DeviceType) { $soakArgs += @('--device-type', ('"{0}"' -f $DeviceType)) }
     if ($DeviceName) { $soakArgs += @('--device-name', ('"{0}"' -f $DeviceName)) }
     if ($SampleRate -gt 0) { $soakArgs += @('--sample-rate', $SampleRate) }
+    if ($Record) { $soakArgs += @('--record', ('"{0}"' -f $Record)) }
+    if ($LevelDb -ne 0) { $soakArgs += @('--soak-level-db', $LevelDb) }
     if ($UiStress) {
         $bench = Join-Path (Split-Path $Exe) '..\..\tests\Release\lattice_engine_bench.exe'
         if (-not (Test-Path $bench)) { throw "lattice_engine_bench not found at $bench (it writes the reference set)" }
