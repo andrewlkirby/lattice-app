@@ -9,7 +9,8 @@
 
     Soak (-Soak): plays the test tone for -SoakSeconds (default 600) at -BufferSize (default 64)
     and passes only with 0 callback overruns and 0 device xruns. Results go to
-    <userdata>/logs/soak.log (one progress line per minute, then a result line). Your saved device
+    <userdata>/logs/soak.log (one progress line per minute, a dropout line within 0.25 s of each
+    dropout, then a result line). Your saved device
     setup is not changed. -DeviceType picks a device type for the run, e.g.
     "Windows Audio (Low Latency Mode)" or "ASIO", and -DeviceName the device (for ASIO, the driver:
     "ASIO4ALL v2" or "FlexASIO").
@@ -78,7 +79,7 @@ if ($Soak) {
     }
     $lines = @(Get-Content $soakLog | Select-Object -Skip $previous)
     $lines
-    $result = $lines | Where-Object { $_ -match ' \| result \| ' } | Select-Object -Last 1
+    $result = $lines | Where-Object { $_ -match ' \| result( \(ui stress: [^|]*\))? \| ' } | Select-Object -Last 1
     if (-not $result) { throw 'The soak wrote no result line' }
     if ($result -match '\| PASS$') { 'SOAK PASS'; exit 0 } else { 'SOAK FAIL'; exit 1 }
 }

@@ -132,8 +132,20 @@ void SoakTest::timerCallback()
         xrunBaseline = engine.getDeviceManager().getXRunCount();
         startTime = nowSeconds();
         measuring = true;
+        overrunsSeen = 0;
+        xrunsSeen = 0;
         writeLine("start");
         return;
+    }
+
+    // A line for each new dropout, so that one can be traced to what was happening.
+    const auto overruns = engine.callbackStats().summary().overruns;
+    const int xruns = engine.getDeviceManager().getXRunCount() - xrunBaseline;
+    if (overruns != overrunsSeen || xruns != xrunsSeen)
+    {
+        overrunsSeen = overruns;
+        xrunsSeen = xruns;
+        writeLine("dropout");
     }
 
     if (const int minute = static_cast<int>(elapsed / 60.0); minute > lastProgressMinute)
@@ -185,6 +197,8 @@ void SoakTest::writeLine(const juce::String& kind)
          << " | max=" << pct(s.max);
     if (setupError.isNotEmpty())
         line << " | setup error=" << setupError;
+    if (kind == "dropout" && context)
+        line << " | during=" << context();
 
     if (kind == "result")
     {

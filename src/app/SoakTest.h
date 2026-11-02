@@ -11,8 +11,9 @@ namespace lattice
 
 /** Dropout soak (docs/09-performance-charter.md §3, M0 gate): plays the test tone at a given buffer
     size for a fixed time and counts callback overruns and device xruns. Started with
-    `Lattice --soak-seconds 600 --buffer-size 64`. Appends a progress line every minute and one
-    result line to <userdata>/logs/soak.log, then calls onFinished. Message thread only. */
+    `Lattice --soak-seconds 600 --buffer-size 64`. Appends a progress line every minute, a dropout
+    line within 0.25 s of each new overrun or xrun (with what setContext describes at that moment),
+    and one result line to <userdata>/logs/soak.log, then calls onFinished. Message thread only. */
 class SoakTest final : private juce::Timer
 {
 public:
@@ -40,6 +41,8 @@ public:
 
     /** Call once the device is open. */
     void start();
+    /** What the app is doing, for the dropout lines (the UI stress test's step). */
+    void setContext(std::function<juce::String()> describe) { context = std::move(describe); }
 
 private:
     void timerCallback() override;
@@ -50,6 +53,7 @@ private:
     Options options;
     juce::File logFile;
     std::function<void(bool)> onFinished;
+    std::function<juce::String()> context;
 
     juce::String setupError;
     juce::String availableBufferSizes;
@@ -58,6 +62,8 @@ private:
     int xrunBaseline = 0;
     bool measuring = false;
     int lastProgressMinute = 0;
+    std::uint64_t overrunsSeen = 0;
+    int xrunsSeen = 0;
 };
 
 } // namespace lattice

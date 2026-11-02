@@ -171,6 +171,8 @@ private:
                                               setApplicationReturnValue(passed ? 0 : 1);
                                               quit();
                                           });
+        if (uiStress != nullptr)
+            soak->setContext([this] { return uiStress->describe(); });
         soak->start();
     }
 

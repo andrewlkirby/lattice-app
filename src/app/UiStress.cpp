@@ -62,6 +62,14 @@ void UiStress::timerCallback()
     ++frame;
 }
 
+juce::String UiStress::describe() const
+{
+    static constexpr const char* names[numPhases] = {"session grid", "piano roll", "device knob", "mixer faders", "views", "selection"};
+    const int done = juce::jmax(0, frame - 1); // the frame last run
+    return "round " + juce::String(round) + ", " + names[(done / framesPerPhase) % numPhases] + ", frame " +
+           juce::String(done % framesPerPhase) + ", scene " + juce::String(scene);
+}
+
 void UiStress::step(int phase, int f)
 {
     auto& session = shell.deviceContext().session;

@@ -29,6 +29,8 @@ public:
     void start();
     /** The phases completed, for the log. */
     int rounds() const noexcept { return round; }
+    /** The current step, for the soak's dropout lines: e.g. "round 3, piano roll, frame 120, scene 2". */
+    juce::String describe() const;
 
 private:
     void timerCallback() override;
