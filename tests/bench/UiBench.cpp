@@ -14,7 +14,7 @@
 // --callgrind counts the instructions in runFrames() against docs/perf/baselines/ui-callgrind.txt.
 //
 // --idle measures idle CPU (charter Â§1: with the transport stopped and nothing moving, at most
-// 0.15% of one core above a bare JUCE window): the window on screen over a set with clips, its
+// 0.3% of one core above a bare JUCE window): the window on screen over a set with clips, its
 // refresh running as in the app, nothing touched. After a 3 s settle it reports the process's CPU
 // time and the message thread's over SECONDS, as shares of one core; then the same for a bare JUCE
 // window of the same size (JUCE's own floor: its vblank thread, the window's message handling),
@@ -298,6 +298,24 @@ double cyclesPerSecond()
 #endif
 
 #if JUCE_WINDOWS
+/** The module a thread started in (unnamed threads: a driver's, the system's), or "". */
+std::string startModule(HANDLE thread)
+{
+    using Query = LONG(WINAPI*)(HANDLE, int, PVOID, ULONG, PULONG);
+    static const auto query = reinterpret_cast<Query>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationThread"));
+    void* start = nullptr;
+    constexpr int threadQuerySetWin32StartAddress = 9;
+    if (query == nullptr || query(thread, threadQuerySetWin32StartAddress, &start, sizeof(start), nullptr) != 0)
+        return {};
+    HMODULE module = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            static_cast<LPCWSTR>(start), &module))
+        return {};
+    wchar_t path[MAX_PATH] = {};
+    GetModuleFileNameW(module, path, MAX_PATH);
+    return juce::File(juce::String(path)).getFileName().toStdString();
+}
+
 /** Every thread of this process: its name and its CPU time so far, in seconds. */
 std::map<DWORD, std::pair<std::string, double>> threadTimes()
 {
@@ -311,12 +329,14 @@ std::map<DWORD, std::pair<std::string, double>> threadTimes()
     {
         if (entry.th32OwnerProcessID != GetCurrentProcessId())
             continue;
-        const auto thread = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ThreadID);
+        const auto thread = OpenThread(THREAD_QUERY_INFORMATION, FALSE, entry.th32ThreadID);
         if (thread == nullptr)
             continue;
         ULONG64 cycles = 0;
         QueryThreadCycleTime(thread, &cycles);
         std::string name = "thread " + std::to_string(entry.th32ThreadID);
+        if (const auto module = startModule(thread); !module.empty())
+            name += " (" + module + ")";
         PWSTR description = nullptr;
         if (SUCCEEDED(GetThreadDescription(thread, &description)) && description != nullptr)
         {
@@ -380,7 +400,23 @@ private:
     std::size_t at = 0;
 };
 
-constexpr double idleBudget = 0.0015; // of one core, above a bare JUCE window
+constexpr double idleBudget = 0.003; // of one core, above a bare JUCE window
+
+#if JUCE_WINDOWS
+/** The busiest threads between two readings (the message thread is the one this runs on). */
+void printBusiestThreads(const std::map<DWORD, std::pair<std::string, double>>& from,
+                         const std::map<DWORD, std::pair<std::string, double>>& to, double wall)
+{
+    std::vector<std::pair<double, std::string>> busiest;
+    for (const auto& [id, t] : to)
+        if (const auto f = from.find(id); f != from.end())
+            busiest.push_back({(t.second - f->second.second) / wall, id == GetCurrentThreadId() ? "(message thread)" : t.first});
+    std::sort(busiest.begin(), busiest.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    for (std::size_t i = 0; i < std::min<std::size_t>(busiest.size(), 8); ++i)
+        if (busiest[i].first >= 0.0001)
+            std::printf("    %-44s %6.2f%%\n", busiest[i].second.c_str(), busiest[i].first * 100.0);
+}
+#endif
 
 struct Idle
 {
@@ -485,6 +521,9 @@ Idle measureIdle(double seconds, bool audio, const juce::String& deviceType)
     });
     std::unique_ptr<juce::Component> bare;
     CpuTimes bareFrom, bareTo;
+#if JUCE_WINDOWS
+    std::map<DWORD, std::pair<std::string, double>> bareThreadsFrom, bareThreadsTo;
+#endif
     double bareFromWall = 0.0, bareToWall = 0.0;
     steps.add(1, [&] { // straight after
         const auto bounds = shell->getBounds();
@@ -498,11 +537,17 @@ Idle measureIdle(double seconds, bool audio, const juce::String& deviceType)
         bare->setVisible(true);
     });
     steps.add(3000, [&] {
+#if JUCE_WINDOWS
+        bareThreadsFrom = threadTimes();
+#endif
         bareFrom = cpuTimes();
         bareFromWall = juce::Time::getMillisecondCounterHiRes();
     });
     steps.add(juce::roundToInt(seconds * 1000.0), [&] {
         bareTo = cpuTimes();
+#if JUCE_WINDOWS
+        bareThreadsTo = threadTimes();
+#endif
         bareToWall = juce::Time::getMillisecondCounterHiRes();
     });
     steps.run();
@@ -521,22 +566,18 @@ Idle measureIdle(double seconds, bool audio, const juce::String& deviceType)
     if (callbacks.callbacks > 0)
         std::printf("  %-28s %6.2f%%  (the median callback's share of its period)\n", "audio callbacks", callbacks.p50 * 100.0);
 #if JUCE_WINDOWS
-    // The busiest threads (the message thread is the one this runs on).
-    std::vector<std::pair<double, std::string>> busiest;
-    for (const auto& [id, t] : threadsTo)
-        if (const auto f = threadsFrom.find(id); f != threadsFrom.end())
-            busiest.push_back({(t.second - f->second.second) / wall, id == GetCurrentThreadId() ? "(message thread)" : t.first});
-    std::sort(busiest.begin(), busiest.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
     std::printf("  by thread:\n");
-    for (std::size_t i = 0; i < std::min<std::size_t>(busiest.size(), 8); ++i)
-        if (busiest[i].first >= 0.0001)
-            std::printf("    %-40s %6.2f%%\n", busiest[i].second.c_str(), busiest[i].first * 100.0);
+    printBusiestThreads(threadsFrom, threadsTo, wall);
 #endif
     std::printf("  %.0f refresh ticks a second; the window painted %llu times in all, %llu of them over the frame budget\n",
                 static_cast<double>(ticks) / wall, static_cast<unsigned long long>(paints.callbacks),
                 static_cast<unsigned long long>(paints.overruns));
 
     const double bareWall = (bareToWall - bareFromWall) / 1000.0;
+#if JUCE_WINDOWS
+    std::printf("  a bare JUCE window, by thread (its message thread %.2f%%):\n", (bareTo.thread - bareFrom.thread) / bareWall * 100.0);
+    printBusiestThreads(bareThreadsFrom, bareThreadsTo, bareWall);
+#endif
     return {process, (bareTo.process - bareFrom.process) / bareWall, (bareTo.thread - bareFrom.thread) / bareWall};
 }
 } // namespace

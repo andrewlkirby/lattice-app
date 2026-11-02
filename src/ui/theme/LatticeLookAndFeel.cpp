@@ -153,6 +153,61 @@ void LatticeLookAndFeel::drawTextEditorOutline(juce::Graphics& g, int width, int
     g.drawRoundedRectangle(bounds, current.radius, current.stroke);
 }
 
+namespace
+{
+/** JUCE's caret, drawn the same, without its timer: placing it shows it and starts the blinking
+    only while the owner has the keyboard focus, and the blinking stops (hidden) once the focus has
+    gone. (The base class's own timer starts in its setCaretPosition(), which this replaces.) */
+class FocusedCaret final : public juce::CaretComponent
+{
+public:
+    explicit FocusedCaret(juce::Component* keyFocusOwner) : juce::CaretComponent(keyFocusOwner), owner(keyFocusOwner) {}
+
+    void setCaretPosition(const juce::Rectangle<int>& characterArea) override
+    {
+        setBounds(characterArea.withWidth(2));
+        const bool shown = focused();
+        setVisible(shown);
+        if (shown)
+            blink.startTimer(blinkMs); // a moved caret shows at once, then blinks
+        else
+            blink.stopTimer();
+    }
+
+private:
+    static constexpr int blinkMs = 380; // JUCE's
+
+    bool focused() const
+    {
+        return owner == nullptr || (owner->hasKeyboardFocus(false) && !owner->isCurrentlyBlockedByAnotherModalComponent());
+    }
+
+    struct Blink final : juce::Timer
+    {
+        explicit Blink(FocusedCaret& c) : caret(c) {}
+        void timerCallback() override
+        {
+            if (!caret.focused())
+            {
+                caret.setVisible(false);
+                stopTimer();
+                return;
+            }
+            caret.setVisible(!caret.isVisible());
+        }
+        FocusedCaret& caret;
+    };
+
+    juce::Component* owner;
+    Blink blink{*this};
+};
+} // namespace
+
+juce::CaretComponent* LatticeLookAndFeel::createCaretComponent(juce::Component* keyFocusOwner)
+{
+    return new FocusedCaret(keyFocusOwner);
+}
+
 const Theme& themeOf(const juce::Component& component)
 {
     if (const auto* laf = dynamic_cast<const LatticeLookAndFeel*>(&component.getLookAndFeel()))

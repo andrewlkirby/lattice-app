@@ -30,6 +30,9 @@ public:
     juce::Font getPopupMenuFont() override;
     juce::Font getTextButtonFont(juce::TextButton&, int buttonHeight) override;
     void drawTextEditorOutline(juce::Graphics&, int width, int height, juce::TextEditor&) override;
+    /** A caret that blinks only while its editor has the keyboard focus (CaretComponent's timer
+        runs in every editor whose caret ever moved, focused or not: idle CPU, charter §1). */
+    juce::CaretComponent* createCaretComponent(juce::Component* keyFocusOwner) override;
 
 private:
     void applyColours();

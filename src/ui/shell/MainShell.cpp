@@ -242,7 +242,15 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
             out.emplace_back(std::move(m.input), std::move(m.message));
         return out;
     };
-    mapperTick = std::make_unique<juce::VBlankAttachment>(this, [this](double) { mapper->tick(); });
+    // MIDI Map ticks with the display while it has something to do; MIDI coming in (the engine's
+    // activity) starts the ticks again.
+    mapperWake.onWake = [this] {
+        mapperIdleFrames = 0;
+        if (mapperTick == nullptr)
+            mapperTick = std::make_unique<juce::VBlankAttachment>(this, [this](double) { tickMapper(); });
+    };
+    engine.addActivityListener(&mapperWake);
+    mapperWake.onWake();
     overlay = std::make_unique<MapOverlay>(*mapper, controls, *session_);
     overlay->onExit = [this] { setMapMode(Mappings::Mode::off); };
     overlay->passesThrough = [this](const juce::KeyPress& key) {
@@ -355,7 +363,9 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
     selectionChanged(selected.get());
 
     stateFeed.attachTo(*this);
-    juce::Desktop::getInstance().addGlobalMouseListener(this);
+    // Every mouse event in the window, for the Info view and the dividers (not a global listener:
+    // JUCE polls the mouse ten times a second for those, idle or not).
+    addMouseListener(this, true);
 }
 
 MainShell::~MainShell()
@@ -373,7 +383,10 @@ MainShell::~MainShell()
     setFiles.reset(); // it waits for an autosave being written
     browser.reset(); // it plays through the engine and reads the library
     selected.removeListener(this);
-    juce::Desktop::getInstance().removeGlobalMouseListener(this);
+    removeMouseListener(this);
+    engine.removeActivityListener(&mapperWake);
+    mapperWake.cancelPendingUpdate();
+    mapperTick.reset();
     session.set().state().removeListener(this);
     stateFeed.detach();
     removeKeyListener(shiftTabBack.get());
@@ -1264,6 +1277,19 @@ void MainShell::mouseMove(const juce::MouseEvent& e)
         setMouseCursor(showDetail && detailDivider.contains(e.getPosition())    ? juce::MouseCursor::UpDownResizeCursor
                        : showBrowser && browserDivider.contains(e.getPosition()) ? juce::MouseCursor::LeftRightResizeCursor
                                                                                  : juce::MouseCursor::NormalCursor);
+}
+
+void MainShell::tickMapper()
+{
+    constexpr int idleFramesBeforeStopping = 30; // half a second at 60 Hz
+    if (mapper->tick())
+        mapperIdleFrames = 0;
+    else if (++mapperIdleFrames == idleFramesBeforeStopping)
+        // Not from inside the attachment's own callback.
+        juce::MessageManager::callAsync([safe = juce::Component::SafePointer<MainShell>(this)] {
+            if (safe != nullptr && safe->mapperIdleFrames >= idleFramesBeforeStopping)
+                safe->mapperTick.reset();
+        });
 }
 
 void MainShell::handleAsyncUpdate()

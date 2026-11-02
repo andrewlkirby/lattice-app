@@ -245,7 +245,15 @@ private:
     juce::Component::SafePointer<juce::DialogWindow> missingWindow;
     std::unique_ptr<juce::DocumentWindow> preferencesWindow;
     std::unique_ptr<Mappings> mapper;
-    std::unique_ptr<juce::VBlankAttachment> mapperTick; // the feed's refresh, so one wake-up a frame
+    void tickMapper();
+    struct Wake final : juce::AsyncUpdater
+    {
+        std::function<void()> onWake;
+        void handleAsyncUpdate() override { onWake(); }
+    };
+    std::unique_ptr<juce::VBlankAttachment> mapperTick; // while MIDI Map has something to do
+    Wake mapperWake;
+    int mapperIdleFrames = 0;
     std::unique_ptr<MapOverlay> overlay;
     std::unique_ptr<MappingsView> mappingList;
     std::unique_ptr<FindIndex> finder;

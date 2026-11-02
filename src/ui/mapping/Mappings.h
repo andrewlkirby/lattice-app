@@ -59,9 +59,11 @@ public:
     Mappings(SessionController& session, CommandRegistry& commands, DeviceSpecs& specs);
     ~Mappings();
 
-    /** Once per display refresh (the shell's, with the engine state feed's: one wake-up a frame):
-        plays the MIDI that came from the remote inputs, and ends the gestures of controls at rest. */
-    void tick();
+    /** Once per display refresh while it returns true: plays the MIDI that came from the remote
+        inputs, and ends the gestures of controls at rest. False once nothing came and every
+        gesture has ended: the shell then stops the ticks until MIDI comes in again (idle CPU,
+        charter §1). */
+    bool tick();
 
     void setMode(Mode m);
     Mode mode() const noexcept { return current; }

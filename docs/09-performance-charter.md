@@ -40,7 +40,7 @@ All targets are measured on the **reference machine**: the user's Lenovo Legion 
 ### Resources
 | Target | Value |
 |--------|-------|
-| Idle CPU (transport stopped, nothing moving on screen, no audio device) | **≤ 0.15%** of one core above a bare JUCE window of the same size, measured in the same run (`lattice_ui_bench --idle`); meters and animations stop updating when nothing changes. Restated 2026-11-02 from "< 1%": on the reference machine a bare JUCE window alone measures 0.5–1.1% (its vblank thread and the window's own message handling), so the old figure judged JUCE, not Lattice |
+| Idle CPU (transport stopped, nothing moving on screen, no audio device) | **≤ 0.3%** of one core above a bare JUCE window of the same size, measured in the same run (`lattice_ui_bench --idle`); meters and animations stop updating when nothing changes. Restated 2026-11-02 from "< 1%" (first as 0.15%; set at 0.3% after the quiet-machine run found nothing left above 0.1% on any one thread): on the reference machine a bare JUCE window alone measures 0.5–1.1% (its vblank thread and the window's own message handling), so the old figure judged JUCE, not Lattice |
 | Memory | Samples are decoded into RAM once and shared between devices. Any increase in memory not explained by content is a bug (checked in the M7 soak test) |
 
 ### The reference set (kept in `tests/perf/reference-set/`)

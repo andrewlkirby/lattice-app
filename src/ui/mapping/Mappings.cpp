@@ -476,26 +476,30 @@ void Mappings::endGestures()
             binding->endGesture();
 }
 
-void Mappings::tick()
+bool Mappings::tick()
 {
+    const auto now = juce::Time::currentTimeMillis();
+    // A long rest: the control picks up the value again (checked before its next move, since the
+    // ticks stop while nothing moves).
+    for (auto& [uid, held] : state)
+        held.picked = held.picked && now - held.touched < 10'000;
+    bool moved = false;
     if (pullMidi)
         for (const auto& [input, message] : pullMidi())
+        {
             handleMidi(input, message);
+            moved = true;
+        }
     // A control at rest has ended its gesture: the turn so far is one undo step. Bindings are
     // made again later (a device may have been deleted, or a set loaded).
-    const auto now = juce::Time::currentTimeMillis();
-    if (state.empty() && bindings.empty())
-        return; // nothing held: nothing to end
-    bool resting = true;
+    if (bindings.empty())
+        return moved; // no gesture to end
     for (const auto& [uid, held] : state)
         if (now - held.touched < restMs)
-            resting = false;
-    if (!resting)
-        return;
+            return true;
     endGestures();
     bindings.clear();
-    for (auto& [uid, held] : state)
-        held.picked = held.picked && now - held.touched < 10'000; // a long rest: pick up again
+    return moved;
 }
 
 } // namespace lattice::ui
