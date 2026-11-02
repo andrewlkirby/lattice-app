@@ -13,13 +13,16 @@
 // percentile is above 8 ms. The run fails (exit code 1) if any case is over. scripts/linux-test.sh
 // --callgrind counts the instructions in runFrames() against docs/perf/baselines/ui-callgrind.txt.
 //
-// --idle measures idle CPU (charter §1: under 1% of one core with the transport stopped and
-// nothing moving): the window on screen over a set with clips, its refresh running as in the app,
-// nothing touched. After a 3 s settle it reports the process's CPU time and the message thread's
-// over SECONDS, as shares of one core, and fails if the process's is 1% or more. --audio also opens
-// the audio device the app uses (its saved setup) and the app's worker threads, as when the app
-// sits open with the transport stopped; --device-type opens the same device through another type
-// (e.g. "Windows Audio", which doesn't take the device from other programs as exclusive mode does).
+// --idle measures idle CPU (charter Â§1: with the transport stopped and nothing moving, at most
+// 0.15% of one core above a bare JUCE window): the window on screen over a set with clips, its
+// refresh running as in the app, nothing touched. After a 3 s settle it reports the process's CPU
+// time and the message thread's over SECONDS, as shares of one core; then the same for a bare JUCE
+// window of the same size (JUCE's own floor: its vblank thread, the window's message handling),
+// and fails if the difference is over the budget. --audio also opens the audio device the app
+// uses (its saved setup) and the app's worker threads, as when the app sits open with the
+// transport stopped, and only reports (the driver's share of the audio thread isn't the app's);
+// --device-type opens the same device through another type (e.g. "Windows Audio", which doesn't
+// take the device from other programs as exclusive mode does).
 
 #include "devices/racks/Rack.h"
 #include "engine/WorkerPool.h"
@@ -377,16 +380,28 @@ private:
     std::size_t at = 0;
 };
 
-int measureIdle(double seconds, bool audio, const juce::String& deviceType)
+constexpr double idleBudget = 0.0015; // of one core, above a bare JUCE window
+
+struct Idle
 {
-    constexpr double budget = 0.01; // of one core
+    double process = -1.0; // share of one core; < 0: the device didn't open
+    double bareWindow = 0.0; // the same, with only a bare JUCE window of the same size
+    double bareMessageThread = 0.0;
+};
+
+/** Lattice's window idle, then a bare JUCE window's with nothing of Lattice's left running (its
+    engine and session gone); prints what it measured. */
+Idle measureIdle(double seconds, bool audio, const juce::String& deviceType)
+{
     juce::PropertiesFile::Options options;
     options.applicationName = "LatticeBench";
     const auto settingsFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("lattice-ui-idle", ".settings");
     auto settings = std::make_unique<juce::PropertiesFile>(settingsFile, options);
     TuningRegistry tunings;
-    AudioEngine engine;
-    SessionController session{engine, tunings}; // the app's devices
+    auto enginePtr = std::make_unique<AudioEngine>();
+    auto sessionPtr = std::make_unique<SessionController>(*enginePtr, tunings); // the app's devices
+    auto& engine = *enginePtr;
+    auto& session = *sessionPtr;
     // A set as you'd leave it: clips in the grid, a Colundi track, one clip open in the Clip view.
     session.newSet(8, 8);
     session.set().setTrackTuning(1, TuningRegistry::colundiId);
@@ -416,7 +431,7 @@ int measureIdle(double seconds, bool audio, const juce::String& deviceType)
         if (error.isNotEmpty())
         {
             std::printf("The audio device didn't open: %s\n", error.toRawUTF8());
-            return 1;
+            return {};
         }
         auto* device = engine.getDeviceManager().getCurrentAudioDevice();
         deviceInfo = device == nullptr ? juce::String("no audio device")
@@ -468,9 +483,30 @@ int measureIdle(double seconds, bool audio, const juce::String& deviceType)
         paints = shell->frameStats().summary();
         callbacks = engine.callbackStats().summary();
     });
+    std::unique_ptr<juce::Component> bare;
+    CpuTimes bareFrom, bareTo;
+    double bareFromWall = 0.0, bareToWall = 0.0;
+    steps.add(1, [&] { // straight after
+        const auto bounds = shell->getBounds();
+        shell.reset();
+        engine.getDeviceManager().closeAudioDevice();
+        sessionPtr.reset();
+        enginePtr.reset();
+        bare = std::make_unique<juce::Component>();
+        bare->setBounds(bounds);
+        bare->addToDesktop(juce::ComponentPeer::windowAppearsOnTaskbar | juce::ComponentPeer::windowHasTitleBar);
+        bare->setVisible(true);
+    });
+    steps.add(3000, [&] {
+        bareFrom = cpuTimes();
+        bareFromWall = juce::Time::getMillisecondCounterHiRes();
+    });
+    steps.add(juce::roundToInt(seconds * 1000.0), [&] {
+        bareTo = cpuTimes();
+        bareToWall = juce::Time::getMillisecondCounterHiRes();
+    });
     steps.run();
-    shell.reset();
-    engine.getDeviceManager().closeAudioDevice();
+    bare.reset();
     settings.reset();
     settingsFile.deleteFile();
 
@@ -478,7 +514,7 @@ int measureIdle(double seconds, bool audio, const juce::String& deviceType)
     const double process = (to.process - from.process) / wall;
     const double thread = (to.thread - from.thread) / wall;
     std::printf("Idle CPU over %.1f s (%s), share of one core:\n", wall, deviceInfo.toRawUTF8());
-    std::printf("  %-28s %6.2f%%  (budget %.0f%%)%s\n", "process", process * 100.0, budget * 100.0, process < budget ? "" : "  OVER");
+    std::printf("  %-28s %6.2f%%\n", "process", process * 100.0);
     std::printf("  %-28s %6.2f%%\n", "message thread", thread * 100.0);
     std::printf("  %-28s %6.2f%%  (%.1f us a tick)\n", "the feed's ticks", tickWork / wall * 100.0,
                 ticks > 0 ? tickWork / static_cast<double>(ticks) * 1.0e6 : 0.0);
@@ -499,7 +535,9 @@ int measureIdle(double seconds, bool audio, const juce::String& deviceType)
     std::printf("  %.0f refresh ticks a second; the window painted %llu times in all, %llu of them over the frame budget\n",
                 static_cast<double>(ticks) / wall, static_cast<unsigned long long>(paints.callbacks),
                 static_cast<unsigned long long>(paints.overruns));
-    return process < budget ? 0 : 1;
+
+    const double bareWall = (bareToWall - bareFromWall) / 1000.0;
+    return {process, (bareTo.process - bareFrom.process) / bareWall, (bareTo.thread - bareFrom.thread) / bareWall};
 }
 } // namespace
 
@@ -525,7 +563,23 @@ int main(int argc, char* argv[])
     }
     const juce::ScopedJuceInitialiser_GUI juceInit;
     if (idleSeconds > 0.0)
-        return measureIdle(idleSeconds, audio, deviceType);
+    {
+        const auto idle = measureIdle(idleSeconds, audio, deviceType);
+        if (idle.process < 0.0)
+            return 1;
+        const double above = idle.process - idle.bareWindow;
+        std::printf("  %-28s %6.2f%%  (JUCE's floor: measured next, nothing of Lattice's running)\n", "a bare JUCE window",
+                    idle.bareWindow * 100.0);
+        std::printf("  %-28s %6.2f%%\n", "  its message thread", idle.bareMessageThread * 100.0);
+        if (audio)
+        {
+            std::printf("  %-28s %6.2f%%  (not judged with the device open)\n", "above it", above * 100.0);
+            return 0;
+        }
+        const bool within = above <= idleBudget;
+        std::printf("  %-28s %6.2f%%  (budget %.2f%%)%s\n", "above it", above * 100.0, idleBudget * 100.0, within ? "" : "  OVER");
+        return within ? 0 : 1;
+    }
     std::printf("%-42s %9s %9s %9s %8s\n", "UI frame (ms)", "median", "p95", "worst", "budget");
     bool allWithin = true;
     for (const auto& c : cases())

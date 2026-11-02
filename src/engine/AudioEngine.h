@@ -84,7 +84,19 @@ public:
     }
 
     /** Any thread except the audio thread. Returns false if the queue was full. */
-    bool sendCommand(const EngineCommand& command) { return commands.push(command); }
+    bool sendCommand(const EngineCommand& command)
+    {
+        noteActivity();
+        return commands.push(command);
+    }
+
+    /** Something the message thread may soon have to follow: a command, a new snapshot, a
+        preview, MIDI coming in. What polls the engine (SessionController, ui::EngineStateFeed) does
+        so less often while nothing happens, and wakes on this: each listener's update is
+        triggered. Any thread but the audio thread. */
+    void addActivityListener(juce::AsyncUpdater* listener);
+    void removeActivityListener(const juce::AsyncUpdater* listener);
+    void noteActivity();
     /** Message thread (the single consumer). Events from the audio thread. */
     SpscFifo<EngineEvent>& engineEvents() noexcept { return events; }
     /** Transport state and master peaks (any thread, see SessionProcessor). */
@@ -164,6 +176,8 @@ private:
     AudioCallbackStats stats;
     LatencyStats latency;
     std::mutex remoteLock; // MIDI threads and the message thread; never the audio thread
+    std::mutex activityLock; // the same threads
+    std::vector<juce::AsyncUpdater*> activityListeners;
     juce::StringArray remoteInputs, nonTrackInputs;
     std::vector<RemoteMidi> remoteInbox;
     MidiInputQueue midiQueue;

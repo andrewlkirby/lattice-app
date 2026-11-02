@@ -227,3 +227,59 @@ TEST_CASE("Feed: ticks faster than any display (the display asleep) read the eng
         f.tick();
     CHECK(f.feed.ticks() - before == 60);
 }
+
+#if JUCE_WINDOWS
+namespace juce::detail
+{
+bool dispatchNextMessageOnSystemQueue(bool returnIfNoPendingMessages); // juce_events' own message pump
+}
+
+namespace
+{
+/** Runs the message loop until `done` or `seconds` have passed; returns `done()`. */
+bool pumpUntil(const std::function<bool()>& done, double seconds)
+{
+    const auto until = juce::Time::getMillisecondCounterHiRes() + seconds * 1000.0;
+    while (!done() && juce::Time::getMillisecondCounterHiRes() < until)
+        if (!juce::detail::dispatchNextMessageOnSystemQueue(true))
+            juce::Thread::sleep(2);
+    return done();
+}
+} // namespace
+
+TEST_CASE("Feed: calm after half a second without changes, a few reads a second, woken by the engine's activity",
+          "[ui][feed]")
+{
+    Fixture f;
+    juce::Component window; // not on screen: its refresh never ticks, so the test ticks it
+    f.feed.attachTo(window);
+    pumpUntil([] { return false; }, 0.1); // what the set's building posted
+    CHECK_FALSE(f.feed.isCalm());
+
+    // Ticks at the display's rate with nothing changing (stamped in the last 0.7 s, as the timer's are now):
+    // calm once half a second has gone by.
+    for (int i = 0; i < 40; ++i)
+        f.feed.tick(juce::Time::getMillisecondCounterHiRes() * 0.001 - 0.7 + i / 60.0);
+    REQUIRE(pumpUntil([&] { return f.feed.isCalm(); }, 2.0));
+
+    // Calm: read from a timer, about calmHz times a second.
+    const auto before = f.feed.ticks();
+    pumpUntil([] { return false; }, 1.0);
+    const auto read = f.feed.ticks() - before;
+    CHECK(read >= Feed::calmHz - 2);
+    CHECK(read <= Feed::calmHz + 2);
+
+    // Anything the engine is told wakes it at once: a note of activity...
+    f.engine.noteActivity();
+    CHECK(pumpUntil([&] { return !f.feed.isCalm(); }, 0.5));
+
+    // ...and, calm again, an edit (a new snapshot published).
+    for (int i = 0; i < 40; ++i)
+        f.feed.tick(juce::Time::getMillisecondCounterHiRes() * 0.001 - 0.7 + i / 60.0);
+    REQUIRE(pumpUntil([&] { return f.feed.isCalm(); }, 2.0));
+    f.session.set().setTempo(130.0);
+    f.session.flush();
+    CHECK(pumpUntil([&] { return !f.feed.isCalm(); }, 0.5));
+    f.feed.detach();
+}
+#endif

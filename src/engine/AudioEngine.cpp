@@ -211,6 +211,30 @@ void AudioEngine::installChain(TrackProcessor& track, const std::vector<DevicePt
 void AudioEngine::publishSnapshot(std::shared_ptr<const EngineSnapshot> snapshot)
 {
     snapshots.publish(std::move(snapshot));
+    noteActivity();
+}
+
+void AudioEngine::addActivityListener(juce::AsyncUpdater* listener)
+{
+    RT_ASSERT_NOT_AUDIO_THREAD();
+    const std::scoped_lock lock(activityLock);
+    if (std::find(activityListeners.begin(), activityListeners.end(), listener) == activityListeners.end())
+        activityListeners.push_back(listener);
+}
+
+void AudioEngine::removeActivityListener(const juce::AsyncUpdater* listener)
+{
+    RT_ASSERT_NOT_AUDIO_THREAD();
+    const std::scoped_lock lock(activityLock);
+    std::erase(activityListeners, listener);
+}
+
+void AudioEngine::noteActivity()
+{
+    RT_ASSERT_NOT_AUDIO_THREAD();
+    const std::scoped_lock lock(activityLock);
+    for (auto* listener : activityListeners)
+        listener->triggerAsyncUpdate();
 }
 
 void AudioEngine::process(float* const* outputs, int numOutputs, int numSamples) noexcept
@@ -356,6 +380,7 @@ void AudioEngine::handleIncomingMidiMessage(juce::MidiInput* input, const juce::
     }
     if (forTracks)
         midiQueue.push(message, input != nullptr ? midiSourceFor(input->getIdentifier()) : computerKeyboardSource);
+    noteActivity();
 }
 
 } // namespace lattice

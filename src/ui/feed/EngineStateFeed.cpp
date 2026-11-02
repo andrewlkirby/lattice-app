@@ -54,12 +54,44 @@ void EngineStateFeed::removeListener(Listener* listener)
 
 void EngineStateFeed::attachTo(juce::Component& component)
 {
-    vblank = std::make_unique<juce::VBlankAttachment>(&component, [this](double timestampSec) { tick(timestampSec); });
+    detach();
+    attached = &component;
+    lastChangeSeconds = -1.0;
+    startVBlank();
+    engine.addActivityListener(this);
 }
 
 void EngineStateFeed::detach()
 {
+    if (attached == nullptr)
+        return;
+    engine.removeActivityListener(this);
+    cancelPendingUpdate();
+    stopTimer();
     vblank.reset();
+    attached = nullptr;
+}
+
+void EngineStateFeed::startVBlank()
+{
+    vblank = std::make_unique<juce::VBlankAttachment>(attached, [this](double timestampSec) { tick(timestampSec); });
+}
+
+void EngineStateFeed::wake()
+{
+    if (attached == nullptr)
+        return;
+    stopTimer();
+    lastChangeSeconds = -1.0; // a full calm interval from the next tick
+    if (vblank == nullptr)
+        startVBlank();
+}
+
+void EngineStateFeed::timerCallback()
+{
+    vblank.reset();
+    // The vblank timestamps' clock (juce_VBlank_windows.cpp).
+    tick(juce::Time::getMillisecondCounterHiRes() * 0.001);
 }
 
 SlotState EngineStateFeed::slot(int track, int scene) const
@@ -110,11 +142,31 @@ void EngineStateFeed::tick(double nowSeconds)
     if (storm && lastTickSeconds >= 0.0 && nowSeconds - lastTickSeconds < stormReadSeconds)
         return;
     const auto started = juce::Time::getHighResolutionTicks();
-    tickBody(nowSeconds);
+    const auto changed = tickBody(nowSeconds);
     tickWork += juce::Time::highResolutionTicksToSeconds(juce::Time::getHighResolutionTicks() - started);
+
+    // The cadence: every refresh while anything changes, calmHz once nothing has for a while.
+    if (attached == nullptr)
+        return;
+    if ((changed & ~static_cast<std::uint32_t>(loadAspect)) != 0 || lastChangeSeconds < 0.0 || nowSeconds < lastChangeSeconds)
+        lastChangeSeconds = nowSeconds;
+    const bool quiet = nowSeconds - lastChangeSeconds >= calmAfterSeconds;
+    if (isCalm())
+    {
+        if (!quiet)
+            wake();
+    }
+    else if (quiet && !isTimerRunning())
+    {
+        startTimerHz(calmHz); // its first callback ends the vblank ticks (not from inside one)
+    }
+    else if (!quiet)
+    {
+        stopTimer(); // a change before that first callback
+    }
 }
 
-void EngineStateFeed::tickBody(double nowSeconds)
+std::uint32_t EngineStateFeed::tickBody(double nowSeconds)
 {
     lastFrameSeconds = lastTickSeconds < 0.0 ? 0.0 : juce::jmax(0.0, nowSeconds - lastTickSeconds);
     lastTickSeconds = nowSeconds;
@@ -199,7 +251,8 @@ void EngineStateFeed::tickBody(double nowSeconds)
     previewAt = at;
     previewGen = gen;
 
-    if (nowSeconds - lastLoadSeconds >= loadIntervalSeconds)
+    // A little early rather than a tick late: calm ticks come every loadIntervalSeconds, give or take.
+    if (nowSeconds - lastLoadSeconds >= loadIntervalSeconds * 0.9)
     {
         lastLoadSeconds = nowSeconds;
         Load l;
@@ -218,7 +271,7 @@ void EngineStateFeed::tickBody(double nowSeconds)
     }
 
     if (changed == 0)
-        return;
+        return changed;
     // A listener may add or remove listeners while being told: work from a copy, and skip any that
     // went away meanwhile.
     const auto toTell = subscribers;
@@ -232,6 +285,7 @@ void EngineStateFeed::tickBody(double nowSeconds)
         if (stillThere)
             s.listener->engineStateChanged(aspects);
     }
+    return changed;
 }
 
 // --- Devices --------------------------------------------------------------------------------------

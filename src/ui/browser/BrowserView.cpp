@@ -871,6 +871,7 @@ void BrowserView::previewSelected()
                 return;
             // The strip's playhead follows this sound.
             safe->strip->setSoundGeneration(safe->engine.preview().play(std::move(sample), safe->synced));
+            safe->engine.noteActivity(); // the feed shows the playhead from the next frame
         });
         return;
     }
@@ -884,6 +885,7 @@ void BrowserView::previewSelected()
                 if (safe == nullptr || generation != safe->previewRequest || !safe->previewing || phrase == nullptr)
                     return;
                 safe->engine.preview().play(std::move(phrase), safe->synced);
+                safe->engine.noteActivity();
             });
         };
         if (const auto* info = presetLibrary.find(item.key); info != nullptr && info->factory)

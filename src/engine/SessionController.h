@@ -24,10 +24,15 @@ namespace lattice
 
     Every surface (the UI, the Virtual Push and Push in M5) drives the
     session through this one API, so they all behave the same. Message thread only. */
-class SessionController final : private juce::Timer
+class SessionController final : private juce::Timer, private juce::AsyncUpdater
 {
 public:
+    /** The engine's events are read timerHz times a second while the transport runs, a clip
+        records or events come in, and calmHz times a second once nothing has for calmAfterSeconds
+        (idle CPU, charter §1); the engine's activity (AudioEngine::noteActivity) wakes it. */
     static constexpr int timerHz = 30;
+    static constexpr int calmHz = 4;
+    static constexpr double calmAfterSeconds = 0.5;
 
     SessionController(AudioEngine& engine, TuningRegistry& tunings,
                       const DeviceRegistry& devices = DeviceRegistry::builtin());
@@ -100,7 +105,8 @@ public:
     std::shared_ptr<TrackProcessor> processorForTrack(int trackIndex) const;
 
     /** Applies what the engine reported (the timer calls this; tests call it directly). */
-    void processEngineEvents();
+    /** Returns true if any event came. */
+    bool processEngineEvents();
 
     // --- Files ------------------------------------------------------------------------------------
     void newSet(int numTracks = LiveSet::defaultTracks, int numScenes = LiveSet::defaultScenes);
@@ -137,6 +143,7 @@ private:
     };
 
     void timerCallback() override;
+    void handleAsyncUpdate() override;
     void send(const EngineCommand& command);
     void startRecording(int trackIndex, int sceneIndex);
     void closeNote(std::int64_t clipId, Capture& capture, int pitch, double endBeat);
@@ -146,6 +153,8 @@ private:
 
     AudioEngine& engine;
     TuningRegistry& registry;
+    bool calm = false;
+    double lastBusySeconds = 0.0;
     const DeviceRegistry& deviceTypes;
     juce::UndoManager undo;
     LiveSet liveSet{&undo};

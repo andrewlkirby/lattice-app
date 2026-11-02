@@ -93,18 +93,42 @@ SessionController::SessionController(AudioEngine& e, TuningRegistry& tunings, co
 {
     savedState = liveSet.state().createCopy();
     builder.rebuildNow();
+    lastBusySeconds = juce::Time::getMillisecondCounterHiRes() * 0.001;
     startTimerHz(timerHz);
+    engine.addActivityListener(this);
 }
 
 SessionController::~SessionController()
 {
+    engine.removeActivityListener(this);
+    cancelPendingUpdate();
     stopTimer();
 }
 
 void SessionController::timerCallback()
 {
-    processEngineEvents();
+    const bool events = processEngineEvents();
     builder.collectGarbage();
+    const auto t = transport();
+    const double now = juce::Time::getMillisecondCounterHiRes() * 0.001;
+    if (events || t.playing || t.sessionRecord || !captures.empty())
+        lastBusySeconds = now;
+    const bool quiet = now - lastBusySeconds >= calmAfterSeconds;
+    if (quiet != calm)
+    {
+        calm = quiet;
+        startTimerHz(calm ? calmHz : timerHz);
+    }
+}
+
+void SessionController::handleAsyncUpdate()
+{
+    lastBusySeconds = juce::Time::getMillisecondCounterHiRes() * 0.001;
+    if (calm)
+    {
+        calm = false;
+        startTimerHz(timerHz);
+    }
 }
 
 void SessionController::send(const EngineCommand& command)
@@ -517,12 +541,14 @@ void SessionController::finishCapture(std::int64_t clipId, double finalLength)
     captures.erase(clipId);
 }
 
-void SessionController::processEngineEvents()
+bool SessionController::processEngineEvents()
 {
     auto& queue = engine.engineEvents();
     EngineEvent e;
+    bool any = false;
     while (queue.pop(e))
     {
+        any = true;
         switch (e.type)
         {
         case EngineEventType::CaptureNoteOn:
@@ -552,6 +578,7 @@ void SessionController::processEngineEvents()
         }
     }
     flush();
+    return any;
 }
 
 // --- Files -------------------------------------------------------------------------------------------

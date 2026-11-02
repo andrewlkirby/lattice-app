@@ -21,9 +21,14 @@ namespace lattice::ui
     listeners interested in what changed are told, so there are no per-component timers and only
     the parts that changed repaint.
 
+    While nothing but the load changes for calmAfterSeconds (stopped, quiet, nothing previewing),
+    it reads calmHz times a second instead (idle CPU, charter §1). It goes back to every refresh
+    at the first change, and at once when the engine reports activity (AudioEngine::noteActivity:
+    a command, a new snapshot, MIDI in), so what a click or a note starts shows on the next frame.
+
     Peaks are taken from the engine once per tick (the loudest since the last tick), so nothing is
     missed between frames and two views showing one meter see the same level. Message thread only. */
-class EngineStateFeed
+class EngineStateFeed final : private juce::Timer, private juce::AsyncUpdater
 {
 public:
     enum Aspect : std::uint32_t
@@ -59,15 +64,23 @@ public:
     };
     static constexpr double loadIntervalSeconds = 0.25;
 
+    static constexpr double calmAfterSeconds = 0.5;
+    static constexpr int calmHz = 4; // the load's rate (loadIntervalSeconds)
+
     EngineStateFeed(SessionController& session, AudioEngine& engine);
-    ~EngineStateFeed();
+    ~EngineStateFeed() override;
 
     void addListener(Listener* listener, std::uint32_t aspects);
     void removeListener(Listener* listener);
 
-    /** Ticks once per display refresh of the component's window (until detached). */
+    /** Ticks once per display refresh of the component's window, or calmHz times a second while
+        calm (until detached). */
     void attachTo(juce::Component& component);
     void detach();
+    /** Attached, and reading calmHz times a second. */
+    bool isCalm() const noexcept { return attached != nullptr && vblank == nullptr; }
+    /** Back to every refresh (the engine's activity calls it). */
+    void wake();
 
     /** Reads the engine and tells the listeners what changed. nowSeconds: a monotonic clock. */
     void tick(double nowSeconds);
@@ -115,7 +128,11 @@ public:
     const DeviceReadout* device(std::int64_t deviceId) const;
 
 private:
-    void tickBody(double nowSeconds);
+    /** Returns the aspects that changed. */
+    std::uint32_t tickBody(double nowSeconds);
+    void timerCallback() override;
+    void handleAsyncUpdate() override { wake(); }
+    void startVBlank();
     std::int64_t previewAt = -1;
     std::uint64_t previewGen = 0;
     /** Reads the watched devices; true if any readout changed. */
@@ -148,6 +165,8 @@ private:
     SessionController& session;
     AudioEngine& engine;
     std::unique_ptr<juce::VBlankAttachment> vblank;
+    juce::Component* attached = nullptr;
+    double lastChangeSeconds = -1.0; // the last tick that changed more than the load
     std::vector<Subscriber> subscribers;
 
     TransportState transportState{};
