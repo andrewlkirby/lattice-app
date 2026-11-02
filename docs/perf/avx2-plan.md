@@ -192,6 +192,26 @@ pattern instead of hardware gathers. `vdivps` gains little from 256 bits, so div
       in half precision (F16C), 25% fewer bytes per sample with about −100 dB of added error;
     - the octave copies above: the voices pitched up more than an octave read half the taps;
     - or a shorter kernel, which changes the quality spec (−90 dB aliasing, 0.1 dB flatness).
+  - **Re-measured in M4 (2026-11-02, quiet machine):** sinc 3.1%, Draft 1.12%, over budget,
+    with the Synth unchanged. The M3 code, built again from c78631e, measured the same, and the
+    compiler hadn't changed: Windows had been updated straight after the M3 run (build 26300.9457
+    to 26300.9711, 2026-10-14 and 15). The cause was outside the kernel (the kernel benchmark was
+    no slower): with the kernel stubbed out the Sampler still took 0.97%, and the amp envelope
+    alone 0.85%. Its sustain stage updated members through a loop that also wrote `out`, which may
+    alias them, so every sample stored and reloaded them; a store-to-load chain like that is what
+    a speculative-store-bypass mitigation slows, which would explain why only this code got
+    slower (likely; not confirmed). Fixed (`dsp::Adsr`, also the Synth's): the sustain stage works
+    in locals and, once at the level, fills; a step that no longer changes the value (a few hundred
+    ulps short, in float) lands on the level, the same in `next()` and `renderBlock()`.
+  - **And the rows:** each phase row is now stored without its difference to the next (the
+    difference is taken as it's read: one subtract more), and the unity kernel has 384 phase rows
+    instead of 512, so the table is 37% of its size. Measured, linear interpolation between rows
+    adds at most -101.6 dB of error up to 0.9 x Nyquist (512 rows: -105.4 dB; 256: -95.5 dB; the
+    spec is -90 dB). Storing only half the rows (the kernel is symmetric, the other half read
+    backwards and reversed) was tried and measured slower: 3.14% against 2.81%.
+  - **Result** (development machine, 64 / 256-sample blocks): sinc 2.32 / 2.10%, Draft 0.58 /
+    0.55%; the Synth cases 0.2-0.3% lower (the same envelope). The quiet-machine figures are in
+    `docs/perf/reference-machine.md`.
   - Tests: both block kernels against one position at a time (`sincInterpolate`) for every third
     level, stereo and mono, every block length up to 9 and then every 13th up to 61; the Sampler
     rendered at each level must match within 1e-5; the Sampler's quality tests unchanged.
