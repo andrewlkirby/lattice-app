@@ -23,6 +23,96 @@ Playing pads must feel as tight as a dedicated instrument. **Pad-to-sound latenc
 - Push 1 (possible later as a generic definition with a text display)
 - scripting inside definition files (they are JSON only for now; see the Risks section)
 
+## Starting point (updated 2026-11-02, after M4)
+
+### What M2–M4 leave to build on
+- **Used as they are:**
+  - `CommandRegistry`: every action has a stable ID, so the modes perform commands rather than calling into views;
+  - `SessionController` for launches, recording, tap tempo and note previews, and `LiveSet` with its `UndoManager` for edits;
+  - `SessionSelectionModel`, the shared selection (track, scene, and whose devices are shown);
+  - `EngineStateFeed`: slot states, track play states, the transport and meters, once per display refresh, calm at 4 Hz;
+  - `ParameterPager::pagesFor(device, encoders)`, for any encoder count;
+  - per-track and per-clip highlight sets (`LiveSet::effectiveHighlight`), the tuning registry and `TrackTuning`;
+  - MIDI Map's gestures (one undo step per turn, ended at rest), which encoder turns follow too;
+  - the Preferences → Controllers tab (empty so far).
+- **What has to change:**
+  - **Live MIDI isn't timestamped yet.** `MidiInputQueue` plays everything at sample 0 of the next block, and its producers share a mutex. The fast path needs lock-free queues, one per producer thread, and each event placed at the sample its timestamp gives (5b). The command queue (`MpscQueue`) is the same, for launches from a MIDI thread.
+  - **MIDI Map reads remote input on the message thread** (`takeRemoteMidi`). Surface ports bypass it: their driver reads its input directly, and only controls a surface leaves unassigned go on to MIDI Map (5e).
+  - `ComputerKeyboardInput` stays as it is. It keeps working alongside every controller.
+
+### Order of work
+- **Hardware comes last.** The modes are built and tested on `FakeSurface` and Virtual Push first, because no controller has been bought yet. Each driver is then a thin layer under modes that already work.
+- **Phases:** 5a → 5b → 5c → 5d → 5e → 5f → 5g.
+  - 5c and 5d both depend only on 5a and 5b, so they can swap places. 5e and 5f only depend on 5c.
+  - **Bringing up the purchased device** ("Hardware choice", below) goes in whenever it arrives, after its driver's phase.
+- **Each phase** ends the same way as in M4:
+  - its tests pass on Windows and Linux;
+  - the performance targets it touches are checked (the idle budget with Virtual Push open, LED response, pad latency);
+  - the user does a short hands-on check.
+
+#### 5a: Foundation, Virtual Push, Session mode
+- **`src/control/surface/` holds the device-independent types:**
+  - `SurfaceCapabilities` and the `Role` names;
+  - `SurfaceInput` events: pad down, pressure and up (row, column, velocity); button down and up (role); encoder turn (index, delta in steps) and touch; strip;
+  - `LedFrame`: each pad's and button's color and animation;
+  - `DisplayFrame`: what each display column shows (structured data; it's drawn in 5c).
+- **`SurfaceDriver`** is the interface every driver implements: its capabilities, an input callback, and LED and display frames out. `FakeSurface` implements it for the tests. **Capability presets** for every candidate device and the Virtual Push sizes are written now (see "Hardware choice").
+- **`SurfaceController` and `ModeStack`** run on the message thread. They read a `SurfaceContext`: the commands, the session, the selection, and the feed.
+  - Modes are plain classes, so tests drive them headlessly.
+  - LEDs are only re-computed when the feed or the selection reports a change. Drivers get the differences only.
+- **Session mode** and the **global controls**: play, record, session record, metronome, tap tempo, undo/redo (with Shift), new, stop all, and the Shift overlay.
+- **Virtual Push** (`src/control/virtual/`):
+  - a panel in the shell (View menu, or a shortcut) that can also open as its own window;
+  - grid size, encoder count and the button groups shown come from Preferences → Controllers;
+  - mouse input: velocity from the click position, right-click latches a pad;
+  - it repaints only the pads whose LEDs changed. Blinking and pulsing follow the transport's beat from the feed, so a still set costs nothing.
+- **Tests:**
+  - Session mode on every candidate size: the pad→slot mapping, navigation, page jumps, LED colors and animations for each clip state, and the overview;
+  - graceful degradation, with only a grid and no buttons;
+  - the LED diff;
+  - the idle budget with Virtual Push shown.
+- **Hands-on check:** launch clips and scenes and use the transport from Virtual Push, at 8×8 and at 8×12.
+
+#### 5b: Playing: the fast path and Note mode
+- **Engine:**
+  - live MIDI and commands from lock-free queues, one per producer, with no mutex;
+  - events placed at the sample offset their timestamp gives, one block after they arrive, so the delay is constant and there's no jitter;
+  - the input latency probe covers it.
+- **`PadNoteMap`**, through `RtShared`: a driver's input thread plays pads without the message thread.
+- **Note mode layouts:** Colundi/table (with its presets), In Key, and Chromatic. Also the Scale/Tuning menu overlay, octave buttons, the highlight and anchor colors, and duplicate pads lighting together.
+- **Expression:** a velocity curve, polyphonic and channel pressure, and the touch strip modes.
+- **Tests:** the layout formulas and colors; timing through `OfflineRenderer`; a stalled UI (500 ms) not delaying notes or launches; and RealtimeCheck on the input threads during a pad fuzz.
+- **Hands-on check:** play the Colundi table from Virtual Push.
+
+#### 5c: Display and encoders: Device and Mix modes
+- **The display renderer,** shared by Virtual Push and Push: it draws a `DisplayFrame` into an image at the device's size, in one column per encoder, with a detail view while an encoder is touched.
+- **Encoders:**
+  - Device mode (including rack navigation and macros first);
+  - Mix mode;
+  - an encoder turn is one gesture, so a turn is one undo step.
+- **Tests:** the pages match `ParameterPager` for 8, 16 and 32 encoders, plus display snapshots.
+
+#### 5d: Drum, the step sequencers, and the Clip and Browse modes
+- The Drum layout and its zones, the melodic step sequencer, and the Clip and Browse modes, with previews on the M4 preview bus.
+
+#### 5e: Generic MIDI controllers
+- The definition schema and loader, the encoder decoders, and the included definitions (all marked unverified).
+- Automatic detection, the Preferences → Controllers tab, how surfaces and MIDI Map work together, and the Surface Monitor.
+- The learn wizard.
+
+#### 5f: Push 2/3 driver
+- MIDI, the LED palette sysex, and the display over libusb (fetched by CMake with a pinned hash, like the other dependencies).
+- Detecting a missing WinUSB driver, and the udev rule for Linux.
+- It's tested against reference bytes built from Ableton's spec. Hardware checks wait for a unit.
+
+#### 5g: Several devices, MPE, and the quality pass
+- Several surfaces at once, with shared or independent selection.
+- MPE: Virtual Push's touch slide and timbre first, then Push 3 when a unit is available.
+- **Quality pass:**
+  - LED and display response measured at ≤ 1 frame;
+  - pad-to-sound latency measured on the reference machine (a quiet-machine session, arranged with the user first);
+  - the UI stress soak with Virtual Push open.
+
 ## Architecture — `src/control/`
 
 ```
