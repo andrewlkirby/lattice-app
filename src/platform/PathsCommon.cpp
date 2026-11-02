@@ -1,5 +1,29 @@
 #include "platform/Platform.h"
 
+namespace lattice::platform
+{
+
+namespace
+{
+juce::File& testUserData()
+{
+    static juce::File folder;
+    return folder;
+}
+} // namespace
+
+juce::File userDataFolder()
+{
+    return testUserData() != juce::File() ? testUserData() : defaultPaths().userData;
+}
+
+void setUserDataFolderForTests(const juce::File& folder)
+{
+    testUserData() = folder;
+}
+
+} // namespace lattice::platform
+
 namespace lattice::platform::detail
 {
 

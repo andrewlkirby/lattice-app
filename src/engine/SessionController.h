@@ -22,12 +22,17 @@ namespace lattice
     undo history, keeps the engine's snapshot up to date, turns user actions into engine commands,
     and turns what the engine reports (recorded notes, scene tempos) back into document edits.
 
-    Every surface (the debug UI now, the real UI in M4, the Virtual Push and Push in M5) drives the
+    Every surface (the UI, the Virtual Push and Push in M5) drives the
     session through this one API, so they all behave the same. Message thread only. */
-class SessionController final : private juce::Timer
+class SessionController final : private juce::Timer, private juce::AsyncUpdater
 {
 public:
+    /** The engine's events are read timerHz times a second while the transport runs, a clip
+        records or events come in, and calmHz times a second once nothing has for calmAfterSeconds
+        (idle CPU, charter §1); the engine's activity (AudioEngine::noteActivity) wakes it. */
     static constexpr int timerHz = 30;
+    static constexpr int calmHz = 4;
+    static constexpr double calmAfterSeconds = 0.5;
 
     SessionController(AudioEngine& engine, TuningRegistry& tunings,
                       const DeviceRegistry& devices = DeviceRegistry::builtin());
@@ -40,11 +45,28 @@ public:
     /** The device types this session creates devices from. */
     const DeviceRegistry& deviceRegistry() const noexcept { return deviceTypes; }
 
+    /** Begins an undo step named for what's done and where, as `where` is now (undoNames):
+        "Rename device · Synth · 2 MIDI". An invalid `where` (the whole set): the action alone. */
+    void beginEdit(const juce::String& action, const juce::ValueTree& where = {});
+    /** The name beginEdit gives. */
+    juce::String editName(const juce::String& action, const juce::ValueTree& where) const;
+
     /** Publishes any pending document change to the engine now. */
     void flush() { builder.rebuildIfNeeded(); }
 
+    // --- Auto-arm (docs/05-m4-ui.md, 4b) -----------------------------------------------------------
+    /** The selected track, armed while no track is armed by hand (0: none). The UI sets it as the
+        selection moves, when auto-arm is on. It isn't in the document. */
+    void setAutoArmTrack(std::int64_t trackId) { builder.setAutoArmTrack(trackId); }
+    /** Armed by hand, or auto-armed. */
+    bool isArmed(int trackIndex) const;
+    /** Armed only by auto-arm. */
+    bool isAutoArmed(int trackIndex) const;
+
     // --- Engine commands --------------------------------------------------------------------------
-    /** Clicking a slot: launches its clip; on an empty slot, starts recording if the track is armed,
+    /** On a group track's slot: launches the clips in that row on every track in the group (and
+        stops those whose slot is empty). Otherwise, as clicking a slot: launches its clip; on an
+        empty slot, starts recording if the track is armed,
         otherwise presses the slot's stop button. Clicking a clip that is recording ends it. */
     void launchSlot(int trackIndex, int sceneIndex);
     /** Releasing a slot's launch button (Gate clips). */
@@ -62,6 +84,12 @@ public:
     bool isSessionRecordOn() const noexcept { return transport().sessionRecord; }
     void setRandomSeed(std::uint64_t seed);
 
+    /** Auditions a note on a track's instrument (clicking a note or a key in the piano roll), whatever
+        the track's arm and monitoring; it isn't recorded. velocity 0 ends it. */
+    void previewNote(int trackIndex, int pitch, int velocity);
+    /** Ends every note previewNote() started and hasn't ended. */
+    void endPreviews();
+
     /** Tap tempo: the average of the last 4 intervals; a pause of more than 2 s starts over.
         nowSeconds is for tests; by default the current time is used. */
     void tapTempo(double nowSeconds = -1.0);
@@ -77,12 +105,16 @@ public:
     std::shared_ptr<TrackProcessor> processorForTrack(int trackIndex) const;
 
     /** Applies what the engine reported (the timer calls this; tests call it directly). */
-    void processEngineEvents();
+    /** Returns true if any event came. */
+    bool processEngineEvents();
 
     // --- Files ------------------------------------------------------------------------------------
     void newSet(int numTracks = LiveSet::defaultTracks, int numScenes = LiveSet::defaultScenes);
     juce::Result saveSet(const juce::File& file);
     juce::Result loadSet(const juce::File& file);
+    /** Opens a recovery copy (docs/05-m4-ui.md, 4g) as the set it was made from: named as
+        `original` (none: never saved), and unsaved until it's saved again. */
+    juce::Result restoreSet(const juce::File& copy, const juce::File& original);
     const juce::File& currentFile() const noexcept { return file; }
     /** True if the document changed since it was last saved or loaded. */
     bool hasUnsavedChanges() const noexcept;
@@ -111,6 +143,7 @@ private:
     };
 
     void timerCallback() override;
+    void handleAsyncUpdate() override;
     void send(const EngineCommand& command);
     void startRecording(int trackIndex, int sceneIndex);
     void closeNote(std::int64_t clipId, Capture& capture, int pitch, double endBeat);
@@ -120,6 +153,8 @@ private:
 
     AudioEngine& engine;
     TuningRegistry& registry;
+    bool calm = false;
+    double lastBusySeconds = 0.0;
     const DeviceRegistry& deviceTypes;
     juce::UndoManager undo;
     LiveSet liveSet{&undo};
@@ -130,6 +165,7 @@ private:
     std::map<std::int64_t, Capture> captures;   // by clip ID
     std::map<std::int64_t, bool> newRecordings; // clip ID -> open-ended; clips created to record into
     std::deque<double> taps;
+    std::vector<std::pair<std::int64_t, int>> previews; // (track ID, pitch) sounding
 };
 
 } // namespace lattice

@@ -164,6 +164,7 @@ std::vector<ParameterSpec> makeSpecs()
         ParameterSpec::continuous("out.volume", "Volume", -70.0f, 6.0f, -6.0f, ParamUnit::Decibels).withCentre(-12.0f),
         "Output");
     set(P::outPan, ParameterSpec::continuous("out.pan", "Pan", -1.0f, 1.0f, 0.0f).withFormatter(panText), "Output");
+    set(P::tuningMode, ParameterSpec::choice("voice.tuning", "Tuning", {"Track", "Fixed (12-TET)", "Nearest Step"}, 0), "Voice");
     return s;
 }
 
@@ -325,6 +326,7 @@ void SynthDevice::readPatch() noexcept
     p.mode = static_cast<VoiceMode>(juce::roundToInt(value(P::voiceMode)));
     p.polyphony = juce::jlimit(1, maxPolyphony, juce::roundToInt(value(P::polyphony)));
     p.glideSeconds = value(P::glideTime) * 0.001;
+    p.tuningMode = static_cast<TuningMode>(juce::jlimit(0, 2, juce::roundToInt(value(P::tuningMode))));
 
     float l = 0.0f;
     float r = 0.0f;
@@ -398,6 +400,7 @@ void SynthDevice::startVoice(Voice& v, int note, float velocity, int channel, bo
     v.stealing = false;
     v.age = ++noteCounter;
     v.pitchTarget = note;
+    v.snappedFrom = -1.0; // snapped afresh each note (the track's tuning may have changed)
 
     const double from = fresh ? (lastPitch >= 0.0 ? lastPitch : note) : v.pitch;
     if (patch.glideSeconds > 0.0 && from != note && (!fresh || lastPitch >= 0.0))
@@ -608,21 +611,24 @@ void SynthDevice::process(DeviceBuffers& io, const DeviceTimeInfo& time) noexcep
         std::fill_n(right, n, 0.0f);
 
     int pos = 0;
+    bool sounded = false;
     for (const auto& e : *io.midiIn)
     {
         const int at = std::clamp(e.sampleOffset, 0, n);
         if (at > pos)
         {
-            renderSegment(left + pos, right + pos, at - pos, time, pos);
+            sounded = renderSegment(left + pos, right + pos, at - pos, time, pos) || sounded;
             pos = at;
         }
         handleEvent(e, time);
     }
     if (pos < n)
-        renderSegment(left + pos, right + pos, n - pos, time, pos);
+        sounded = renderSegment(left + pos, right + pos, n - pos, time, pos) || sounded;
 
-    // Output level and pan, smoothed.
-    for (int i = 0; i < n; ++i)
+    // Output level and pan, smoothed. Silence at settled gains stays silence, so it's skipped: a
+    // synth with no notes costs next to nothing (charter §1, idle CPU).
+    const bool settled = outGainLeft == targetGainLeft && outGainRight == targetGainRight;
+    for (int i = 0; i < ((sounded || !settled) ? n : 0); ++i)
     {
         outGainLeft += std::clamp(targetGainLeft - outGainLeft, -gainStep, gainStep);
         outGainRight += std::clamp(targetGainRight - outGainRight, -gainStep, gainStep);
@@ -645,9 +651,10 @@ void SynthDevice::process(DeviceBuffers& io, const DeviceTimeInfo& time) noexcep
     }
 }
 
-void SynthDevice::renderSegment(float* left, float* right, int numSamples, const DeviceTimeInfo& time,
+bool SynthDevice::renderSegment(float* left, float* right, int numSamples, const DeviceTimeInfo& time,
                                 int offset) noexcept
 {
+    bool sounded = false;
     const bool ladder = patch.filter == FilterType::Ladder;
     const bool steep = patch.filter == FilterType::LowPass24 || patch.filter == FilterType::HighPass24;
     dsp::SvfMode svfMode = dsp::SvfMode::LowPass;
@@ -669,7 +676,8 @@ void SynthDevice::renderSegment(float* left, float* right, int numSamples, const
             if (v.isActive())
                 active[static_cast<std::size_t>(numActive++)] = &v;
         if (numActive == 0)
-            return;
+            return sounded; // the rest stays silent (as before: no voice to tidy)
+        sounded = true;
 
         std::array<dsp::FilterLane, voiceSlots * 2> lanes{};
         int numLanes = 0;
@@ -705,6 +713,7 @@ void SynthDevice::renderSegment(float* left, float* right, int numSamples, const
             v.stealing = false;
             v.gate = v.keyDown = false;
         }
+    return sounded;
 }
 
 void SynthDevice::renderVoiceBlock(Voice& v, int start, int m, const DeviceTimeInfo& time, int offset) noexcept
@@ -799,8 +808,27 @@ void SynthDevice::renderVoiceBlock(Voice& v, int start, int m, const DeviceTimeI
         }
         double bendSteps = 0.0;
         double bendCents = 0.0;
-        tuning.bendOffsets(bend, bendSteps, bendCents);
-        const double basePitch = v.pitch + bendSteps + 24.0 * mod(ModDest::Pitch);
+        const bool fixed = p.tuningMode == TuningMode::Fixed;
+        if (fixed)
+            bendSteps = 2.0 * bend; // as the Sampler's fixed tuning: +-2 semitones
+        else
+            tuning.bendOffsets(bend, bendSteps, bendCents);
+        const auto hzAt = [&](double pitch, double cents) {
+            return fixed ? referenceHz * std::exp2((pitch - 60.0) / 12.0 + cents / 1200.0) : tuning.hzAt(pitch, cents);
+        };
+        double notePitch = v.pitch;
+        if (p.tuningMode == TuningMode::NearestStep)
+        {
+            // Snapped again only when the pitch moves (the search is a loop over the table).
+            if (v.snappedFrom != v.pitch)
+            {
+                const int nearest = tuning.nearestNote(referenceHz * std::exp2((v.pitch - 60.0) / 12.0));
+                v.snappedFrom = v.pitch;
+                v.snappedTo = nearest >= 0 ? nearest : -1000.0; // none mapped: silent
+            }
+            notePitch = v.snappedTo;
+        }
+        const double basePitch = notePitch + bendSteps + 24.0 * mod(ModDest::Pitch);
 
         std::uint32_t targetInc[2][maxUnison]{};
         dsp::MipmappedWave::Position at[2][maxUnison]{};
@@ -808,7 +836,7 @@ void SynthDevice::renderVoiceBlock(Voice& v, int start, int m, const DeviceTimeI
         for (int o = 0; o < 2; ++o)
         {
             const double pitch = basePitch + p.transpose[o] + 24.0 * mod(o == 0 ? ModDest::Osc1Pitch : ModDest::Osc2Pitch);
-            const double hz = tuning.hzAt(pitch, p.detune[o] + bendCents);
+            const double hz = hzAt(pitch, p.detune[o] + bendCents);
             oscHz[o] = hz;
             for (int u = 0; u < unison; ++u)
             {
@@ -840,7 +868,7 @@ void SynthDevice::renderVoiceBlock(Voice& v, int start, int m, const DeviceTimeI
         const std::int64_t subStep = (static_cast<std::int64_t>(subTarget) - static_cast<std::int64_t>(v.subInc)) / m;
 
         // --- Filter ----------------------------------------------------------------------------------
-        const double noteHz = oscHz[0] > 0.0 ? oscHz[0] : tuning.hzAt(v.pitch);
+        const double noteHz = oscHz[0] > 0.0 ? oscHz[0] : hzAt(notePitch, 0.0);
         const double keyFactor = noteHz > 0.0 ? std::pow(noteHz / referenceHz, static_cast<double>(p.keytrack)) : 1.0;
         const double octavesUp = p.envAmount * env2Value + p.filterVelocity * v.velocity + 6.0 * mod(ModDest::Cutoff);
         const double cutoff = std::clamp(p.cutoff * keyFactor * std::exp2(octavesUp), 20.0, 0.45 * sr);

@@ -475,7 +475,9 @@ machine (2026-10-14).
 | Saturator 4× | 0.27 / 0.26 | 0.26 / 0.24 | 0.5 |
 | EQ Eight, Compressor, Delay, Chorus, Auto Filter, Saturator 2×, Limiter, Utility | 0.003 – 0.33 | 0.001 – 0.31 | 0.5 |
 
-Every case is within its budget, and the budgets are fixed at these values. The Synth's unison 4 is
+Every case is within its budget, and the budgets are fixed at these values. (Re-measured in M4,
+2026-11-02, after a Windows update: the Sampler was over until its envelope and kernel rows were
+reworked; see `docs/perf/avx2-plan.md`, step 4.) The Synth's unison 4 is
 the closest (3% under); below the budgets, the 10% benchmark gate and the 5% instruction-count gate
 (charter §3) catch regressions.
 

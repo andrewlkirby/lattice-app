@@ -1,0 +1,4 @@
+# Instructions in the UI benchmark's frames (lattice_ui_bench --frames 20: every case), GCC linux-release in docker/linux.Dockerfile.
+# Written by scripts/linux-test.sh --update-baseline; update it in the same commit as a
+# deliberate change, with the reason (charter §3).
+3128770108

@@ -71,6 +71,15 @@ public:
 
     juce::Result load(const PresetInfo& info, Preset& out) const;
 
+    /** A preset by what a drag names it (ui::drag::preset): an index into all(),
+        "factory:<resource>", or a user preset's path. Null if there's none. */
+    const PresetInfo* find(const juce::String& which) const;
+    /** The browser's key for a preset: "factory:<resource>", or the file's path. */
+    static juce::String keyOf(const PresetInfo& info)
+    {
+        return info.factory ? "factory:" + info.factoryResource : info.file.getFullPathName();
+    }
+
     /** Where a device type's user presets go: the device's name as a folder. */
     juce::File userFolderFor(const juce::String& deviceType) const;
 

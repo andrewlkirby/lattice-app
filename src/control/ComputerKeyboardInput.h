@@ -27,7 +27,7 @@ public:
     using Sender = std::function<void(const juce::MidiMessage&)>;
 
     static constexpr int numNoteKeys = 17;
-    static constexpr const char* noteKeys = "awsedftgyhujkolp;";
+    static constexpr const char* noteKeys = "awsedftgyhujkolp;"; // the default row (Live's)
     static constexpr int defaultVelocity = 100;
     static constexpr int velocityStep = 20;
 
@@ -37,8 +37,20 @@ public:
 
     explicit ComputerKeyboardInput(Sender sender);
 
-    /** Adopts a tuning's page size and moves the range to its default page. Releases held notes. */
+    /** Adopts a tuning's page size (pageSizeFor's, if set) and moves the range to its default page.
+        Releases held notes. */
     void configureForTuning(const TuningTable& tuning);
+    /** The page size for a tuning when it isn't the tuning's own (the Preferences' per-tuning
+        range step, docs/05-m4-ui.md, 4g); 0: the tuning's. */
+    std::function<int(const TuningTable&)> pageSizeFor;
+
+    /** The 17 keys that play notes, lowest first (another keyboard layout's row). It must be 17
+        different characters, none of them Z, X, C, V or M; returns false (and keeps the old row)
+        otherwise. Releases held notes. */
+    bool setNoteKeys(const juce::String& keys);
+    const juce::String& getNoteKeys() const noexcept { return layout; }
+    /** Whether a row of keys can be the note keys. */
+    static bool isValidNoteKeys(const juce::String& keys);
 
     /** Returns true if the key was handled. keyCode identifies the physical key for keyUp. */
     bool keyDown(juce::juce_wchar character, int keyCode);
@@ -72,7 +84,11 @@ private:
         int note;
     };
 
+    /** The note a key plays in this keyboard's row. */
+    std::optional<int> noteFor(juce::juce_wchar key) const noexcept;
+
     Sender send;
+    juce::String layout{noteKeys};
     std::vector<Held> held;
     bool enabled = true;
     int pageSize = 12;

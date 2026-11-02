@@ -8,9 +8,11 @@ include(Catch)
 
 add_executable(lattice_tests
     test_main.cpp
-    app/DeviceEditorTests.cpp
+    app/HandsOnTests.cpp
     control/ComputerKeyboardTests.cpp
     core/AudioCallbackStatsTests.cpp
+    core/GroupTrackTests.cpp
+    core/JobPoolTests.cpp
     core/LiveSetTests.cpp
     core/RealtimeCheckTests.cpp
     core/RtSharedTests.cpp
@@ -27,18 +29,42 @@ add_executable(lattice_tests
     devices/SynthTests.cpp
     devices/TuningTestSynthTests.cpp
     engine/AudioEngineTests.cpp
+    engine/GroupTrackEngineTests.cpp
+    engine/LiveInputTests.cpp
     engine/MixerRoutingTests.cpp
     engine/ParallelProcessingTests.cpp
     engine/SessionEngineTests.cpp
     engine/SnapshotStressTests.cpp
     engine/TestToneTests.cpp
+    engine/TrackTuningSettingsTests.cpp
+    library/LibraryTests.cpp
     platform/PathsTests.cpp
     resources/ResourceTests.cpp
     tuning/ColundiParserTests.cpp
     tuning/ScalaAndRegistryTests.cpp
-    tuning/TrackTuningTests.cpp)
+    tuning/TuningEditsTests.cpp
+    tuning/TrackTuningTests.cpp
+    ui/BrowserTests.cpp
+    ui/ClipViewTests.cpp
+    ui/DeviceViewTests.cpp
+    ui/CommandTests.cpp
+    ui/FeedTests.cpp
+    ui/SessionViewTests.cpp
+    ui/ShellTests.cpp
+    ui/FilesTests.cpp
+    ui/EngineEditTests.cpp
+    ui/FindTests.cpp
+    ui/UndoFuzzTests.cpp
+    ui/UndoNamesTests.cpp
+    ui/MappingTests.cpp
+    ui/PreferencesTests.cpp
+    ui/ThemeTests.cpp
+    ui/TuningViewTests.cpp
+    ui/WidgetTests.cpp
+    ui/AccessibilityTests.cpp
+    ui/SnapshotTests.cpp)
 target_include_directories(lattice_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(lattice_tests PRIVATE lattice_core lattice_debug_ui Catch2::Catch2)
+target_link_libraries(lattice_tests PRIVATE lattice_core lattice_ui lattice_app Catch2::Catch2)
 if(NOT LATTICE_TSAN) # ThreadSanitizer's runtime defines operator new/delete itself
     target_link_libraries(lattice_tests PRIVATE lattice_alloc_hooks)
 endif()
@@ -73,3 +99,10 @@ add_executable(lattice_bench bench/DeviceBench.cpp)
 target_include_directories(lattice_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(lattice_bench PRIVATE lattice_core)
 lattice_set_warnings(lattice_bench)
+
+# UI benchmarks (docs/05-m4-ui.md, "Tests" 10): frame times of the busiest views against the
+# charter's 8 ms. scripts/linux-test.sh --callgrind counts its instructions too.
+add_executable(lattice_ui_bench bench/UiBench.cpp)
+target_include_directories(lattice_ui_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(lattice_ui_bench PRIVATE lattice_core lattice_ui)
+lattice_set_warnings(lattice_ui_bench)

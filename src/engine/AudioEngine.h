@@ -9,6 +9,7 @@
 #include "engine/EngineSnapshot.h"
 #include "engine/MidiInputQueue.h"
 #include "engine/WorkerPool.h"
+#include "engine/PreviewPlayer.h"
 #include "engine/TestToneSource.h"
 #include "devices/racks/RackLayout.h"
 #include "engine/session/SessionProcessor.h"
@@ -19,6 +20,7 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <map>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -43,10 +45,27 @@ public:
 
     juce::AudioDeviceManager& getDeviceManager() noexcept { return deviceManager; }
     TestToneSource& testTone() noexcept { return tone; }
+    /** The browser's preview bus, mixed after the master. */
+    PreviewPlayer& preview() noexcept { return previewPlayer; }
 
     /** Live MIDI to the armed tracks (any thread except the audio thread). Enabled MIDI input
         devices are routed here automatically. */
     MidiInputQueue& midiInput() noexcept { return midiQueue; }
+    /** The source number live MIDI from this input carries (by the input's identifier; 1 to 255,
+        given out on first use and kept for the session). Any thread except the audio thread. */
+    std::uint8_t midiSourceFor(const juce::String& inputIdentifier);
+
+    /** MIDI Map's inputs (docs/05-m4-ui.md, 4g): what they send is kept for the message thread
+        (takeRemoteMidi). An input open only for that (its Track switch off) is in notForTracks:
+        its notes don't reach the tracks. Message thread. */
+    void setRemoteInputs(const juce::StringArray& remote, const juce::StringArray& notForTracks);
+    struct RemoteMidi
+    {
+        juce::String input;
+        juce::MidiMessage message;
+    };
+    /** Message thread: what the remote inputs sent since the last call, oldest first. */
+    std::vector<RemoteMidi> takeRemoteMidi();
     AudioCallbackStats& callbackStats() noexcept { return stats; }
     /** Input latency probe: MIDI arrival to the end of the callback that plays it. */
     LatencyStats& inputLatency() noexcept { return latency; }
@@ -61,10 +80,34 @@ public:
     {
         snapshots.collect();
         workers.collect();
+        previewPlayer.collectGarbage();
     }
 
     /** Any thread except the audio thread. Returns false if the queue was full. */
-    bool sendCommand(const EngineCommand& command) { return commands.push(command); }
+    bool sendCommand(const EngineCommand& command)
+    {
+        noteActivity();
+        return commands.push(command);
+    }
+
+    /** Something the message thread may soon have to follow: a command, a new snapshot, a
+        preview, MIDI coming in. What polls the engine (SessionController, ui::EngineStateFeed) does
+        so less often while nothing happens, and wakes on this: each listener's update is
+        triggered. Any thread but the audio thread. */
+    void addActivityListener(juce::AsyncUpdater* listener);
+
+    /** Something that takes what the device plays, each callback, on the audio thread (the soak's
+        recording: SoakTest). It must not block or allocate. */
+    struct OutputTap
+    {
+        virtual ~OutputTap() = default;
+        virtual void write(const float* const* channels, int numChannels, int numSamples) noexcept = 0;
+    };
+    /** From the next callback on (nullptr: none). Message thread; returns once the audio thread
+        no longer uses the tap before, so it can be deleted. */
+    void setOutputTap(OutputTap* tap);
+    void removeActivityListener(const juce::AsyncUpdater* listener);
+    void noteActivity();
     /** Message thread (the single consumer). Events from the audio thread. */
     SpscFifo<EngineEvent>& engineEvents() noexcept { return events; }
     /** Transport state and master peaks (any thread, see SessionProcessor). */
@@ -76,6 +119,10 @@ public:
         with it. */
     void setWorkerThreads(int count);
     int workerThreads() const noexcept { return workerCount; }
+    /** Message thread. Each thread's time in track work so far, in nanoseconds: [0] the audio
+        thread, then each worker (WorkerPool::busyNanoseconds()). Empty with no workers; starts
+        over when the worker count changes. */
+    std::vector<std::uint64_t> workerBusyNanoseconds() const;
 
     /** Message thread. A new track processor, already prepared for the current device settings,
         and re-prepared whenever they change. */
@@ -128,13 +175,24 @@ public:
 private:
     void handleIncomingMidiMessage(juce::MidiInput* source, const juce::MidiMessage& message) override;
 
+    std::mutex midiSourcesLock;
+    std::map<juce::String, std::uint8_t> midiSources;
+
     juce::String openDeviceNow(const juce::XmlElement* savedState);
     void waitForOpenThread();
 
     juce::AudioDeviceManager deviceManager;
     TestToneSource tone;
+    PreviewPlayer previewPlayer;
     AudioCallbackStats stats;
     LatencyStats latency;
+    std::mutex remoteLock; // MIDI threads and the message thread; never the audio thread
+    std::mutex activityLock; // the same threads
+    std::vector<juce::AsyncUpdater*> activityListeners;
+    std::atomic<OutputTap*> outputTap{nullptr};
+    std::atomic<int> outputTapUsers{0}; // callbacks between taking the tap and finishing with it
+    juce::StringArray remoteInputs, nonTrackInputs;
+    std::vector<RemoteMidi> remoteInbox;
     MidiInputQueue midiQueue;
     MpscQueue<EngineCommand> commands{commandQueueSize};
     SpscFifo<EngineEvent> events{eventQueueSize};

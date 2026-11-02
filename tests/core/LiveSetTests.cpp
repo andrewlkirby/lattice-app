@@ -42,6 +42,9 @@ void fill(LiveSet& set)
     set.setTrackMute(2, true);
     set.setTrackTuning(0, "builtin.colundi");
     set.setTrackNoteOffset(0, -3);
+    set.setTrackBendMode(0, 1);
+    set.setTrackBendRangeSteps(0, 5.0);
+    set.setTrackBendRangeCents(1, 1200.0);
     set.setSceneName(1, "Chorus");
     set.setSceneTempo(1, 140.0);
     set.setSceneTimeSignature(2, 3, 4);

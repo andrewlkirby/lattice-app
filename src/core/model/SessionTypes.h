@@ -7,6 +7,14 @@ namespace lattice
 
 /** How a clip reacts to its launch button (docs/03-m2-engine-session.md, "Launch modes").
     Repeat mode is deferred. */
+/** When a track plays its live MIDI input (as in Live). */
+enum class Monitoring : std::uint8_t
+{
+    Auto, // while the track is armed
+    In,   // always
+    Off   // never (an armed track still records it)
+};
+
 enum class LaunchMode : std::uint8_t
 {
     Trigger, // starts on press; release is ignored

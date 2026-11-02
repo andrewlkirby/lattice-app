@@ -30,6 +30,11 @@ namespace lattice
       steps) and gets its frequency from TrackTuning::hzAt once per control block, so glide and
       vibrato move along the active tuning, Colundi included. Increments are interpolated across the
       block, so pitch changes are smooth.
+    - Tuning "Fixed (12-TET)" ignores the track's tuning (as the Sampler's): notes, modulation and
+      bend are semitones from middle C, for drums on Drum Rack pads. "Nearest Step" takes the
+      note's 12-TET pitch and plays the track tuning's note nearest it (modulation and bend then
+      in its steps): a tom aimed at 98 Hz lands on a step of Colundi, of 12-TET, or of a Scala
+      file, near 98 Hz.
 
     Voice stealing takes a released voice first, then the oldest, and fades the stolen voice out
     over 3 ms in a spare voice slot while the new note starts at once.
@@ -104,6 +109,13 @@ public:
         count
     };
 
+    enum class TuningMode : std::uint8_t
+    {
+        Track,       // notes are the track tuning's
+        Fixed,       // 12-TET from middle C, whatever the track's tuning
+        NearestStep  // the track tuning's note nearest the note's 12-TET pitch
+    };
+
     enum class VoiceMode : std::uint8_t
     {
         Poly,
@@ -136,6 +148,7 @@ public:
             mod8Source, mod8Dest, mod8Amount,
             voiceMode, polyphony, glideTime,
             outVolume, outPan,
+            tuningMode,
             numParams
         };
     };
@@ -177,6 +190,8 @@ private:
         double pitch = 60.0;       // fractional note, glide included
         double pitchTarget = 60.0;
         double glideRate = 0.0;    // notes per sample (0 = jump)
+        double snappedFrom = -1.0; // Nearest Step: the pitch last snapped, and the note it gave
+        double snappedTo = 0.0;
         float pressure = 0.0f;
         float random = 0.0f;
 
@@ -215,7 +230,8 @@ private:
     void startVoice(Voice& v, int note, float velocity, int channel, bool retrigger) noexcept LATTICE_NONBLOCKING;
     Voice* allocateVoice() noexcept LATTICE_NONBLOCKING;
     void setSustain(bool down) noexcept LATTICE_NONBLOCKING;
-    void renderSegment(float* left, float* right, int numSamples, const DeviceTimeInfo& time,
+    /** False if no voice sounded (the segment stays silent). */
+    bool renderSegment(float* left, float* right, int numSamples, const DeviceTimeInfo& time,
                        int offset) noexcept LATTICE_NONBLOCKING;
     /** One control block of a voice up to its filter: modulation, oscillators, sub and noise into
         the voice's buffers, and the filter and amplitude settings for the block. */
@@ -290,6 +306,7 @@ private:
         VoiceMode mode = VoiceMode::Poly;
         int polyphony = 16;
         double glideSeconds = 0.0;
+        TuningMode tuningMode = TuningMode::Track;
         // Derived: unison detune ratios and pan gains per copy
         std::array<double, maxUnison> unisonRatio{};
         std::array<float, maxUnison> unisonLeft{};

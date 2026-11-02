@@ -4,9 +4,12 @@
 // an instruction count that doesn't depend on how fast or busy the machine is.
 //
 //   lattice_engine_bench [--seconds N] [--block N] [--workers N] [--simd sse2|avx2] [--write-set file.lset]
+//                        [--stopped 1] [--new-set 1]
 //
 // --workers: parallel track processing (default 0: everything on the calling thread, which is
 // what callgrind counts; -1: WorkerPool::defaultWorkers()).
+// --stopped 1: the transport stays stopped (nothing launched): what an idle app's engine costs.
+// --new-set 1: a new set (the default tracks and their instruments) instead of the reference set.
 
 #include "core/AudioCallbackStats.h"
 #include "devices/dsp/Simd.h"
@@ -68,6 +71,7 @@ int main(int argc, char* argv[])
     int blockSize = 64;
     int workers = 0;
     juce::String writeSet;
+    bool stopped = false, newSet = false;
     for (int i = 1; i + 1 < argc; i += 2)
     {
         const juce::String arg(argv[i]);
@@ -82,6 +86,10 @@ int main(int argc, char* argv[])
             lattice::dsp::setSimdLevel(value == "sse2" ? lattice::dsp::SimdLevel::Sse2 : lattice::dsp::SimdLevel::Avx2);
         else if (arg == "--write-set")
             writeSet = value;
+        else if (arg == "--stopped")
+            stopped = value.getIntValue() != 0;
+        else if (arg == "--new-set")
+            newSet = value.getIntValue() != 0;
     }
 
     lattice::TuningRegistry tunings;
@@ -89,7 +97,10 @@ int main(int argc, char* argv[])
     engine.prepare(sampleRate, blockSize);
     lattice::SessionController session(engine, tunings);
     engine.setWorkerThreads(workers);
-    lattice::perf::buildReferenceSet(session.set());
+    if (newSet)
+        session.newSet(8, 8);
+    else
+        lattice::perf::buildReferenceSet(session.set());
     session.markClean();
 
     if (writeSet.isNotEmpty())
@@ -101,13 +112,15 @@ int main(int argc, char* argv[])
         return result.wasOk() ? 0 : 1;
     }
 
-    session.launchScene(0);
+    if (!stopped)
+        session.launchScene(0);
     const auto totalSamples = static_cast<std::int64_t>(seconds * sampleRate);
     const auto r = renderReferenceSet(engine, blockSize, totalSamples);
 
     std::printf("SIMD: %s\n", lattice::dsp::simdLevelName(lattice::dsp::simdLevel()));
-    std::printf("Reference set (%d tracks, M3 devices), %d-sample blocks at %.0f Hz, %d worker threads\n",
-                lattice::perf::referenceTracks, blockSize, sampleRate, workers);
+    std::printf("%s (%d tracks), %s, %d-sample blocks at %.0f Hz, %d worker threads\n",
+                newSet ? "A new set" : "Reference set", newSet ? 8 : lattice::perf::referenceTracks,
+                stopped ? "stopped" : "playing", blockSize, sampleRate, workers);
     std::printf("Rendered %.1f s of audio in %.3f s: %.1fx real time\n", seconds, r.renderSeconds,
                 seconds / std::max(r.renderSeconds, 1.0e-9));
     std::printf(

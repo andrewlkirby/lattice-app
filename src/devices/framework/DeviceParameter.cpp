@@ -4,22 +4,11 @@
 
 namespace lattice
 {
-namespace
-{
-juce::NormalisableRange<float> makeRange(const ParameterSpec& s)
-{
-    juce::NormalisableRange<float> r(s.minValue, s.maxValue, s.interval);
-    if (s.kind == ParamKind::Float && !std::isnan(s.centreValue) && s.centreValue > s.minValue && s.centreValue < s.maxValue)
-        r.setSkewForCentre(s.centreValue);
-    return r;
-}
-} // namespace
-
 DeviceParameter::DeviceParameter(ParameterSpec spec, int index)
     : juce::RangedAudioParameter(juce::ParameterID(spec.id, 1), spec.name),
       parameterSpec(std::move(spec)),
       parameterIndex(index),
-      range(makeRange(parameterSpec)),
+      range(parameterSpec.normalisableRange()),
       baseValue(parameterSpec.constrain(parameterSpec.defaultValue))
 {
 }

@@ -66,6 +66,15 @@ inline const juce::Identifier arm{"arm"};
 inline const juce::Identifier tuningId{"tuningId"};
 inline const juce::Identifier noteOffset{"noteOffset"};
 inline const juce::Identifier highNotePolicy{"highNotePolicy"};
+inline const juce::Identifier bendMode{"bendMode"};             // 0 cents, 1 table steps (BendMode)
+inline const juce::Identifier bendRangeCents{"bendRangeCents"}; // the bend's reach in Cents mode
+inline const juce::Identifier bendRangeSteps{"bendRangeSteps"}; // and in Table Steps mode
+inline const juce::Identifier trackKind{"kind"};  // "group" for a group track; absent for a MIDI track
+inline const juce::Identifier groupId{"groupId"}; // the ID of the group track a track is in (0: none)
+inline const juce::Identifier folded{"folded"};   // a group track shown folded (not undoable)
+inline const juce::Identifier midiInput{"midiInput"};     // "" all inputs, "computer", or an input's identifier
+inline const juce::Identifier midiChannel{"midiChannel"}; // 0 all channels, or 1-16
+inline const juce::Identifier monitoring{"monitoring"};   // Monitoring
 
 // Return track (also id, name, colour, volumeDb, pan, mute, solo) and send
 inline const juce::Identifier preFader{"preFader"};
@@ -91,6 +100,9 @@ inline const juce::Identifier followA{"followA"};
 inline const juce::Identifier followB{"followB"};
 inline const juce::Identifier followChanceA{"followChanceA"};
 inline const juce::Identifier followTime{"followTime"};
+inline const juce::Identifier clipTimeSigNum{"timeSigNum"}; // the clip's own grid signature (absent: the set's)
+inline const juce::Identifier clipTimeSigDen{"timeSigDen"};
+inline const juce::Identifier highlight{"highlight"}; // on a CLIP or a TRACK: table indices the piano roll marks
 
 // Note
 inline const juce::Identifier pitch{"pitch"};
@@ -99,9 +111,13 @@ inline const juce::Identifier length{"length"};
 inline const juce::Identifier velocity{"velocity"};
 inline const juce::Identifier muted{"muted"};
 
-// Device
+// Device (also name: the user's name for it, absent for the type's; folded: shown as a narrow
+// strip in the Device view, not undoable)
 inline const juce::Identifier deviceType{"type"};
 inline const juce::Identifier enabled{"enabled"};
+inline const juce::Identifier showAll{"showAll"}; // the Device view shows every parameter (not undoable)
+inline const juce::Identifier padStart{"padStart"}; // a Drum Rack's first pad on show (not undoable)
+inline const juce::Identifier padPage{"padPage"};   // a Drum Rack's pads per page: 16, 32, 64; 0 fits (not undoable)
 
 // Rack chain (also volumeDb, pan, mute, solo, name)
 inline const juce::Identifier keyLow{"keyLow"};
@@ -146,7 +162,7 @@ struct NoteData
     (docs/03-m2-engine-session.md, part 2a).
 
         LIVESET  tempo, time signature, global quantization, metronome, ...
-         ├─ TRACKS / TRACK  id, name, colour, mixer values, tuning
+         ├─ TRACKS / TRACK  id, name, colour, mixer values, tuning; kind and groupId for groups
          │     ├─ SLOTS / SLOT (one per scene)  hasStopButton, optional CLIP
          │     │                 └─ CLIP  loop, launch settings, follow actions
          │     │                       └─ NOTES / NOTE  pitch, start, length, velocity, muted
@@ -181,6 +197,15 @@ public:
     /** The instrument new tracks get. Set once at startup (before any LiveSet is created) by
         whoever knows the devices; the model itself does not. */
     static juce::String& defaultInstrumentType();
+    /** What a new track starts with (the Preferences' Tuning tab, docs/05-m4-ui.md, 4g): its tuning
+        (empty: 12-TET) and high-note policy. For every set made from now on, like the default
+        instrument. */
+    struct NewTrackDefaults
+    {
+        juce::String tuningId;
+        int highNotePolicy = 0;
+    };
+    static NewTrackDefaults& newTrackDefaults();
 
     explicit LiveSet(juce::UndoManager* undoManager = nullptr);
 
@@ -193,7 +218,9 @@ public:
     void resetToDefault(int numTracks = defaultTracks, int numScenes = defaultScenes);
     juce::Result loadFromXml(const juce::XmlElement& xml);
     std::unique_ptr<juce::XmlElement> toXml() const;
-    juce::Result saveToFile(const juce::File& file) const;
+    /** relativePaths: files inside the set's folder are named relative to it (setfiles); a
+        recovery copy, kept elsewhere, names them in full. */
+    juce::Result saveToFile(const juce::File& file, bool relativePaths = true) const;
     juce::Result loadFromFile(const juce::File& file);
 
     // --- Set ---------------------------------------------------------------------------------
@@ -222,12 +249,48 @@ public:
     std::int64_t trackId(int index) const;
     int trackIndexForId(std::int64_t id) const; // -1 if none
 
-    /** Inserts a MIDI track (at the end when insertIndex is out of range). Returns its index. */
+    /** Inserts a MIDI track (at the end when insertIndex is out of range). Returns its index. It
+        joins the group it lands in (see "Group tracks" below). */
     int addTrack(int insertIndex = -1);
+    /** Deletes a track; a group track goes with its members. A set always keeps a track that isn't
+        a group, so deleting everything else is refused. */
     void deleteTrack(int index);
-    /** Copies a track (with its clips, under new IDs) to just after it. Returns the copy's index. */
+    /** Copies a track (with its clips, under new IDs) to just after it, a group with its members.
+        Returns the copy's index. */
     int duplicateTrack(int index);
+    /** Copies tracks first..last (whole blocks at one level, as for groupTracks) to just after the
+        last one, in order. Returns the first copy's index, or -1 if the range isn't whole blocks. */
+    int duplicateTracks(int first, int last);
+    /** Moves a track (a group with its members) to where track `to` is: before it when moving up,
+        after it when moving down. It joins the group it lands in. */
     void moveTrack(int from, int to);
+
+    // --- Group tracks (docs/05-m4-ui.md, 4b) ----------------------------------------------------------
+    // A group track is a summing bus with its own audio effects and mixer; it has no instrument and
+    // no clips. Its members follow it in the track list, so a group and everything in it are one
+    // contiguous block, and groups nest. Adding or moving a track puts it in the group it lands in:
+    // right after a group's own track means inside that group; otherwise it joins the group of the
+    // track that follows it (none at the end of the list).
+    static bool isGroup(const juce::ValueTree& track);
+    bool isGroupTrack(int index) const;
+    /** The index of the group track a track is in, or -1. */
+    int parentGroupOf(int index) const;
+    /** How many groups a track is inside (0 at the top). */
+    int groupDepth(int index) const;
+    /** One past the last track of the block that starts at `index` (index + 1 for a plain track). */
+    int blockEnd(int index) const;
+    /** The tracks directly in a group (not their members), in order. */
+    std::vector<int> groupMembers(int groupIndex) const;
+    /** The plain (non-group) tracks inside a group, at any depth, in order. */
+    std::vector<int> groupLeaves(int groupIndex) const;
+    /** Puts tracks first..last into a new group track inserted before them, as one undo step for
+        the caller. The range must be whole blocks at one level (no group cut in two). Returns the
+        group's index, or -1 if the range isn't one. */
+    int groupTracks(int first, int last);
+    /** Takes a group's members out of it (into its own group, if it's inside one) and deletes the
+        group track with its devices. */
+    void ungroup(int groupIndex);
+    void setGroupFolded(int groupIndex, bool fold);
 
     void setTrackName(int index, const juce::String& name);
     void setTrackVolumeDb(int index, double db);
@@ -240,6 +303,30 @@ public:
     void setTrackTuning(int index, const juce::String& tuningId);
     void setTrackNoteOffset(int index, int offset);
     void setTrackHighNotePolicy(int index, int policy);
+    /** Pitch bend: 0 in cents, 1 in table steps (BendMode), and how far a full bend reaches in
+        each (both are kept, so switching back finds the range used before). */
+    void setTrackBendMode(int index, int mode);
+    void setTrackBendRangeCents(int index, double cents);
+    void setTrackBendRangeSteps(int index, double steps);
+    static constexpr double defaultBendRangeCents = 200.0, maxBendRangeCents = 4800.0;
+    static constexpr double defaultBendRangeSteps = 2.0, maxBendRangeSteps = 48.0;
+    /** A track's bend settings, with the defaults for sets saved before they existed. */
+    static int bendModeOf(const juce::ValueTree& track) { return static_cast<int>(track.getProperty(ids::bendMode, 0)); }
+    static double bendRangeCentsOf(const juce::ValueTree& track)
+    {
+        return static_cast<double>(track.getProperty(ids::bendRangeCents, defaultBendRangeCents));
+    }
+    static double bendRangeStepsOf(const juce::ValueTree& track)
+    {
+        return static_cast<double>(track.getProperty(ids::bendRangeSteps, defaultBendRangeSteps));
+    }
+    /** Where a track's live MIDI comes from: "" for every input, "computer" for the computer and
+        on-screen keyboards, or a MIDI input's identifier. */
+    void setTrackMidiInput(int index, const juce::String& input);
+    /** 0 for every channel, or 1-16. */
+    void setTrackMidiChannel(int index, int channel);
+    void setTrackMonitoring(int index, Monitoring monitoring);
+    static constexpr auto computerKeyboardInput = "computer";
 
     juce::ValueTree master() const;
     void setMasterVolumeDb(double db);
@@ -293,8 +380,27 @@ public:
     /** Copies the clip into the next empty slot below it. Returns that scene index, or -1 if there
         is no empty slot below. */
     int duplicateClip(int trackIndex, int sceneIndex);
-    /** Moves a clip, replacing whatever is at the destination. */
+    /** Moves a clip, replacing whatever is at the destination (never into a group track). */
     void moveClip(int fromTrack, int fromScene, int toTrack, int toScene);
+    struct ClipMove
+    {
+        int fromTrack, fromScene, toTrack, toScene;
+    };
+    /** Moves several clips at once, each replacing whatever is at its destination; the sources may
+        overlap the destinations (moving a block one row down). Moves into group tracks and from
+        empty slots are skipped. The clips keep their IDs. */
+    void moveClips(const std::vector<ClipMove>& moves);
+    /** Puts a copy of a clip (under new IDs) into a slot, replacing whatever is there. Returns it,
+        or an invalid tree for a group track or a slot that doesn't exist. */
+    juce::ValueTree putClipCopy(int trackIndex, int sceneIndex, const juce::ValueTree& clip);
+
+    // --- Colours -------------------------------------------------------------------------------------
+    /** The colours tracks, scenes and clips are given and offered, in order. */
+    static int paletteSize() noexcept;
+    /** As ARGB (the model has no graphics: juce::Colour takes it as it is). */
+    static juce::uint32 paletteColour(int index) noexcept;
+    /** Sets a track's, scene's, return's or clip's colour, as ARGB (one undo action). */
+    void setColour(juce::ValueTree node, juce::uint32 argb);
 
     /** Location (track, scene) of a clip by ID, or (-1, -1). */
     std::pair<int, int> findClip(std::int64_t clipId) const;
@@ -304,6 +410,21 @@ public:
     void setClipProperty(juce::ValueTree clip, const juce::Identifier& property, const juce::var& value,
                          bool undoable = true);
     void setClipLoop(juce::ValueTree clip, double loopStart, double loopEnd, bool undoable = true);
+    /** The clip's time signature, which its piano roll's bars follow: its own, or the set's.
+        Launching and quantizing follow the set's (as in Live). */
+    std::pair<int, int> clipTimeSignature(const juce::ValueTree& clip) const;
+    /** numerator 0 goes back to the set's. */
+    void setClipTimeSignature(juce::ValueTree clip, int numerator, int denominator);
+
+    // --- Highlighted rows (docs/05-m4-ui.md, 4c) -------------------------------------------------
+    // Table indices a piano roll marks, like Live's scale highlighting but for any tuning. A clip
+    // can have its own; otherwise it shows its track's. M5's pads read the same sets.
+    /** The node's own set (a CLIP or a TRACK), sorted; empty if it has none. */
+    static std::vector<int> highlightOf(const juce::ValueTree& node);
+    /** What a clip's piano roll shows: its own set, or its track's. */
+    static std::vector<int> effectiveHighlight(const juce::ValueTree& clip);
+    /** Sets a clip's or track's set (empty removes it). One undo action. */
+    void setHighlight(juce::ValueTree node, std::vector<int> tableIndices);
 
     // --- Notes -----------------------------------------------------------------------------------
     juce::ValueTree addNote(const juce::ValueTree& clip, const NoteData& note, bool undoable = true);
@@ -323,6 +444,12 @@ public:
     void removeDevice(const juce::ValueTree& device);
     void moveDevice(const juce::ValueTree& device, juce::ValueTree toChain, int toIndex);
     void setDeviceEnabled(juce::ValueTree device, bool on);
+    /** The user's name for a device (an empty name goes back to its type's). */
+    void setDeviceName(juce::ValueTree device, const juce::String& name);
+    /** How the Device view shows a device: folded to a strip, or with every parameter instead of
+        its own panel. Saved with the set, but not undoable (like a group's fold). */
+    static void setDeviceFolded(juce::ValueTree device, bool folded);
+    static void setDeviceShowsAll(juce::ValueTree device, bool all);
     /** Sets a parameter's plain value. Consecutive changes of one parameter within one transaction
         become one undo step (dragging a knob). */
     void setDeviceParameter(juce::ValueTree device, const juce::String& parameterId, double value);
@@ -345,6 +472,8 @@ private:
     juce::ValueTree makeReturn(int number);
     juce::ValueTree makeTrack(int number);
     juce::ValueTree makeScene();
+    /** The group a track inserted at insertIndex would join (0: none). */
+    juce::int64 groupAt(int insertIndex) const;
     juce::ValueTree makeSlot() const;
     /** Gives every TRACK, CLIP and SCENE in tree a new ID. */
     void reassignIds(const juce::ValueTree& tree);

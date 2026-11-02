@@ -38,6 +38,9 @@ bool SoakTest::parseCommandLine(const juce::String& commandLine, Options& option
         options.deviceName = v;
     if (const auto v = valueOf("--soak-level-db"); v.isNotEmpty())
         options.levelDb = v.getFloatValue();
+    options.uiStress = args.contains("--ui-stress");
+    options.setFile = valueOf("--set");
+    options.recordFile = valueOf("--record");
     return true;
 }
 
@@ -49,6 +52,41 @@ SoakTest::SoakTest(AudioEngine& e, Options o, juce::File log, std::function<void
 SoakTest::~SoakTest()
 {
     stopTimer();
+    stopRecording();
+}
+
+void SoakTest::startRecording()
+{
+    auto* device = engine.getDeviceManager().getCurrentAudioDevice();
+    if (options.recordFile.isEmpty() || device == nullptr)
+        return;
+    const auto file = juce::File::getCurrentWorkingDirectory().getChildFile(options.recordFile);
+    file.deleteFile();
+    std::unique_ptr<juce::OutputStream> stream = file.createOutputStream();
+    if (stream == nullptr)
+        return;
+    juce::WavAudioFormat wav;
+    auto writer = wav.createWriterFor(stream, juce::AudioFormatWriterOptions{}
+                                                  .withSampleRate(device->getCurrentSampleRate())
+                                                  .withNumChannels(2)
+                                                  .withBitsPerSample(24));
+    if (writer == nullptr)
+        return;
+    recordThread.startThread();
+    recorder = std::make_unique<Recorder>();
+    // A second of audio in the FIFO: the background thread writes it out.
+    recorder->writer = std::make_unique<juce::AudioFormatWriter::ThreadedWriter>(
+        writer.release(), recordThread, juce::roundToInt(device->getCurrentSampleRate()));
+    engine.setOutputTap(recorder.get());
+}
+
+void SoakTest::stopRecording()
+{
+    if (recorder == nullptr)
+        return;
+    engine.setOutputTap(nullptr);
+    recorder.reset(); // the writer writes what's left and closes the file
+    recordThread.stopThread(2000);
 }
 
 void SoakTest::start()
@@ -108,8 +146,11 @@ void SoakTest::start()
         setupError = dm.setAudioDeviceSetup(setup, false);
     }
 
-    engine.testTone().setGain(juce::Decibels::decibelsToGain(options.levelDb, -100.0f));
-    engine.testTone().setEnabled(true);
+    if (!options.uiStress) // the UI stress test plays a set instead
+    {
+        engine.testTone().setGain(juce::Decibels::decibelsToGain(options.levelDb, -100.0f));
+        engine.testTone().setEnabled(true);
+    }
 
     startTime = nowSeconds();
     startTimer(250);
@@ -127,8 +168,21 @@ void SoakTest::timerCallback()
         xrunBaseline = engine.getDeviceManager().getXRunCount();
         startTime = nowSeconds();
         measuring = true;
+        overrunsSeen = 0;
+        xrunsSeen = 0;
+        startRecording(); // from the start line's time
         writeLine("start");
         return;
+    }
+
+    // A line for each new dropout, so that one can be traced to what was happening.
+    const auto overruns = engine.callbackStats().summary().overruns;
+    const int xruns = engine.getDeviceManager().getXRunCount() - xrunBaseline;
+    if (overruns != overrunsSeen || xruns != xrunsSeen)
+    {
+        overrunsSeen = overruns;
+        xrunsSeen = xruns;
+        writeLine("dropout");
     }
 
     if (const int minute = static_cast<int>(elapsed / 60.0); minute > lastProgressMinute)
@@ -148,7 +202,7 @@ void SoakTest::writeLine(const juce::String& kind)
     const int xruns = dm.getXRunCount() - xrunBaseline;
 
     juce::String line = juce::Time::getCurrentTime().toISO8601(true);
-    line << " | " << kind << " | elapsed=" << juce::String(measuring ? nowSeconds() - startTime : 0.0, 1);
+    line << " | " << kind << (options.uiStress ? " (ui stress: " + options.setFile + ")" : juce::String()) << " | elapsed=" << juce::String(measuring ? nowSeconds() - startTime : 0.0, 1);
 
     if (auto* device = dm.getCurrentAudioDevice())
     {
@@ -180,6 +234,8 @@ void SoakTest::writeLine(const juce::String& kind)
          << " | max=" << pct(s.max);
     if (setupError.isNotEmpty())
         line << " | setup error=" << setupError;
+    if (kind == "dropout" && context)
+        line << " | during=" << context();
 
     if (kind == "result")
     {
@@ -195,6 +251,7 @@ void SoakTest::writeLine(const juce::String& kind)
 void SoakTest::finish()
 {
     stopTimer();
+    stopRecording();
     engine.testTone().setEnabled(false);
 
     const auto s = engine.callbackStats().summary();

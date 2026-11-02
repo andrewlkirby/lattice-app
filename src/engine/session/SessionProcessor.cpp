@@ -100,6 +100,13 @@ void renderTrackTask(void* context, int index) noexcept
     track.processor->renderChain(job.numSamples, *job.time, nullptr, track.compensation);
 }
 
+void renderGroupTask(void* context, int index) noexcept
+{
+    const auto& job = *static_cast<const ChainJob*>(context);
+    const auto& group = job.snapshot->tracks[static_cast<std::size_t>((*job.level)[static_cast<std::size_t>(index)])];
+    group.processor->renderChain(job.numSamples, *job.time, group.processor->groupInput(), group.compensation);
+}
+
 void renderReturnTask(void* context, int index) noexcept
 {
     const auto& job = *static_cast<const ChainJob*>(context);
@@ -136,7 +143,7 @@ void SessionProcessor::renderMix(const EngineSnapshot& snapshot, const DeviceTim
         track.processor->reportEvents(n);
 
     // 1. Every track's chain, level by level (sidechain sources before their listeners); the
-    //    tracks of a level in parallel. Each writes only its own buffers.
+    //    tracks of a level in parallel. Each writes only its own buffers. (Group tracks come in 2.)
     for (const auto& level : snapshot.levels)
     {
         job.level = &level;
@@ -154,8 +161,7 @@ void SessionProcessor::renderMix(const EngineSnapshot& snapshot, const DeviceTim
     std::array<bool, TrackProcessor::maxReturns> preFader{};
     for (int r = 0; r < numReturns; ++r)
         preFader[static_cast<std::size_t>(r)] = snapshot.returns[static_cast<std::size_t>(r)].preFader;
-    for (const auto& track : snapshot.tracks)
-    {
+    const auto mixTrack = [&](const TrackSnapshot& track) {
         // Soloing tracks keeps the returns audible ("solo in place"): a soloed track still reaches
         // them, the others don't. Soloing a return silences the tracks' direct outputs.
         const bool trackAudible = !track.mute && (!snapshot.anySolo || track.solo);
@@ -166,7 +172,32 @@ void SessionProcessor::renderMix(const EngineSnapshot& snapshot, const DeviceTim
         sends.buses = returnInputPointers.data();
         sends.count = numReturns;
         sends.audible = trackAudible;
-        track.processor->mix(n, direct ? track.gainLeft : 0.0f, direct ? track.gainRight : 0.0f, sends, busL, busR);
+        sends.delay = track.sendDelay;
+        // Into its group's input, or the master bus.
+        float* outL = busL;
+        float* outR = busR;
+        if (track.parent >= 0)
+        {
+            auto* const* in = snapshot.tracks[static_cast<std::size_t>(track.parent)].processor->groupInput();
+            outL = in[0];
+            outR = in[1];
+        }
+        track.processor->mix(n, direct ? track.gainLeft : 0.0f, direct ? track.gainRight : 0.0f, sends, outL, outR);
+    };
+    for (const auto& track : snapshot.tracks)
+        if (track.isGroup)
+            track.processor->clearGroupInput(n);
+    for (const auto& track : snapshot.tracks)
+        if (!track.isGroup)
+            mixTrack(track);
+    // The groups, deepest first: each one's chain on what its members mixed into it, then its own
+    // fader into its parent. The same sums in the same order whatever ran in parallel.
+    for (const auto& level : snapshot.groupLevels)
+    {
+        job.level = &level;
+        runOn(pool, static_cast<int>(level.size()), renderGroupTask, job);
+        for (const int g : level)
+            mixTrack(snapshot.tracks[static_cast<std::size_t>(g)]);
     }
 
     // 3. The returns, then their faders.
@@ -658,6 +689,20 @@ void SessionProcessor::applyCommand(const EngineSnapshot& snapshot, const Engine
     case CommandType::SetRandomSeed:
         randomState = command.value != 0 ? command.value : 0x9e3779b97f4a7c15ull;
         return;
+
+    case CommandType::PreviewNote:
+    {
+        // Played on the track's instrument whatever its arm and monitoring, and never recorded.
+        if (track == nullptr || track->isGroup || command.value > 127)
+            return;
+        TimedMidi m;
+        m.bytes[0] = noteOn;
+        m.bytes[1] = static_cast<std::uint8_t>(command.value);
+        m.bytes[2] = static_cast<std::uint8_t>(juce::jlimit(0, 127, static_cast<int>(command.scene)));
+        m.size = 3;
+        track->processor->events().add(sample, m);
+        return;
+    }
     }
 }
 
@@ -670,15 +715,23 @@ void SessionProcessor::routeLiveInput(const EngineSnapshot& snapshot, const Time
 
     for (const auto& t : snapshot.tracks)
     {
-        if (!t.arm)
+        // Heard: monitoring In, or Auto while armed. Recorded: while armed, whatever the
+        // monitoring. Either way only what comes from the track's input and channel.
+        const bool hear = t.monitoring == Monitoring::In || (t.monitoring == Monitoring::Auto && t.arm);
+        if ((!hear && !t.arm) || t.isGroup)
             continue;
         auto& sink = t.processor->events();
         auto& st = t.processor->session();
         for (int i = 0; i < numInput; ++i)
         {
             const auto& e = input[i];
-            sink.add(sample, e);
-            if (st.captureClipId == 0 || e.size < 3)
+            if (t.inputSource >= 0 && e.source != t.inputSource)
+                continue;
+            if (t.inputChannel > 0 && e.size > 0 && (e.bytes[0] & 0xf0) != 0xf0 && (e.bytes[0] & 0x0f) + 1 != t.inputChannel)
+                continue;
+            if (hear)
+                sink.add(sample, e);
+            if (!t.arm || st.captureClipId == 0 || e.size < 3)
                 continue;
 
             const auto status = static_cast<std::uint8_t>(e.bytes[0] & statusMask);

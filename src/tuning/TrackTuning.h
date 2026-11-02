@@ -51,6 +51,7 @@ public:
     int getNoteOffset() const noexcept { return noteOffset.load(); }
     BendMode getBendMode() const noexcept { return bendMode.load(); }
     HighNotePolicy getHighNotePolicy() const noexcept { return highNotePolicy.load(); }
+    double getSampleRate() const noexcept { return sampleRate.load(); } // 0: unknown
 
     /** Frequency for a MIDI note with a pitch bend in -1..1 (scaled by the bend range of the
         current mode). Applies the note offset, then the bend, then the high-note policy.
@@ -62,6 +63,11 @@ public:
         offset and the high-note policy like hzFor(). Returns 0 when it must not sound. This is
         what every M3 instrument uses (docs/04-m3-devices.md, "Tuning hookup"). */
     double hzAt(double fractionalNote, double cents = 0.0) const noexcept LATTICE_NONBLOCKING;
+
+    /** The note (as hzAt() takes it, so before the note offset) whose frequency in the table is
+        closest to hz, in log terms; -1 if the table maps none. Loops over the table: callers
+        cache it (a voice does, per note). */
+    int nearestNote(double hz) const noexcept LATTICE_NONBLOCKING;
 
     /** A pitch-bend value (-1..1) as an offset for hzAt(), following the current bend mode: in
         table steps (TableSteps) or in cents (Cents); the other is 0. */

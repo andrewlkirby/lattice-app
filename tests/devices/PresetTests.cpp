@@ -7,10 +7,12 @@
 #include "support/FactoryPresets.h"
 #include "support/OfflineRenderer.h"
 #include "support/TestDevices.h"
+#include "tuning/Tet12.h"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <functional>
 #include <random>
@@ -303,12 +305,15 @@ TEST_CASE("Factory presets: every one uses only real parameters and plays on a C
         };
         check(p.device);
 
-        // On a Colundi track, a held chord makes sound (the arp rack's notes come on its beat).
+        // On a Colundi track, a held chord makes sound (the arp rack's notes come on its beat); a
+        // kit's kick, snare and hat do.
         Fixture f(1);
         f.set().setTrackTuning(0, TuningRegistry::colundiId);
         f.set().insertDeviceCopy(f.chain(), -1, p.device);
         f.session.flush();
-        for (const int note : {40, 47, 52})
+        const bool kit = p.device[ids::deviceType].toString() == RackDevice::drumRackId;
+        const std::array<int, 3> notes = kit ? std::array{36, 38, 42} : std::array{40, 47, 52};
+        for (const int note : notes)
             f.engine.midiInput().push(juce::MidiMessage::noteOn(1, note, static_cast<juce::uint8>(100)));
         f.renderer.renderFor(96000);
         double peak = 0.0, energy = 0.0;
@@ -323,6 +328,47 @@ TEST_CASE("Factory presets: every one uses only real parameters and plays on a C
         CHECK(peak > 0.01);
         CHECK(peak < 1.0);
         CHECK(energy > 1.0);
+    }
+}
+
+TEST_CASE("Factory presets: every kit pad sounds in Colundi and in 12-TET", "[devices][presets]")
+{
+    // From the hands-on check: Colundi Kit's toms played table steps 17-26, which in 12-TET are
+    // 22-37 Hz, too low to hear. Each pad, on its own, in both tunings, must be heard.
+    for (const auto& factory : factoryPresets())
+    {
+        presets::Preset p;
+        REQUIRE(presets::parse(buildFactoryPresetXml(factory), p).wasOk());
+        if (p.device[ids::deviceType].toString() != RackDevice::drumRackId)
+            continue;
+        for (const auto& pad : p.device.getChildWithName(ids::rackChains))
+            for (const char* tuningId : {TuningRegistry::colundiId, Tet12::builtinId})
+            {
+                const int note = pad[ids::receiveNote];
+                INFO(factory.name << ", " << pad[ids::name].toString() << " (" << note << "), " << tuningId);
+                Fixture f(1);
+                f.set().setTrackTuning(0, tuningId);
+                f.set().insertDeviceCopy(f.chain(), -1, p.device);
+                f.session.flush();
+                f.engine.midiInput().push(juce::MidiMessage::noteOn(1, note, static_cast<juce::uint8>(100)));
+                f.renderer.renderFor(4800);
+                f.engine.midiInput().push(juce::MidiMessage::noteOff(1, note));
+                f.renderer.renderFor(19200);
+                // Loud enough, and not mostly below 40 Hz: zero crossings in the first 100 ms
+                // (a 40 Hz tone has 8).
+                double peak = 0.0;
+                int crossings = 0;
+                const auto& a = f.renderer.audioLeft;
+                for (std::size_t i = 0; i < a.size(); ++i)
+                {
+                    peak = std::max(peak, static_cast<double>(std::abs(a[i])));
+                    if (i > 0 && i < 4800 && (a[i - 1] < 0.0f) != (a[i] < 0.0f))
+                        ++crossings;
+                }
+                CHECK(peak > 0.03);
+                CHECK(peak < 1.0);
+                CHECK(crossings > 8);
+            }
     }
 }
 

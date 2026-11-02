@@ -78,6 +78,11 @@ juce::String ParameterSpec::format(float plain) const
 float ParameterSpec::parse(const juce::String& text) const
 {
     const auto t = text.trim();
+    if (parser)
+    {
+        const auto v = parser(t);
+        return v ? constrain(*v) : defaultValue;
+    }
     if (kind == ParamKind::Bool)
     {
         const auto lower = t.toLowerCase();

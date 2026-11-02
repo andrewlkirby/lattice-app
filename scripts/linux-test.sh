@@ -9,8 +9,8 @@
 #     --clang       build with Clang instead of GCC
 #     --tidy        also run the clang-tidy performance-* checks (implies --clang)
 #     --all-tests   include the heavy tags ([slow] [bench] [stress] [hardware] [timing])
-#     --callgrind   also count the engine benchmark's instructions and compare them with
-#                   docs/perf/baselines/engine-callgrind.txt (fails if more than 5% higher)
+#     --callgrind   also count the engine and UI benchmarks' instructions and compare them with
+#                   docs/perf/baselines/{engine,ui}-callgrind.txt (fails if more than 5% higher)
 #     --update-baseline  like --callgrind, but write the count as the new baseline
 #     --shell       open a shell in the container instead of building
 #
@@ -66,6 +66,7 @@ if [[ $inside -eq 0 ]]; then
     # Forward the warnings-as-errors switch, so local runs can match CI exactly.
     run=(docker run --rm "${tty_flags[@]}" "${security[@]}" --cpus 4 --memory 4g
          -e "LATTICE_WARNINGS_AS_ERRORS=${LATTICE_WARNINGS_AS_ERRORS:-OFF}"
+         -e "LATTICE_UPDATE_SNAPSHOTS=${LATTICE_UPDATE_SNAPSHOTS:-}"
          -v "$REPO_ROOT:/src"
          -v lattice-cache:/cache
          -v lattice-build:/build
@@ -109,29 +110,28 @@ if [[ $tidy -eq 1 ]]; then
     run-clang-tidy -quiet -j 4 -p "$build_dir" "^/src/(src|tests)/.*\.cpp$"
 fi
 
-if [[ $callgrind -eq 1 ]]; then
-    # Instruction counts don't depend on how fast or busy the machine is (charter §2), so they can
-    # catch slowdowns on shared CI machines. Only the benchmark's render loop is counted.
-    echo "== Instruction count (callgrind: engine benchmark, reference set, 2 s at 64-sample blocks)"
-    [[ $preset == linux-release && $clang -eq 0 ]] || echo "warning: the baseline is for the GCC linux-release build"
-    baseline_file=/src/docs/perf/baselines/engine-callgrind.txt
-    out=/tmp/engine.callgrind
+# Counts the instructions in a benchmark's measured function and compares them with a baseline.
+#   count_instructions <title> <baseline file> <function> <what the baseline counts> <command...>
+count_instructions() {
+    local title=$1 baseline_file=$2 function=$3 counts=$4
+    shift 4
+    echo "== Instruction count (callgrind: $title)"
+    local out=/tmp/bench.callgrind count baseline
+    rm -f "$out"
     xvfb-run -a valgrind --tool=callgrind --callgrind-out-file="$out" --collect-atstart=no \
-        --toggle-collect='*renderReferenceSet*' \
-        "$build_dir/tests/lattice_engine_bench" --seconds 2 --block 64 >/dev/null 2>/tmp/valgrind.log
+        --toggle-collect="*${function}*" "$@" >/dev/null 2>/tmp/valgrind.log || true
     count=$(callgrind_annotate "$out" 2>/dev/null | awk '/PROGRAM TOTALS/ { gsub(",", "", $1); print $1; exit }')
     [[ -n $count ]] || { cat /tmp/valgrind.log; echo "callgrind produced no count" >&2; exit 1; }
     echo "Instructions: $count"
-    if [[ $update_baseline -eq 1 ]]; then
+    if [[ $update_baseline -eq 1 || ! -f $baseline_file ]]; then # the first count is the baseline
         {
-            echo "# Instructions in the engine benchmark's render loop (lattice_engine_bench --seconds 2"
-            echo "# --block 64: the reference set), GCC linux-release in docker/linux.Dockerfile."
+            echo "# Instructions in $counts, GCC linux-release in docker/linux.Dockerfile."
             echo "# Written by scripts/linux-test.sh --update-baseline; update it in the same commit as a"
             echo "# deliberate change, with the reason (charter §3)."
             echo "$count"
         } > "$baseline_file"
-        echo "Baseline updated: $baseline_file"
-    elif [[ -f $baseline_file ]]; then
+        echo "Baseline written: $baseline_file"
+    else
         baseline=$(grep -v '^#' "$baseline_file" | head -1)
         python3 - "$count" "$baseline" <<'PY'
 import sys
@@ -144,9 +144,23 @@ if change > 0.05:
 if change < -0.05:
     print("Note: more than 5% below the baseline; consider --update-baseline")
 PY
-    else
-        echo "No baseline yet ($baseline_file); run with --update-baseline"
     fi
+}
+
+if [[ $callgrind -eq 1 ]]; then
+    # Instruction counts don't depend on how fast or busy the machine is (charter §2), so they can
+    # catch slowdowns on shared CI machines. Only each benchmark's measured loop is counted.
+    [[ $preset == linux-release && $clang -eq 0 ]] || echo "warning: the baselines are for the GCC linux-release build"
+    count_instructions "engine benchmark, reference set, 2 s at 64-sample blocks" \
+        /src/docs/perf/baselines/engine-callgrind.txt renderReferenceSet \
+        "the engine benchmark's render loop (lattice_engine_bench --seconds 2 --block 64: the reference set)" \
+        "$build_dir/tests/lattice_engine_bench" --seconds 2 --block 64
+    # The UI's frames, painted by JUCE's software renderer (as headless runs draw; the count doesn't
+    # depend on the machine, the frame times do).
+    count_instructions "UI benchmark, 20 frames of each view" \
+        /src/docs/perf/baselines/ui-callgrind.txt runFrames \
+        "the UI benchmark's frames (lattice_ui_bench --frames 20: every case)" \
+        "$build_dir/tests/lattice_ui_bench" --frames 20
 fi
 
 ccache --show-stats --verbose 2>/dev/null | grep -E "Hits|Misses" | head -3 || true

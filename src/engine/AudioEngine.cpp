@@ -5,11 +5,20 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <thread>
+#include <utility>
 
 namespace lattice
 {
 
 AudioEngine::AudioEngine() = default;
+
+std::vector<std::uint64_t> AudioEngine::workerBusyNanoseconds() const
+{
+    const auto& pool = workers.published();
+    return pool != nullptr ? pool->busyNanoseconds() : std::vector<std::uint64_t>{};
+}
 
 void AudioEngine::setWorkerThreads(int count)
 {
@@ -159,6 +168,7 @@ void AudioEngine::prepare(double newSampleRate, int maxBlockSize)
     right.assign(block, 0.0f);
     toneScratch.assign(block, 0.0f);
     tone.prepare(newSampleRate);
+    previewPlayer.prepare(newSampleRate);
     sessionProcessor.prepare(newSampleRate, static_cast<int>(block));
     stats.reset();
 
@@ -202,6 +212,39 @@ void AudioEngine::installChain(TrackProcessor& track, const std::vector<DevicePt
 void AudioEngine::publishSnapshot(std::shared_ptr<const EngineSnapshot> snapshot)
 {
     snapshots.publish(std::move(snapshot));
+    noteActivity();
+}
+
+void AudioEngine::setOutputTap(OutputTap* tap)
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+    outputTap.store(tap);
+    // A callback that took the old tap counted itself first: once none is counted, none has it.
+    while (outputTapUsers.load() != 0)
+        std::this_thread::yield();
+}
+
+void AudioEngine::addActivityListener(juce::AsyncUpdater* listener)
+{
+    RT_ASSERT_NOT_AUDIO_THREAD();
+    const std::scoped_lock lock(activityLock);
+    if (std::find(activityListeners.begin(), activityListeners.end(), listener) == activityListeners.end())
+        activityListeners.push_back(listener);
+}
+
+void AudioEngine::removeActivityListener(const juce::AsyncUpdater* listener)
+{
+    RT_ASSERT_NOT_AUDIO_THREAD();
+    const std::scoped_lock lock(activityLock);
+    std::erase(activityListeners, listener);
+}
+
+void AudioEngine::noteActivity()
+{
+    RT_ASSERT_NOT_AUDIO_THREAD();
+    const std::scoped_lock lock(activityLock);
+    for (auto* listener : activityListeners)
+        listener->triggerAsyncUpdate();
 }
 
 void AudioEngine::process(float* const* outputs, int numOutputs, int numSamples) noexcept
@@ -241,6 +284,19 @@ void AudioEngine::process(float* const* outputs, int numOutputs, int numSamples)
         tone.render(toneScratch.data(), n);
         juce::FloatVectorOperations::add(left.data(), toneScratch.data(), n);
         juce::FloatVectorOperations::add(right.data(), toneScratch.data(), n);
+
+        // The preview bus, after the master. A synced preview waits for the next bar.
+        double toNextBar = -1.0;
+        if (const auto& clock = sessionProcessor.transport(); clock.isPlaying())
+        {
+            const auto start = sessionProcessor.currentSample() - n;
+            const double beat = clock.beatAt(start);
+            const double origin = sessionProcessor.transportState().barOrigin;
+            const double perBar = clock.beatsPerBar();
+            const double nextBar = origin + std::ceil((beat - origin) / perBar - 1.0e-9) * perBar;
+            toNextBar = static_cast<double>(clock.sampleAtBeat(nextBar) - start);
+        }
+        previewPlayer.render(left.data(), right.data(), n, toNextBar);
 
         for (int ch = 0; ch < numOutputs; ++ch)
         {
@@ -284,6 +340,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext(const float* const* inputs, i
     process(outputs, numOutputs, numSamples);
     const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 
+    // Counted before the tap is read, so setOutputTap() can tell when the old one is free.
+    outputTapUsers.fetch_add(1);
+    if (auto* tap = outputTap.load())
+        tap->write(outputs, numOutputs, numSamples);
+    outputTapUsers.fetch_sub(1);
+
     stats.recordCallback(elapsed, static_cast<double>(numSamples) / sampleRate);
 }
 
@@ -296,9 +358,45 @@ void AudioEngine::audioDeviceStopped()
 {
 }
 
-void AudioEngine::handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMessage& message)
+std::uint8_t AudioEngine::midiSourceFor(const juce::String& inputIdentifier)
 {
-    midiQueue.push(message);
+    const std::scoped_lock lock(midiSourcesLock);
+    if (const auto it = midiSources.find(inputIdentifier); it != midiSources.end())
+        return it->second;
+    // 255 inputs in one session is far beyond any setup; past it, they share the last number.
+    const auto next = static_cast<std::uint8_t>(juce::jmin<std::size_t>(255, midiSources.size() + 1));
+    midiSources[inputIdentifier] = next;
+    return next;
+}
+
+void AudioEngine::setRemoteInputs(const juce::StringArray& remote, const juce::StringArray& notForTracks)
+{
+    const std::scoped_lock lock(remoteLock);
+    remoteInputs = remote;
+    nonTrackInputs = notForTracks;
+}
+
+std::vector<AudioEngine::RemoteMidi> AudioEngine::takeRemoteMidi()
+{
+    const std::scoped_lock lock(remoteLock);
+    return std::exchange(remoteInbox, {});
+}
+
+void AudioEngine::handleIncomingMidiMessage(juce::MidiInput* input, const juce::MidiMessage& message)
+{
+    // A MIDI thread, not the audio thread: a short lock is fine here.
+    bool forTracks = true;
+    if (input != nullptr)
+    {
+        const std::scoped_lock lock(remoteLock);
+        const auto id = input->getIdentifier();
+        if (remoteInputs.contains(id) && remoteInbox.size() < 4096) // a stalled UI can't grow it without end
+            remoteInbox.push_back({id, message});
+        forTracks = !nonTrackInputs.contains(id);
+    }
+    if (forTracks)
+        midiQueue.push(message, input != nullptr ? midiSourceFor(input->getIdentifier()) : computerKeyboardSource);
+    noteActivity();
 }
 
 } // namespace lattice

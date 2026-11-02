@@ -57,13 +57,21 @@ void TrackProcessor::prepare(double sampleRate, int maxBlockSize)
     delayed.clear();
     tapBuffer.setSize(2, maxBlockSize, false, true, false);
     tapBuffer.clear();
+    groupBuffer.setSize(2, maxBlockSize, false, true, false);
+    groupBuffer.clear();
+    sendBuffer.setSize(4, maxBlockSize, false, true, false);
+    sendBuffer.clear();
     for (int ch = 0; ch < 2; ++ch)
     {
         chainChannels[ch] = buffer.getWritePointer(ch);
         outputChannels[ch] = delayed.getWritePointer(ch);
         tapChannels[ch] = tapBuffer.getWritePointer(ch);
+        groupChannels[ch] = groupBuffer.getWritePointer(ch);
         compensationLines[ch].prepare(static_cast<int>(maxCompensationSeconds * sampleRate) + 4);
+        sendLines[ch].prepare(static_cast<int>(maxCompensationSeconds * sampleRate) + 4);
     }
+    for (int ch = 0; ch < 4; ++ch)
+        sendChannels[ch] = sendBuffer.getWritePointer(ch);
     sendGains.fill(0.0f);
 
     gainLeft.reset(sampleRate, gainRampSeconds);
@@ -230,6 +238,13 @@ void TrackProcessor::renderChain(int numSamples, const DeviceTimeInfo& time, con
     }
 }
 
+void TrackProcessor::clearGroupInput(int numSamples) noexcept
+{
+    numSamples = std::min(numSamples, preparedBlockSize);
+    for (int ch = 0; ch < 2; ++ch)
+        std::fill_n(groupChannels[ch], std::max(0, numSamples), 0.0f);
+}
+
 void TrackProcessor::mix(int numSamples, float targetLeft, float targetRight, const Sends& sends, float* busLeft,
                          float* busRight) noexcept
 {
@@ -238,6 +253,27 @@ void TrackProcessor::mix(int numSamples, float targetLeft, float targetRight, co
         return;
     const float* inL = outputChannels[0];
     const float* inR = outputChannels[1];
+
+    // Sends that wait (a track inside groups with latency): they take the output delayed by the
+    // groups' latency, so they reach the returns when the direct path does.
+    const int sendDelay = std::clamp(sends.delay, 0, sendLines[0].capacity());
+    const bool delayedSends = sendDelay > 0;
+    if (delayedSends)
+    {
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            auto& line = sendLines[ch];
+            const float* in = outputChannels[ch];
+            float* out = sendChannels[ch];
+            for (int i = 0; i < numSamples; ++i)
+            {
+                line.push(in[i]);
+                out[i] = line.tap(sendDelay);
+            }
+        }
+        inL = sendChannels[0];
+        inR = sendChannels[1];
+    }
 
     // Pre-fader sends take the (compensated) chain output as it is.
     const int numSends = std::min(sends.count, maxReturns);
@@ -265,19 +301,33 @@ void TrackProcessor::mix(int numSamples, float targetLeft, float targetRight, co
     gainLeft.setTargetValue(targetLeft);
     gainRight.setTargetValue(targetRight);
     float* faded[2] = {delayed.getWritePointer(0), delayed.getWritePointer(1)}; // in place: output() is used up
+    float* postSends[2] = {sendChannels[2], sendChannels[3]};
     if (gainLeft.isSmoothing() || gainRight.isSmoothing())
     {
         for (int i = 0; i < numSamples; ++i)
         {
-            faded[0][i] *= gainLeft.getNextValue();
-            faded[1][i] *= gainRight.getNextValue();
+            const float gl = gainLeft.getNextValue(), gr = gainRight.getNextValue();
+            faded[0][i] *= gl;
+            faded[1][i] *= gr;
+            if (delayedSends)
+            {
+                postSends[0][i] = inL[i] * gl;
+                postSends[1][i] = inR[i] * gr;
+            }
         }
     }
     else
     {
         juce::FloatVectorOperations::multiply(faded[0], gainLeft.getCurrentValue(), numSamples);
         juce::FloatVectorOperations::multiply(faded[1], gainRight.getCurrentValue(), numSamples);
+        if (delayedSends)
+        {
+            juce::FloatVectorOperations::multiply(postSends[0], inL, gainLeft.getCurrentValue(), numSamples);
+            juce::FloatVectorOperations::multiply(postSends[1], inR, gainRight.getCurrentValue(), numSamples);
+        }
     }
+    const float* postL = delayedSends ? postSends[0] : faded[0];
+    const float* postR = delayedSends ? postSends[1] : faded[1];
     for (int r = 0; r < numSends; ++r)
     {
         if (sends.preFader[r])
@@ -291,8 +341,8 @@ void TrackProcessor::mix(int numSamples, float targetLeft, float targetRight, co
         for (int i = 0; i < numSamples; ++i)
         {
             const float g = from + (to - from) * static_cast<float>(i + 1) * sendStep;
-            outL[i] += faded[0][i] * g;
-            outR[i] += faded[1][i] * g;
+            outL[i] += postL[i] * g;
+            outR[i] += postR[i] * g;
         }
         sendGains[static_cast<std::size_t>(r)] = to;
     }

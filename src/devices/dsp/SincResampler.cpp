@@ -42,11 +42,14 @@ SincKernelBank::SincKernelBank()
         const double halfWidth = zeroCrossings / level.bandwidth; // input samples each side
         level.taps = 2 * static_cast<int>(std::ceil(halfWidth));
         level.stride = (level.taps + 7) / 8 * 8; // whole AVX vectors
-        // Stretched kernels change more slowly per input sample, so need fewer phase rows.
-        level.phases = std::max(64, static_cast<int>(std::lround(512.0 * level.bandwidth)));
+        // 384 phase rows at unity: linear interpolation between them adds at most -101.6 dB of
+        // error up to 0.9 x Nyquist (512 rows: -105.4 dB; 256: -95.5 dB, against the -90 dB spec),
+        // in 25% less table than 512. Stretched kernels change more slowly per input sample, so
+        // need fewer rows.
+        level.phases = std::max(48, static_cast<int>(std::lround(384.0 * level.bandwidth)));
         const auto stride = static_cast<std::size_t>(level.stride);
         constexpr std::size_t alignBytes = 64; // the rows never split a cache line
-        level.storage.assign(static_cast<std::size_t>(level.phases) * 2 * stride + alignBytes / sizeof(float), 0.0f);
+        level.storage.assign((static_cast<std::size_t>(level.phases) + 1) * stride + alignBytes / sizeof(float), 0.0f);
         const auto address = reinterpret_cast<std::uintptr_t>(level.storage.data());
         level.offset = (alignBytes - address % alignBytes) % alignBytes / sizeof(float);
         float* rows = level.storage.data() + level.offset;
@@ -66,18 +69,13 @@ SincKernelBank::SincKernelBank()
             for (auto& x : w)
                 x /= sum; // exactly unity gain at DC
         };
-        std::vector<double> current(static_cast<std::size_t>(level.taps)), next(current.size());
-        weightsAt(0, current);
-        for (int p = 0; p < level.phases; ++p)
+        std::vector<double> weights(static_cast<std::size_t>(level.taps));
+        for (int p = 0; p <= level.phases; ++p)
         {
-            weightsAt(p + 1, next);
-            float* row = rows + static_cast<std::size_t>(p) * 2 * stride;
-            for (std::size_t j = 0; j < current.size(); ++j)
-            {
-                row[j] = static_cast<float>(current[j]);
-                row[stride + j] = static_cast<float>(next[j] - current[j]);
-            }
-            std::swap(current, next);
+            weightsAt(p, weights);
+            float* row = rows + static_cast<std::size_t>(p) * stride;
+            for (std::size_t j = 0; j < weights.size(); ++j)
+                row[j] = static_cast<float>(weights[j]);
         }
     }
 }

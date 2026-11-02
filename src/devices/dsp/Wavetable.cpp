@@ -2,9 +2,12 @@
 
 #include <juce_dsp/juce_dsp.h>
 
+#include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <future>
 #include <mutex>
+#include <thread>
 
 namespace lattice::dsp
 {
@@ -144,18 +147,22 @@ std::complex<double> pulseHarmonic(int h, double width)
 
 using FrameSpectrum = std::function<std::complex<double>(int harmonic, double t)>;
 
-std::unique_ptr<Wavetable> makeTable(const juce::String& name, int numFrames, const FrameSpectrum& spectrum)
+/** Runs the jobs on all cores, this thread included, and returns when all are done. The library is
+    wanted at startup (the default set's Synth), so its waves are built side by side. */
+void runInParallel(const std::vector<std::function<void()>>& jobs)
 {
-    constexpr int maxHarmonics = 1024;
-    constexpr int oversampling = 8;
-    std::vector<std::unique_ptr<MipmappedWave>> frames;
-    for (int f = 0; f < numFrames; ++f)
-    {
-        const double t = numFrames > 1 ? static_cast<double>(f) / (numFrames - 1) : 0.0;
-        frames.push_back(std::make_unique<MipmappedWave>([&](int h) { return spectrum(h, t); }, maxHarmonics,
-                                                         oversampling, 0.9));
-    }
-    return std::make_unique<Wavetable>(name, std::move(frames));
+    std::atomic<std::size_t> next{0};
+    const auto work = [&] {
+        for (std::size_t i = next.fetch_add(1); i < jobs.size(); i = next.fetch_add(1))
+            jobs[i]();
+    };
+    const std::size_t threads = std::min<std::size_t>(jobs.size(), std::max(1u, std::thread::hardware_concurrency()));
+    std::vector<std::thread> helpers;
+    for (std::size_t t = 1; t < threads; ++t)
+        helpers.emplace_back(work);
+    work();
+    for (auto& helper : helpers)
+        helper.join();
 }
 
 std::shared_future<const WaveformLibrary*>& pending()
@@ -172,15 +179,38 @@ std::mutex& pendingMutex()
 
 WaveformLibrary::WaveformLibrary()
 {
-    shapes[static_cast<std::size_t>(Shape::Sine)] =
-        std::make_unique<MipmappedWave>([](int h) { return h == 1 ? std::complex<double>(0.0, 1.0) : std::complex<double>(); },
-                                        1, 16, 1.0);
-    shapes[static_cast<std::size_t>(Shape::Triangle)] = std::make_unique<MipmappedWave>(triangleHarmonic, 2048, 16, 1.0);
-    shapes[static_cast<std::size_t>(Shape::Saw)] = std::make_unique<MipmappedWave>(sawHarmonic, 2048, 16, 1.0);
+    // Each wave is a job: the shapes first (the largest tables), then every frame of each wavetable.
+    std::vector<std::function<void()>> jobs;
+    const auto addShape = [&](Shape shape, MipmappedWave::Spectrum spectrum, int maxHarmonics) {
+        jobs.push_back([this, shape, spectrum = std::move(spectrum), maxHarmonics] {
+            shapes[static_cast<std::size_t>(shape)] = std::make_unique<MipmappedWave>(spectrum, maxHarmonics, 16, 1.0);
+        });
+    };
+    addShape(Shape::Triangle, triangleHarmonic, 2048);
+    addShape(Shape::Saw, sawHarmonic, 2048);
+    addShape(Shape::Sine, [](int h) { return h == 1 ? std::complex<double>(0.0, 1.0) : std::complex<double>(); }, 1);
 
     constexpr int frames = 8;
+    struct Table
+    {
+        juce::String name;
+        std::vector<std::unique_ptr<MipmappedWave>> frames;
+    };
+    std::vector<Table> tables; // the jobs hold indexes into it: it may grow until they run
+    const auto makeTable = [&](const juce::String& name, int numFrames, FrameSpectrum spectrum) {
+        const std::size_t index = tables.size();
+        tables.push_back({name, std::vector<std::unique_ptr<MipmappedWave>>(static_cast<std::size_t>(numFrames))});
+        for (int f = 0; f < numFrames; ++f)
+            jobs.push_back([&tables, index, f, numFrames, spectrum] {
+                constexpr int maxHarmonics = 1024;
+                constexpr int oversampling = 8;
+                const double t = numFrames > 1 ? static_cast<double>(f) / (numFrames - 1) : 0.0;
+                tables[index].frames[static_cast<std::size_t>(f)] = std::make_unique<MipmappedWave>(
+                    [&](int h) { return spectrum(h, t); }, maxHarmonics, oversampling, 0.9);
+            });
+    };
     // Sine to triangle to saw to square: the classic shapes, morphed by their spectra.
-    wavetables.push_back(makeTable("Analog", frames, [](int h, double t) {
+    makeTable("Analog", frames, [](int h, double t) {
         const double x = t * 3.0;
         const auto sine = h == 1 ? std::complex<double>(0.0, 1.0) : std::complex<double>();
         const auto tri = triangleHarmonic(h);
@@ -191,16 +221,16 @@ WaveformLibrary::WaveformLibrary()
         if (x < 2.0)
             return tri + (saw - tri) * (x - 1.0);
         return saw + (square - saw) * (x - 2.0);
-    }));
+    });
     // A saw through a resonant formant that sweeps up the harmonics.
-    wavetables.push_back(makeTable("Formant", frames, [](int h, double t) {
+    makeTable("Formant", frames, [](int h, double t) {
         const double centre = 2.0 * std::pow(24.0, t); // harmonic 2 .. 48
         const double d = std::log2(h / centre);
         const double formant = std::exp(-d * d * 4.0) * 4.0 + 0.15;
         return std::complex<double>(0.0, formant / h);
-    }));
+    });
     // Organ drawbars: from a pure 8' to a full registration.
-    wavetables.push_back(makeTable("Organ", frames, [](int h, double t) {
+    makeTable("Organ", frames, [](int h, double t) {
         static constexpr std::array<int, 9> bars{1, 2, 3, 4, 6, 8, 10, 12, 16};
         double a = 0.0;
         for (std::size_t i = 0; i < bars.size(); ++i)
@@ -211,13 +241,13 @@ WaveformLibrary::WaveformLibrary()
             a = i == 0 ? 1.0 : 0.7 * opens / std::sqrt(static_cast<double>(h));
         }
         return std::complex<double>(0.0, a);
-    }));
+    });
     // Pulse width from square to a thin pulse.
-    wavetables.push_back(makeTable("Pulse Width", frames, [](int h, double t) {
+    makeTable("Pulse Width", frames, [](int h, double t) {
         return pulseHarmonic(h, 0.5 - 0.45 * t) * 0.5;
-    }));
+    });
     // The spectrum of a hard-synced saw (slave/master ratio 1 .. 6), free of the sync's aliasing.
-    wavetables.push_back(makeTable("Sync", frames, [](int h, double t) {
+    makeTable("Sync", frames, [](int h, double t) {
         const double ratio = 1.0 + 5.0 * t;
         // Fourier series of y(x) = 2 frac(ratio x) - 1 over one master cycle.
         const double w = 2.0 * pi * ratio;
@@ -244,7 +274,11 @@ WaveformLibrary::WaveformLibrary()
         juce::ignoreUnused(w);
         // y = sum over h of a cos + b sin: a = 2 Re(c), b = -2 Im(c)
         return std::complex<double>(2.0 * sum.real(), -2.0 * sum.imag()) * 0.6;
-    }));
+    });
+
+    runInParallel(jobs);
+    for (auto& table : tables)
+        wavetables.push_back(std::make_unique<Wavetable>(table.name, std::move(table.frames)));
 }
 
 const WaveformLibrary& WaveformLibrary::get()

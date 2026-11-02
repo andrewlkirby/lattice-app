@@ -203,4 +203,17 @@ juce::Result PresetLibrary::saveUserPreset(const juce::ValueTree& device, const 
     return result;
 }
 
+const PresetInfo* PresetLibrary::find(const juce::String& which) const
+{
+    if (which.containsOnly("0123456789") && which.isNotEmpty())
+    {
+        const int i = which.getIntValue();
+        return i >= 0 && i < static_cast<int>(presets.size()) ? &presets[static_cast<std::size_t>(i)] : nullptr;
+    }
+    for (const auto& p : presets)
+        if (keyOf(p) == which)
+            return &p;
+    return nullptr;
+}
+
 } // namespace lattice::presets

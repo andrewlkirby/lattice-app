@@ -37,7 +37,7 @@ void fourPositions(const SincKernelView& k, const float* s0, const float* s1, co
         const float scaled = fraction[from] * phases;
         const int phase = std::min(static_cast<int>(scaled), k.phases - 1);
         w[q] = _mm_set1_ps(scaled - static_cast<float>(phase));
-        row[q] = k.rows + static_cast<std::ptrdiff_t>(phase) * 2 * stride;
+        row[q] = k.rows + static_cast<std::ptrdiff_t>(phase) * stride;
         a[q] = s0 + (index[from] - k.taps / 2 + 1);
     }
     __m128 accL[4], accR[4];
@@ -46,7 +46,8 @@ void fourPositions(const SincKernelView& k, const float* s0, const float* s1, co
     for (std::ptrdiff_t j = 0; j < stride; j += 4)
         for (int q = 0; q < 4; ++q)
         {
-            const __m128 c = _mm_add_ps(_mm_load_ps(row[q] + j), _mm_mul_ps(w[q], _mm_load_ps(row[q] + j + stride)));
+            const __m128 r = _mm_load_ps(row[q] + j);
+            const __m128 c = _mm_add_ps(r, _mm_mul_ps(w[q], _mm_sub_ps(_mm_load_ps(row[q] + j + stride), r)));
             accL[q] = _mm_add_ps(accL[q], _mm_mul_ps(c, _mm_loadu_ps(a[q] + j)));
             if constexpr (Stereo)
                 accR[q] = _mm_add_ps(accR[q], _mm_mul_ps(c, _mm_loadu_ps(a[q] + j + toRight)));

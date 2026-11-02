@@ -64,11 +64,15 @@ if(NOT DEFINED CPM_SOURCE_CACHE AND NOT DEFINED ENV{CPM_SOURCE_CACHE})
 endif()
 include(CPM)
 
+# Patched when downloaded (cmake/patches; each file says why). The patched copy has its own cache
+# folder (CUSTOM_CACHE_KEY): change the key with the patches, and JUCE is fetched and patched again.
 CPMAddPackage(
     NAME JUCE
     GITHUB_REPOSITORY juce-framework/JUCE
     GIT_TAG 8.0.15
-    OPTIONS "JUCE_BUILD_EXTRAS OFF" "JUCE_BUILD_EXAMPLES OFF")
+    OPTIONS "JUCE_BUILD_EXTRAS OFF" "JUCE_BUILD_EXAMPLES OFF"
+    CUSTOM_CACHE_KEY 8.0.15-vblank-1
+    PATCH_COMMAND "${CMAKE_COMMAND}" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/juce-vblank-1.cmake")
 
 if(LATTICE_PROFILE)
     CPMAddPackage(
@@ -77,6 +81,37 @@ if(LATTICE_PROFILE)
         GIT_TAG v0.14.1
         OPTIONS "TRACY_ENABLE ON" "TRACY_ON_DEMAND ON")
 endif()
+
+# SQLite, for the browser's library index (docs/05-m4-ui.md, 4e): the amalgamation, built in.
+CPMAddPackage(
+    NAME sqlite
+    VERSION 3.54.1
+    URL https://www.sqlite.org/2026/sqlite-amalgamation-3540100.zip
+    URL_HASH SHA256=0a9c8e34352dad46006aa82836d5383bff9dc6bc9ce5a60553c05aa30e6ad1f9
+    DOWNLOAD_ONLY YES)
+add_library(lattice_sqlite STATIC "${sqlite_SOURCE_DIR}/sqlite3.c")
+target_include_directories(lattice_sqlite SYSTEM PUBLIC "${sqlite_SOURCE_DIR}")
+# One connection per thread at a time (the index guards its connection), full-text search, and
+# nothing the library doesn't use.
+target_compile_definitions(lattice_sqlite
+    PRIVATE
+        SQLITE_THREADSAFE=2
+        SQLITE_ENABLE_FTS5
+        SQLITE_DQS=0
+        SQLITE_DEFAULT_MEMSTATUS=0
+        SQLITE_DEFAULT_WAL_SYNCHRONOUS=1
+        SQLITE_OMIT_LOAD_EXTENSION
+        SQLITE_OMIT_DEPRECATED
+        SQLITE_OMIT_SHARED_CACHE
+        SQLITE_USE_ALLOCA)
+if(MSVC)
+    target_compile_options(lattice_sqlite PRIVATE /W0)
+else()
+    target_compile_options(lattice_sqlite PRIVATE -w)
+    find_package(Threads REQUIRED)
+    target_link_libraries(lattice_sqlite PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+endif()
+set_target_properties(lattice_sqlite PROPERTIES FOLDER "Dependencies" POSITION_INDEPENDENT_CODE ON)
 
 # --- lattice_juce: every JUCE module, compiled exactly once ---------------------------------------
 # JUCE modules are INTERFACE libraries that add their sources to whatever links them. Linking them
@@ -153,11 +188,15 @@ set_target_properties(lattice_binary_data PROPERTIES FOLDER "Dependencies" POSIT
 add_library(lattice_core STATIC
     src/control/ComputerKeyboardInput.cpp
     src/core/AudioCallbackStats.cpp
+    src/core/JobPool.cpp
     src/core/LatencyStats.cpp
     src/core/RealtimeCheck.cpp
     src/core/StartupTimeline.cpp
     src/core/model/LiveSet.cpp
     src/core/model/MidiImport.cpp
+    src/core/model/UndoNames.cpp
+    src/core/model/Recovery.cpp
+    src/core/model/SetFiles.cpp
     src/devices/BuiltinDevices.cpp
     src/devices/ChainEditing.cpp
     src/devices/dsp/Biquad.cpp
@@ -203,6 +242,7 @@ add_library(lattice_core STATIC
     src/engine/AudioEngine.cpp
     src/engine/Metronome.cpp
     src/engine/MidiInputQueue.cpp
+    src/engine/PreviewPlayer.cpp
     src/engine/SessionController.cpp
     src/engine/SnapshotBuilder.cpp
     src/engine/TestToneSource.cpp
@@ -212,24 +252,30 @@ add_library(lattice_core STATIC
     src/engine/session/ClipData.cpp
     src/engine/session/ClipPlayer.cpp
     src/engine/session/SessionProcessor.cpp
+    src/library/Library.cpp
+    src/library/LibraryIndex.cpp
+    src/library/PresetPreviews.cpp
+    src/library/Sqlite.cpp
+    src/library/WaveformPeaks.cpp
     src/platform/PathsCommon.cpp
     src/tuning/TrackTuning.cpp
     src/tuning/Tet12.cpp
+    src/tuning/TuningEdits.cpp
     src/tuning/TuningRegistry.cpp
     src/tuning/TuningTable.cpp
     src/tuning/parsers/ColundiTextParser.cpp
     src/tuning/parsers/NumberParsing.cpp
     src/tuning/parsers/ScalaParser.cpp)
 if(WIN32)
-    target_sources(lattice_core PRIVATE src/platform/windows/PlatformWindows.cpp)
+    target_sources(lattice_core PRIVATE src/platform/windows/PlatformWindows.cpp src/platform/windows/FileWatcherWindows.cpp)
     target_link_libraries(lattice_core PRIVATE avrt) # MMCSS for the audio worker threads
 elseif(APPLE)
-    target_sources(lattice_core PRIVATE src/platform/macos/PlatformMacOS.cpp)
+    target_sources(lattice_core PRIVATE src/platform/macos/PlatformMacOS.cpp src/platform/macos/FileWatcherMacOS.cpp)
 else()
-    target_sources(lattice_core PRIVATE src/platform/linux/PlatformLinux.cpp)
+    target_sources(lattice_core PRIVATE src/platform/linux/PlatformLinux.cpp src/platform/linux/FileWatcherLinux.cpp)
 endif()
 target_include_directories(lattice_core PUBLIC src)
-target_link_libraries(lattice_core PUBLIC lattice_juce PRIVATE lattice_binary_data)
+target_link_libraries(lattice_core PUBLIC lattice_juce PRIVATE lattice_binary_data lattice_sqlite)
 target_compile_definitions(lattice_core PUBLIC LATTICE_PROFILE=$<BOOL:${LATTICE_PROFILE}>)
 if(LATTICE_PROFILE)
     target_link_libraries(lattice_core PUBLIC Tracy::TracyClient)
@@ -256,19 +302,89 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|x86_64|amd64)$")
     endif()
 endif()
 
-# --- Debug UI (M2/M3, replaced in M4): a library, so the tests can drive the editors headless ------
-add_library(lattice_debug_ui STATIC
-    src/app/debug/ClipPropertiesPanel.cpp
-    src/app/debug/DetailView.cpp
-    src/app/debug/DevicePanel.cpp
-    src/app/debug/DeviceUi.cpp
-    src/app/debug/MixerStrip.cpp
-    src/app/debug/SessionGrid.cpp
-    src/app/debug/SessionView.cpp
-    src/app/debug/TransportBar.cpp)
-target_include_directories(lattice_debug_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(lattice_debug_ui PUBLIC lattice_core)
-lattice_set_warnings(lattice_debug_ui)
+# --- UI (M4, docs/05-m4-ui.md): a library, so the tests can drive the views headless ---------------
+add_library(lattice_ui STATIC
+    src/ui/browser/BrowserModel.cpp
+    src/ui/browser/BrowserView.cpp
+    src/ui/clip/ClipCommands.cpp
+    src/ui/clip/ClipNotes.cpp
+    src/ui/clip/ClipPropertiesPanel.cpp
+    src/ui/clip/ClipView.cpp
+    src/ui/clip/NoteEdits.cpp
+    src/ui/clip/NoteGrid.cpp
+    src/ui/clip/PianoRoll.cpp
+    src/ui/clip/PianoRollLayout.cpp
+    src/ui/clip/TuningRows.cpp
+    src/ui/commands/CommandRegistry.cpp
+    src/ui/commands/SessionCommands.cpp
+    src/ui/device/ChainView.cpp
+    src/ui/device/DeviceBody.cpp
+    src/ui/device/DeviceCommands.cpp
+    src/ui/device/DeviceDisplays.cpp
+    src/ui/device/DeviceFrame.cpp
+    src/ui/device/DeviceView.cpp
+    src/ui/device/ParameterControls.cpp
+    src/ui/device/RackMath.cpp
+    src/ui/device/panels/EffectPanels.cpp
+    src/ui/device/panels/MidiPanels.cpp
+    src/ui/device/panels/PanelFactory.cpp
+    src/ui/device/panels/PanelKit.cpp
+    src/ui/device/panels/RackPanel.cpp
+    src/ui/device/panels/SampleLoading.cpp
+    src/ui/device/panels/SamplerPanel.cpp
+    src/ui/device/panels/SynthPanel.cpp
+    src/ui/feed/EngineStateFeed.cpp
+    src/ui/session/KeyboardFollow.cpp
+    src/ui/session/MixerStrip.cpp
+    src/ui/session/SessionLayout.cpp
+    src/ui/session/SessionView.cpp
+    src/ui/shell/CommandMenus.cpp
+    src/ui/shell/ControlBar.cpp
+    src/ui/shell/DetailView.cpp
+    src/ui/shell/InfoView.cpp
+    src/ui/shell/MainShell.cpp
+    src/ui/shell/MissingFilesView.cpp
+    src/ui/shell/SetFileActions.cpp
+    src/ui/shell/StatusBar.cpp
+    src/ui/shell/UndoHistoryView.cpp
+    src/ui/theme/LatticeLookAndFeel.cpp
+    src/ui/find/FindIndex.cpp
+    src/ui/find/FindView.cpp
+    src/ui/mapping/MapOverlay.cpp
+    src/ui/mapping/Mappings.cpp
+    src/ui/prefs/AppSettings.cpp
+    src/ui/prefs/PreferencesView.cpp
+    src/ui/theme/Theme.cpp
+    src/ui/tuning/TrackTuningControls.cpp
+    src/ui/tuning/TuningDraft.cpp
+    src/ui/tuning/TuningView.cpp
+    src/ui/widgets/Accessible.cpp
+    src/ui/widgets/BoundControl.cpp
+    src/ui/widgets/ControlRegistry.cpp
+    src/ui/widgets/Fader.cpp
+    src/ui/widgets/Icons.cpp
+    src/ui/widgets/Knob.cpp
+    src/ui/widgets/Meter.cpp
+    src/ui/widgets/NumberBox.cpp
+    src/ui/widgets/Toggle.cpp
+    src/ui/widgets/ValueBinding.cpp)
+target_include_directories(lattice_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(lattice_ui PUBLIC lattice_core)
+lattice_set_warnings(lattice_ui)
+
+# --- The window's content (M4): a library, so the tests can drive the whole app headless ----------
+add_library(lattice_app STATIC
+    src/app/MainWindow.cpp)
+target_include_directories(lattice_app PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(lattice_app PUBLIC lattice_core lattice_ui)
+if(LATTICE_RT_CHECKS STREQUAL "ON")
+    target_compile_definitions(lattice_app PRIVATE LATTICE_RT_CHECKS_ENABLED=1)
+elseif(LATTICE_RT_CHECKS STREQUAL "AUTO")
+    target_compile_definitions(lattice_app PRIVATE LATTICE_RT_CHECKS_ENABLED=$<CONFIG:Debug>)
+else()
+    target_compile_definitions(lattice_app PRIVATE LATTICE_RT_CHECKS_ENABLED=0)
+endif()
+lattice_set_warnings(lattice_app)
 
 # --- App -----------------------------------------------------------------------------------------
 if(LATTICE_BUILD_APP)
@@ -279,13 +395,12 @@ if(LATTICE_BUILD_APP)
         VERSION ${PROJECT_VERSION})
     target_sources(Lattice PRIVATE
         src/app/Main.cpp
-        src/app/MainWindow.cpp
-        src/app/PlayPanel.cpp
-        src/app/SoakTest.cpp)
+        src/app/SoakTest.cpp
+        src/app/UiStress.cpp)
     target_compile_definitions(Lattice PRIVATE
         JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:Lattice,JUCE_PRODUCT_NAME>"
         JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:Lattice,JUCE_VERSION>")
-    target_link_libraries(Lattice PRIVATE lattice_core lattice_debug_ui)
+    target_link_libraries(Lattice PRIVATE lattice_app)
     if(LATTICE_RT_CHECKS STREQUAL "ON")
         target_link_libraries(Lattice PRIVATE lattice_alloc_hooks)
         target_compile_definitions(Lattice PRIVATE LATTICE_RT_CHECKS_ENABLED=1)

@@ -1,7 +1,11 @@
 #include "engine/SessionController.h"
 
+#include "core/model/UndoNames.h"
+
+#include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <utility>
 
 namespace lattice
 {
@@ -89,18 +93,42 @@ SessionController::SessionController(AudioEngine& e, TuningRegistry& tunings, co
 {
     savedState = liveSet.state().createCopy();
     builder.rebuildNow();
+    lastBusySeconds = juce::Time::getMillisecondCounterHiRes() * 0.001;
     startTimerHz(timerHz);
+    engine.addActivityListener(this);
 }
 
 SessionController::~SessionController()
 {
+    engine.removeActivityListener(this);
+    cancelPendingUpdate();
     stopTimer();
 }
 
 void SessionController::timerCallback()
 {
-    processEngineEvents();
+    const bool events = processEngineEvents();
     builder.collectGarbage();
+    const auto t = transport();
+    const double now = juce::Time::getMillisecondCounterHiRes() * 0.001;
+    if (events || t.playing || t.sessionRecord || !captures.empty())
+        lastBusySeconds = now;
+    const bool quiet = now - lastBusySeconds >= calmAfterSeconds;
+    if (quiet != calm)
+    {
+        calm = quiet;
+        startTimerHz(calm ? calmHz : timerHz);
+    }
+}
+
+void SessionController::handleAsyncUpdate()
+{
+    lastBusySeconds = juce::Time::getMillisecondCounterHiRes() * 0.001;
+    if (calm)
+    {
+        calm = false;
+        startTimerHz(timerHz);
+    }
 }
 
 void SessionController::send(const EngineCommand& command)
@@ -113,12 +141,47 @@ void SessionController::send(const EngineCommand& command)
 
 // --- Commands ---------------------------------------------------------------------------------------
 
+bool SessionController::isAutoArmed(int trackIndex) const
+{
+    if (trackIndex < 0 || trackIndex >= liveSet.numTracks() || builder.autoArmTrack() == 0 ||
+        trackIdOf(trackIndex) != builder.autoArmTrack() || liveSet.isGroupTrack(trackIndex))
+        return false;
+    for (int t = 0; t < liveSet.numTracks(); ++t)
+        if (static_cast<bool>(liveSet.track(t)[ids::arm]))
+            return false;
+    return true;
+}
+
+bool SessionController::isArmed(int trackIndex) const
+{
+    return (trackIndex >= 0 && trackIndex < liveSet.numTracks() && static_cast<bool>(liveSet.track(trackIndex)[ids::arm])) ||
+           isAutoArmed(trackIndex);
+}
+
 void SessionController::launchSlot(int trackIndex, int sceneIndex)
 {
     if (trackIndex < 0 || trackIndex >= liveSet.numTracks() || sceneIndex < 0 ||
         sceneIndex >= liveSet.numScenes())
         return;
     flush();
+
+    if (liveSet.isGroupTrack(trackIndex))
+    {
+        // A group's slot launches the clips in that row on every track in it, and stops the
+        // tracks whose slot there is empty (as a scene would, for those tracks only). It never
+        // starts a recording.
+        for (const int leaf : liveSet.groupLeaves(trackIndex))
+        {
+            const auto clip = liveSet.clip(leaf, sceneIndex);
+            EngineCommand c;
+            c.type = CommandType::LaunchSlot;
+            c.trackId = trackIdOf(leaf);
+            c.scene = sceneIndex;
+            c.clipId = clip.isValid() ? LiveSet::idOf(clip) : 0;
+            send(c);
+        }
+        return;
+    }
 
     const auto clip = liveSet.clip(trackIndex, sceneIndex);
     const auto state = trackState(trackIndex);
@@ -145,7 +208,7 @@ void SessionController::launchSlot(int trackIndex, int sceneIndex)
         return;
     }
 
-    if (static_cast<bool>(liveSet.track(trackIndex)[ids::arm]))
+    if (isArmed(trackIndex))
     {
         startRecording(trackIndex, sceneIndex);
         return;
@@ -156,6 +219,12 @@ void SessionController::launchSlot(int trackIndex, int sceneIndex)
 
 void SessionController::releaseSlot(int trackIndex, int sceneIndex)
 {
+    if (trackIndex >= 0 && trackIndex < liveSet.numTracks() && liveSet.isGroupTrack(trackIndex))
+    {
+        for (const int leaf : liveSet.groupLeaves(trackIndex))
+            releaseSlot(leaf, sceneIndex);
+        return;
+    }
     const auto clip = liveSet.clip(trackIndex, sceneIndex);
     if (!clip.isValid())
         return;
@@ -181,10 +250,49 @@ void SessionController::stopTrack(int trackIndex)
 {
     if (trackIndex < 0 || trackIndex >= liveSet.numTracks())
         return;
+    if (liveSet.isGroupTrack(trackIndex))
+    {
+        for (const int leaf : liveSet.groupLeaves(trackIndex))
+            stopTrack(leaf);
+        return;
+    }
     EngineCommand c;
     c.type = CommandType::StopTrack;
     c.trackId = trackIdOf(trackIndex);
     send(c);
+}
+
+void SessionController::previewNote(int trackIndex, int pitch, int velocity)
+{
+    if (trackIndex < 0 || trackIndex >= liveSet.numTracks() || pitch < 0 || pitch > 127)
+        return;
+    const auto id = trackIdOf(trackIndex);
+    const auto sounding = std::find(previews.begin(), previews.end(), std::pair{id, pitch});
+    if (velocity <= 0 && sounding == previews.end())
+        return;
+    EngineCommand c;
+    c.type = CommandType::PreviewNote;
+    c.trackId = id;
+    c.value = static_cast<std::uint64_t>(pitch);
+    c.scene = juce::jlimit(0, 127, velocity);
+    send(c);
+    if (velocity <= 0)
+        previews.erase(sounding);
+    else if (sounding == previews.end())
+        previews.emplace_back(id, pitch);
+}
+
+void SessionController::endPreviews()
+{
+    for (const auto& [id, pitch] : std::exchange(previews, {}))
+    {
+        EngineCommand c;
+        c.type = CommandType::PreviewNote;
+        c.trackId = id;
+        c.value = static_cast<std::uint64_t>(pitch);
+        c.scene = 0;
+        send(c);
+    }
 }
 
 void SessionController::stopAllClips()
@@ -279,6 +387,16 @@ void SessionController::startRecording(int trackIndex, int sceneIndex)
     send(c);
 }
 
+juce::String SessionController::editName(const juce::String& action, const juce::ValueTree& where) const
+{
+    return undoNames::make(action, where, deviceTypes);
+}
+
+void SessionController::beginEdit(const juce::String& action, const juce::ValueTree& where)
+{
+    undo.beginNewTransaction(editName(action, where));
+}
+
 void SessionController::tapTempo(double nowSeconds)
 {
     if (nowSeconds < 0.0)
@@ -325,6 +443,22 @@ int SessionController::lastNoteOn(int trackIndex) const
 
 SlotState SessionController::slotState(int trackIndex, int sceneIndex) const
 {
+    if (trackIndex >= 0 && trackIndex < liveSet.numTracks() && liveSet.isGroupTrack(trackIndex))
+    {
+        // A group's slot shows the liveliest state of the slots in its row: recording, then
+        // playing, then waiting to launch or stop, then holding a clip.
+        constexpr SlotState order[] = {SlotState::Recording, SlotState::QueuedRecord, SlotState::Playing,
+                                       SlotState::QueuedLaunch, SlotState::QueuedStop, SlotState::Stopped};
+        int best = static_cast<int>(std::size(order));
+        for (const int leaf : liveSet.groupLeaves(trackIndex))
+        {
+            const auto s = slotState(leaf, sceneIndex);
+            for (int i = 0; i < best; ++i)
+                if (order[i] == s)
+                    best = i;
+        }
+        return best < static_cast<int>(std::size(order)) ? order[best] : SlotState::Empty;
+    }
     const auto clip = liveSet.clip(trackIndex, sceneIndex);
     const auto state = trackState(trackIndex);
     const std::int64_t id = clip.isValid() ? LiveSet::idOf(clip) : 0;
@@ -395,24 +529,26 @@ void SessionController::finishCapture(std::int64_t clipId, double finalLength)
             liveSet.setClipLoop(clip, 0.0, finalLength, false);
             liveSet.setClipProperty(clip, ids::looping, true, false);
         }
-        undo.beginNewTransaction("Record clip");
+        beginEdit("Record clip", clip);
         undo.perform(new RecordClipAction(clip.getParent(), clip));
         newRecordings.erase(rec);
     }
     else if (clip.isValid() && !capture.added.empty())
     {
-        undo.beginNewTransaction("Overdub");
+        beginEdit("Overdub", clip);
         undo.perform(new OverdubAction(clip.getChildWithName(ids::notes), capture.added));
     }
     captures.erase(clipId);
 }
 
-void SessionController::processEngineEvents()
+bool SessionController::processEngineEvents()
 {
     auto& queue = engine.engineEvents();
     EngineEvent e;
+    bool any = false;
     while (queue.pop(e))
     {
+        any = true;
         switch (e.type)
         {
         case EngineEventType::CaptureNoteOn:
@@ -442,6 +578,7 @@ void SessionController::processEngineEvents()
         }
     }
     flush();
+    return any;
 }
 
 // --- Files -------------------------------------------------------------------------------------------
@@ -450,6 +587,7 @@ void SessionController::afterReplacingSet()
 {
     captures.clear();
     newRecordings.clear();
+    previews.clear(); // the tracks they sounded on are gone
     builder.forgetAll();
     builder.rebuildNow();
     savedState = liveSet.state().createCopy();
@@ -487,6 +625,18 @@ juce::Result SessionController::loadSet(const juce::File& source)
     return result;
 }
 
+juce::Result SessionController::restoreSet(const juce::File& copy, const juce::File& original)
+{
+    stop();
+    const auto result = liveSet.loadFromFile(copy);
+    if (result.failed())
+        return result;
+    file = original;
+    afterReplacingSet();
+    savedState = juce::ValueTree("RECOVERED"); // nothing saved matches it: unsaved
+    return result;
+}
+
 bool SessionController::hasUnsavedChanges() const noexcept
 {
     return !liveSet.state().isEquivalentTo(savedState);
@@ -500,7 +650,7 @@ void SessionController::markClean()
 
 MidiImportResult SessionController::importMidiFile(const juce::File& midiFile, int trackIndex, int sceneIndex)
 {
-    undo.beginNewTransaction("Import MIDI file");
+    beginEdit("Import MIDI file", liveSet.slot(trackIndex, sceneIndex));
     auto result = lattice::importMidiFile(liveSet, midiFile, trackIndex, sceneIndex);
     flush();
     return result;

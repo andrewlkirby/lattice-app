@@ -57,7 +57,7 @@ LATTICE_SINC_INLINE void fourPositions(const SincKernelView& k, const float* s0,
         if (phase > k.phases - 1)
             phase = k.phases - 1;
         w[q] = _mm256_set1_ps(scaled - static_cast<float>(phase));
-        row[q] = k.rows + static_cast<std::ptrdiff_t>(phase) * 2 * stride;
+        row[q] = k.rows + static_cast<std::ptrdiff_t>(phase) * stride;
         a[q] = s0 + (index[from] - k.taps / 2 + 1);
     }
 
@@ -70,8 +70,9 @@ LATTICE_SINC_INLINE void fourPositions(const SincKernelView& k, const float* s0,
         LATTICE_SINC_UNROLL
         for (int q = 0; q < batch; ++q)
         {
-            // The weights between this phase and the next: row + w x difference.
-            const __m256 c = _mm256_fmadd_ps(w[q], _mm256_load_ps(row[q] + j + stride), _mm256_load_ps(row[q] + j));
+            // The weights between this phase and the next: row + w x (next row - row).
+            const __m256 r = _mm256_load_ps(row[q] + j);
+            const __m256 c = _mm256_fmadd_ps(w[q], _mm256_sub_ps(_mm256_load_ps(row[q] + j + stride), r), r);
             accL[q] = _mm256_fmadd_ps(c, _mm256_loadu_ps(a[q] + j), accL[q]);
             if constexpr (Stereo)
                 accR[q] = _mm256_fmadd_ps(c, _mm256_loadu_ps(a[q] + j + toRight), accR[q]);

@@ -37,6 +37,14 @@ struct TuningTable
     /** The computer keyboard's default first note: the start of the page (multiple of
         keyboardPageSize) holding the note nearest to middle C (261.63 Hz). */
     int defaultKeyboardBase() const noexcept;
+
+    /** The frequency the table is built on: its lowest mapped entry (30 Hz for Colundi), or 0 if
+        nothing is mapped. Cents and ratios are shown relative to it. */
+    double baseHz() const noexcept;
+    /** An anchor note: an exact whole multiple of the base frequency (60, 90, 120 Hz... in
+        Colundi). Only table tunings have anchors (not those with note names), and the base itself
+        is one. The Clip view's ruler and (M5) the Push pads mark them. */
+    bool isAnchor(int note) const noexcept;
 };
 
 using TuningPtr = std::shared_ptr<const TuningTable>;

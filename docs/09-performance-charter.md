@@ -40,7 +40,7 @@ All targets are measured on the **reference machine**: the user's Lenovo Legion 
 ### Resources
 | Target | Value |
 |--------|-------|
-| Idle CPU (transport stopped, nothing moving on screen) | **< 1%** of one core; meters and animations stop updating when nothing changes |
+| Idle CPU (transport stopped, nothing moving on screen, no audio device) | **≤ 0.3%** of one core above a bare JUCE window of the same size, measured in the same run (`lattice_ui_bench --idle`); meters and animations stop updating when nothing changes. Restated 2026-11-02 from "< 1%" (first as 0.15%; set at 0.3% after the quiet-machine run found nothing left above 0.1% on any one thread): on the reference machine a bare JUCE window alone measures 0.5–1.1% (its vblank thread and the window's own message handling), so the old figure judged JUCE, not Lattice |
 | Memory | Samples are decoded into RAM once and shared between devices. Any increase in memory not explained by content is a bug (checked in the M7 soak test) |
 
 ### The reference set (kept in `tests/perf/reference-set/`)
@@ -93,7 +93,7 @@ A change that has a good reason to make something slower (for example a quality 
 ### UI thread
 - No disk I/O or long work. Use background jobs with progress (M4).
 - Repaint only what changed. Cache expensive layers. Avoid allocating in `paint()` where possible.
-- One refresh tick (`VBlankAttachment`), and **no refreshing when nothing changes**, so the idle CPU target holds.
+- One refresh tick (`VBlankAttachment`), and **no refreshing when nothing changes**, so the idle CPU target holds. What polls the engine (the feed, the session's event timer) slows to a few times a second while nothing happens, and the engine's activity (a command, a new snapshot, MIDI in, a preview) wakes it at once, so a response still shows on the next frame.
 
 ### Startup and loading
 - **Show the window first, then do the rest in parallel:**

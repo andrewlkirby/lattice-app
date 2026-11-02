@@ -7,6 +7,8 @@
 
 #include <LatticeBinaryData.h>
 
+#include <algorithm>
+
 namespace lattice
 {
 
@@ -35,9 +37,10 @@ TuningPtr TuningRegistry::makeBuiltinColundi()
 
 TuningPtr TuningRegistry::findById(const juce::String& id) const
 {
-    for (const auto& t : tunings)
-        if (t->id == id)
-            return t;
+    for (const auto* list : {&tunings, &replaced})
+        for (const auto& t : *list)
+            if (t->id == id)
+                return t;
     return nullptr;
 }
 
@@ -48,7 +51,18 @@ TuningPtr TuningRegistry::defaultTuning() const
 
 void TuningRegistry::add(TuningPtr tuning)
 {
-    tunings.push_back(std::move(tuning));
+    std::erase_if(replaced, [&](const TuningPtr& t) { return t->id == tuning->id; }); // coming back
+    // A newer version of a file in the list takes its place.
+    const auto sameFile = std::find_if(tunings.begin(), tunings.end(), [&](const TuningPtr& t) {
+        return juce::File::isAbsolutePath(tuning->sourceDescription) && t->sourceDescription == tuning->sourceDescription;
+    });
+    if (sameFile != tunings.end())
+    {
+        replaced.push_back(*sameFile);
+        *sameFile = std::move(tuning);
+    }
+    else
+        tunings.push_back(std::move(tuning));
     listeners.call([](Listener& l) { l.tuningsChanged(); });
 }
 
@@ -70,7 +84,11 @@ TuningLoadResult TuningRegistry::loadFile(const juce::File& file)
 
     const auto id = "user." + juce::String::toHexString(static_cast<juce::int64>((text + "\n--kbm--\n" + kbmText).hashCode64()));
     if (auto existing = findById(id))
+    {
+        if (std::find(tunings.begin(), tunings.end(), existing) == tunings.end())
+            add(existing); // the file went back to an older version
         return TuningLoadResult::success(existing);
+    }
 
     TuningLoadResult result;
     if (ext == ".scl")

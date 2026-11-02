@@ -1,6 +1,6 @@
 #include "app/MainWindow.h"
-#include "app/PlayPanel.h"
 #include "app/SoakTest.h"
+#include "app/UiStress.h"
 #include "core/Profiling.h"
 #include "core/StartupTimeline.h"
 #include "devices/dsp/Wavetable.h"
@@ -8,6 +8,7 @@
 #include "engine/SessionController.h"
 #include "platform/Platform.h"
 #include "tuning/TuningRegistry.h"
+#include "ui/prefs/AppSettings.h"
 
 #include <juce_gui_extra/juce_gui_extra.h>
 
@@ -42,22 +43,22 @@ public:
 
         engine = std::make_unique<AudioEngine>();
         // Parallel track processing: a worker per physical core, unless switched off in the settings.
-        engine->setWorkerThreads(settings->getBoolValue("multiThreadedAudio", true) ? WorkerPool::defaultWorkers() : 0);
+        engine->setWorkerThreads(ui::prefs::workerThreads(*settings));
+        ui::prefs::applyZoom(ui::prefs::zoom(*settings));
+        ui::prefs::applyNewTrackDefaults(*settings); // new tracks' tuning and high notes
         timeline.mark("engine created");
 
         tunings = std::make_unique<TuningRegistry>();
         tunings->loadFolder(paths.userData.getChildFile("Tunings"));
-        PlayPanel::loadRememberedTunings(*tunings, *settings);
+        // What the tuning editor saved (docs/05-m4-ui.md, 4f): in the User Library, where the browser shows it.
+        tunings->loadFolder(paths.userData.getChildFile("Library").getChildFile("Tunings"));
+        ui::prefs::loadRememberedTunings(*tunings, *settings); // tuning files loaded from elsewhere
         timeline.mark("tunings loaded");
 
-        // A new set, its tracks in the tuning chosen last.
+        // A new set, its tracks in the Preferences' tuning (a tuning file no longer there: 12-TET).
+        if (tunings->findById(LiveSet::newTrackDefaults().tuningId) == nullptr)
+            LiveSet::newTrackDefaults().tuningId = {};
         session = std::make_unique<SessionController>(*engine, *tunings);
-        if (const auto tuning = settings->getValue(PlayPanel::tuningIdKey); tunings->findById(tuning) != nullptr)
-        {
-            for (int t = 0; t < session->set().numTracks(); ++t)
-                session->set().setTrackTuning(t, tuning);
-            session->markClean();
-        }
         timeline.mark("session created");
 
         // Opening the device can take over a second in the driver (WASAPI exclusive mode on the
@@ -77,6 +78,7 @@ public:
 
     void shutdown() override
     {
+        uiStress = nullptr;
         soak = nullptr;
         mainWindow = nullptr; // saves the device state
         session = nullptr;    // the engine owns everything the audio thread reads, so it can keep running
@@ -94,9 +96,11 @@ public:
             quit();
             return;
         }
-        mainWindow->content().sessionView().confirmDiscardingChanges([](bool proceed) {
-            if (proceed)
-                quit();
+        mainWindow->content().shell().files().confirmDiscardingChanges([this](bool proceed) {
+            if (!proceed)
+                return;
+            mainWindow->content().shell().files().quitting(); // a normal quit: no recovery copy
+            quit();
         });
     }
 
@@ -138,17 +142,38 @@ private:
             startSoak();
         else if (quitWhenReady)
             quit();
+        else
+            mainWindow->content().shell().files().offerRecovery(); // after a crash
     }
 
     void startSoak()
     {
+        if (soakOptions.uiStress)
+        {
+            // The UI stress test: the set plays while the window is worked (UiStress).
+            const auto result = session->loadSet(juce::File::getCurrentWorkingDirectory().getChildFile(soakOptions.setFile));
+            if (soakOptions.setFile.isEmpty() || result.failed())
+            {
+                paths.logs().getChildFile("soak.log").appendText(juce::Time::getCurrentTime().toISO8601(true) +
+                                                                 " | ui stress | could not open the set '" + soakOptions.setFile +
+                                                                 "': " + result.getErrorMessage() + " | FAIL\n");
+                setApplicationReturnValue(1);
+                quit();
+                return;
+            }
+            // Quiet, as the soak's tone is: the master fader at its level (the set renders the same).
+            session->set().setMasterVolumeDb(soakOptions.levelDb);
+            uiStress = std::make_unique<UiStress>(mainWindow->content().shell());
+            uiStress->start();
+        }
         soak = std::make_unique<SoakTest>(*engine, soakOptions, paths.logs().getChildFile("soak.log"),
                                           [this](bool passed) {
                                               setApplicationReturnValue(passed ? 0 : 1);
                                               quit();
                                           });
+        if (uiStress != nullptr)
+            soak->setContext([this] { return uiStress->describe(); });
         soak->start();
-        mainWindow->content().setToneToggle(true);
     }
 
     StartupTimeline timeline;
@@ -157,6 +182,7 @@ private:
     bool runSoak = false;
     SoakTest::Options soakOptions;
     std::unique_ptr<SoakTest> soak;
+    std::unique_ptr<UiStress> uiStress;
     bool windowIsShown = false;
     bool audioIsOpen = false;
     std::unique_ptr<juce::PropertiesFile> settings;

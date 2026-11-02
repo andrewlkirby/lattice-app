@@ -1,0 +1,193 @@
+#include "ui/widgets/Icons.h"
+
+#include "ui/theme/LatticeLookAndFeel.h"
+
+#include <map>
+#include <tuple>
+
+namespace lattice::ui
+{
+
+juce::Path iconPath(Icon icon)
+{
+    juce::Path p;
+    switch (icon)
+    {
+    case Icon::power:
+        p.addCentredArc(0.5f, 0.55f, 0.36f, 0.36f, 0.0f, 0.65f, juce::MathConstants<float>::twoPi - 0.65f, true);
+        p.startNewSubPath(0.5f, 0.08f);
+        p.lineTo(0.5f, 0.5f);
+        break;
+    case Icon::foldOpen:
+        p.addTriangle(0.15f, 0.3f, 0.85f, 0.3f, 0.5f, 0.75f);
+        break;
+    case Icon::foldClosed:
+        p.addTriangle(0.3f, 0.15f, 0.75f, 0.5f, 0.3f, 0.85f);
+        break;
+    case Icon::hotSwap:
+        p.startNewSubPath(0.1f, 0.35f);
+        p.lineTo(0.85f, 0.35f);
+        p.startNewSubPath(0.65f, 0.15f);
+        p.lineTo(0.85f, 0.35f);
+        p.lineTo(0.65f, 0.55f);
+        p.startNewSubPath(0.9f, 0.68f);
+        p.lineTo(0.15f, 0.68f);
+        p.startNewSubPath(0.35f, 0.48f);
+        p.lineTo(0.15f, 0.68f);
+        p.lineTo(0.35f, 0.88f);
+        break;
+    case Icon::save:
+        p.startNewSubPath(0.5f, 0.08f);
+        p.lineTo(0.5f, 0.62f);
+        p.startNewSubPath(0.28f, 0.4f);
+        p.lineTo(0.5f, 0.62f);
+        p.lineTo(0.72f, 0.4f);
+        p.startNewSubPath(0.12f, 0.62f);
+        p.lineTo(0.12f, 0.9f);
+        p.lineTo(0.88f, 0.9f);
+        p.lineTo(0.88f, 0.62f);
+        break;
+    case Icon::allParams:
+        for (const float y : {0.22f, 0.5f, 0.78f})
+        {
+            p.startNewSubPath(0.12f, y);
+            p.lineTo(0.88f, y);
+        }
+        break;
+    case Icon::menu:
+        p.addTriangle(0.2f, 0.36f, 0.8f, 0.36f, 0.5f, 0.7f);
+        break;
+    case Icon::up:
+        p.addTriangle(0.2f, 0.64f, 0.8f, 0.64f, 0.5f, 0.3f);
+        break;
+    case Icon::map:
+        p.addEllipse(0.08f, 0.08f, 0.38f, 0.38f);
+        p.startNewSubPath(0.4f, 0.4f);
+        p.lineTo(0.78f, 0.78f);
+        p.startNewSubPath(0.55f, 0.85f);
+        p.lineTo(0.85f, 0.85f);
+        p.lineTo(0.85f, 0.55f);
+        break;
+    case Icon::plus:
+        p.startNewSubPath(0.5f, 0.12f);
+        p.lineTo(0.5f, 0.88f);
+        p.startNewSubPath(0.12f, 0.5f);
+        p.lineTo(0.88f, 0.5f);
+        break;
+    case Icon::cross:
+        p.startNewSubPath(0.18f, 0.18f);
+        p.lineTo(0.82f, 0.82f);
+        p.startNewSubPath(0.82f, 0.18f);
+        p.lineTo(0.18f, 0.82f);
+        break;
+    case Icon::speaker:
+        p.startNewSubPath(0.1f, 0.38f);
+        p.lineTo(0.28f, 0.38f);
+        p.lineTo(0.5f, 0.16f);
+        p.lineTo(0.5f, 0.84f);
+        p.lineTo(0.28f, 0.62f);
+        p.lineTo(0.1f, 0.62f);
+        p.closeSubPath();
+        p.addCentredArc(0.5f, 0.5f, 0.2f, 0.2f, 0.0f, 0.75f, 2.4f, true);
+        p.addCentredArc(0.5f, 0.5f, 0.36f, 0.36f, 0.0f, 0.75f, 2.4f, true);
+        break;
+    case Icon::sync:
+        // A bar line with a beat about to land on it.
+        p.startNewSubPath(0.7f, 0.12f);
+        p.lineTo(0.7f, 0.88f);
+        p.startNewSubPath(0.1f, 0.5f);
+        p.lineTo(0.55f, 0.5f);
+        p.startNewSubPath(0.4f, 0.32f);
+        p.lineTo(0.58f, 0.5f);
+        p.lineTo(0.4f, 0.68f);
+        break;
+    case Icon::folder:
+        p.startNewSubPath(0.08f, 0.24f);
+        p.lineTo(0.38f, 0.24f);
+        p.lineTo(0.46f, 0.34f);
+        p.lineTo(0.92f, 0.34f);
+        p.lineTo(0.92f, 0.82f);
+        p.lineTo(0.08f, 0.82f);
+        p.closeSubPath();
+        break;
+    case Icon::search:
+        p.addEllipse(0.12f, 0.12f, 0.5f, 0.5f);
+        p.startNewSubPath(0.55f, 0.55f);
+        p.lineTo(0.88f, 0.88f);
+        break;
+    }
+    return p;
+}
+
+bool isStrokedIcon(Icon icon)
+{
+    return icon != Icon::foldOpen && icon != Icon::foldClosed && icon != Icon::menu && icon != Icon::up;
+}
+
+void drawIcon(juce::Graphics& g, Icon icon, juce::Rectangle<float> area, juce::Colour colour, const Theme& theme)
+{
+    const float size = juce::jmin(area.getWidth(), area.getHeight());
+    if (size <= 1.0f)
+        return;
+    const auto square = area.withSizeKeepingCentre(size, size);
+    const float stroke = isStrokedIcon(icon) ? juce::jmax(1.25f, theme.stroke * 1.5f) : 0.0f;
+    // The outline at this size, made once: stroking a path costs several times filling it, and
+    // a list draws the same icon on every row (the browser's 100,000 results, UI benchmarks).
+    // Message thread only, as all drawing is.
+    // Curves are flattened for the pixels they cover (150% and 200% zoom have more of them).
+    const float scale = juce::jmax(1.0f, g.getInternalContext().getPhysicalPixelScaleFactor());
+    using Key = std::tuple<int, float, float, float>;
+    static std::map<Key, juce::Path> outlines;
+    const Key key{static_cast<int>(icon), size, stroke, scale};
+    auto it = outlines.find(key);
+    if (it == outlines.end())
+    {
+        if (outlines.size() >= 1024) // sizes come from the theme and the zoom: a few dozen in use
+            outlines.clear();
+        auto path = iconPath(icon);
+        path.applyTransform(juce::AffineTransform::scale(size));
+        if (stroke > 0.0f)
+        {
+            juce::Path outline;
+            juce::PathStrokeType(stroke, juce::PathStrokeType::curved, juce::PathStrokeType::rounded).createStrokedPath(outline, path, {}, scale);
+            path = std::move(outline);
+        }
+        it = outlines.emplace(key, std::move(path)).first;
+    }
+    g.setColour(colour);
+    g.fillPath(it->second, juce::AffineTransform::translation(square.getX(), square.getY()));
+}
+
+IconButton::IconButton(const juce::String& name, Icon icon, const juce::String& tooltip) : juce::Button(name), shown(icon)
+{
+    setTooltip(tooltip);
+    setTitle(name);
+    setDescription(tooltip);
+    setWantsKeyboardFocus(false);
+    setMouseClickGrabsKeyboardFocus(false);
+}
+
+void IconButton::setIcon(Icon i)
+{
+    if (i != shown)
+    {
+        shown = i;
+        repaint();
+    }
+}
+
+void IconButton::paintButton(juce::Graphics& g, bool highlighted, bool down)
+{
+    const auto& t = themeOf(*this);
+    const auto r = getLocalBounds().toFloat();
+    const bool on = getToggleState();
+    if (on || highlighted || down)
+    {
+        g.setColour(on ? t.accent.withAlpha(down ? 0.6f : 0.35f) : t.surfaceSunken.withAlpha(down ? 1.0f : 0.6f));
+        g.fillRoundedRectangle(r.reduced(0.5f), t.radius);
+    }
+    const auto colour = !isEnabled() ? t.textDisabled : on ? t.text : highlighted ? t.text : t.textDim;
+    drawIcon(g, shown, r.reduced(r.getHeight() * 0.22f), colour, t);
+}
+
+} // namespace lattice::ui

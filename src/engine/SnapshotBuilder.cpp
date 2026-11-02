@@ -99,6 +99,11 @@ void SnapshotBuilder::valueTreePropertyChanged(juce::ValueTree& tree, const juce
         forwardParameter(tree, property);
         return;
     }
+    // Names and the Device view's state don't change the sound.
+    if ((tree.hasType(ids::device) && (property == ids::name || property == ids::folded || property == ids::showAll ||
+                                       property == ids::padStart || property == ids::padPage)) ||
+        (tree.hasType(ids::rackChain) && property == ids::name))
+        return;
     if (tree.hasType(ids::device) && property == ids::enabled)
     {
         if (auto* device = deviceFor(LiveSet::idOf(tree)))
@@ -151,6 +156,7 @@ void SnapshotBuilder::valueTreeRedirected(juce::ValueTree&)
 void SnapshotBuilder::forgetAll()
 {
     tracks.clear();
+    tuningOverrides.clear(); // by track ID, which another set uses for other tracks
     clipCache.clear();
     dirtyClips.clear();
     deviceIndex.clear();
@@ -323,6 +329,37 @@ void SnapshotBuilder::rebuildChain(const juce::ValueTree& owner, TrackCache& cac
     engine.installChain(*cache.processor, build.fresh, build.freshChains, std::move(layout));
 }
 
+void SnapshotBuilder::setTuningOverride(std::int64_t trackId, TuningPtr tuning)
+{
+    if (tuning == nullptr)
+        tuningOverrides.erase(trackId);
+    else
+        tuningOverrides[trackId] = std::move(tuning);
+    if (!dirty)
+    {
+        dirty = true;
+        triggerAsyncUpdate();
+    }
+}
+
+TuningPtr SnapshotBuilder::tuningOverride(std::int64_t trackId) const
+{
+    const auto it = tuningOverrides.find(trackId);
+    return it != tuningOverrides.end() ? it->second : nullptr;
+}
+
+void SnapshotBuilder::setAutoArmTrack(std::int64_t trackId)
+{
+    if (trackId == autoArm)
+        return;
+    autoArm = trackId;
+    if (!dirty)
+    {
+        dirty = true;
+        triggerAsyncUpdate();
+    }
+}
+
 void SnapshotBuilder::handleAsyncUpdate()
 {
     rebuildIfNeeded();
@@ -395,8 +432,11 @@ void SnapshotBuilder::rebuildNow()
         }
 
         // Tuning: re-resolve every time (a tuning file may have been loaded since), publish on change.
+        // The tuning editor's draft, while it's open for this track, comes first.
         const juce::String tuningId = trackNode[ids::tuningId].toString();
-        auto tuning = resolveTuning(tuningId);
+        auto tuning = tuningOverride(ts.id);
+        if (tuning == nullptr)
+            tuning = resolveTuning(tuningId);
         if (tuning != cache.tuning || tuningId != cache.tuningId)
         {
             cache.processor->tuning().setTuning(tuning);
@@ -407,17 +447,30 @@ void SnapshotBuilder::rebuildNow()
         cache.processor->tuning().setHighNotePolicy(static_cast<int>(trackNode[ids::highNotePolicy]) == 1
                                                         ? HighNotePolicy::FoldDown
                                                         : HighNotePolicy::Mute);
+        cache.processor->tuning().setBendMode(LiveSet::bendModeOf(trackNode) == 1 ? BendMode::TableSteps : BendMode::Cents);
+        cache.processor->tuning().setBendRangeCents(static_cast<float>(LiveSet::bendRangeCentsOf(trackNode)));
+        cache.processor->tuning().setBendRangeSteps(static_cast<float>(LiveSet::bendRangeStepsOf(trackNode)));
         if (chainDirty)
             rebuildChain(trackNode, cache);
 
         ts.processor = cache.processor;
         const float gain = gainFromDb(trackNode[ids::volumeDb]);
-        const auto [panL, panR] = constantPowerPan(trackNode[ids::pan]);
+        // A group track carries a stereo mix: its pan is a balance (unity at the centre), so
+        // grouping tracks doesn't change their level. A MIDI track's pan is constant power.
+        const auto [panL, panR] = LiveSet::isGroup(trackNode) ? balancePan(trackNode[ids::pan]) : constantPowerPan(trackNode[ids::pan]);
         ts.gainLeft = gain * panL;
         ts.gainRight = gain * panR;
         ts.mute = trackNode[ids::mute];
         ts.solo = trackNode[ids::solo];
         ts.arm = trackNode[ids::arm];
+        ts.isGroup = LiveSet::isGroup(trackNode);
+        const auto input = trackNode[ids::midiInput].toString();
+        ts.inputSource = input.isEmpty() ? -1
+                         : input == LiveSet::computerKeyboardInput ? static_cast<int>(computerKeyboardSource)
+                                                                   : static_cast<int>(engine.midiSourceFor(input));
+        ts.inputChannel = juce::jlimit(0, 16, static_cast<int>(trackNode[ids::midiChannel]));
+        ts.monitoring = static_cast<Monitoring>(juce::jlimit(0, 2, static_cast<int>(trackNode[ids::monitoring])));
+        ts.parent = set.parentGroupOf(t);
         snapshot->anySolo = snapshot->anySolo || ts.solo;
 
         ts.slots.resize(static_cast<std::size_t>(numScenes));
@@ -446,6 +499,12 @@ void SnapshotBuilder::rebuildNow()
         newTracks[ts.id] = std::move(cache);
         snapshot->tracks.push_back(std::move(ts));
     }
+
+    // Auto-arm: the selected track counts as armed while nothing is armed by hand.
+    if (autoArm != 0 && std::none_of(snapshot->tracks.begin(), snapshot->tracks.end(), [](const TrackSnapshot& ts) { return ts.arm; }))
+        for (auto& ts : snapshot->tracks)
+            if (ts.id == autoArm && !ts.isGroup)
+                ts.arm = true;
 
     // Return tracks: a device chain each, fed by the sends.
     const int numReturns = std::min(set.numReturns(), TrackProcessor::maxReturns);
@@ -507,11 +566,83 @@ void SnapshotBuilder::rebuildNow()
     // slowest track, returns with the slowest return, and the tracks' direct path to the master
     // waits for the returns. With "reduced latency when monitoring", armed tracks skip their delay.
     snapshot->reducedLatencyWhenMonitoring = set.state().getProperty(ids::reducedLatencyWhenMonitoring, false);
+    //
+    // Group tracks (docs/05-m4-ui.md, 4b): a track's path to the master runs through its groups'
+    // chains, so its path latency is its own plus theirs. Every path lines up with the slowest:
+    // a track waits for the difference, and its group then adds the group's latency on top, so a
+    // group itself never waits. A track's sends leave before its groups' chains, so they wait for
+    // those chains' latency, and reach the returns in time with the direct path. Without groups
+    // this is exactly the M3 rule.
+    std::vector<int> groupsLatency(static_cast<std::size_t>(numTracks), 0); // the chains above each track
+    for (int t = 0; t < numTracks; ++t)
+    {
+        const int p = snapshot->tracks[static_cast<std::size_t>(t)].parent;
+        if (p >= 0 && p < t)
+            groupsLatency[static_cast<std::size_t>(t)] =
+                groupsLatency[static_cast<std::size_t>(p)] + snapshot->tracks[static_cast<std::size_t>(p)].processor->latencySamples();
+    }
     int slowestTrack = 0;
-    for (const auto& ts : snapshot->tracks)
-        slowestTrack = std::max(slowestTrack, ts.processor->latencySamples());
-    for (auto& ts : snapshot->tracks)
-        ts.compensation = snapshot->reducedLatencyWhenMonitoring && ts.arm ? 0 : slowestTrack - ts.processor->latencySamples();
+    for (int t = 0; t < numTracks; ++t)
+        slowestTrack = std::max(slowestTrack, snapshot->tracks[static_cast<std::size_t>(t)].processor->latencySamples() +
+                                                  groupsLatency[static_cast<std::size_t>(t)]);
+    for (int t = 0; t < numTracks; ++t)
+    {
+        auto& ts = snapshot->tracks[static_cast<std::size_t>(t)];
+        const bool monitoring = snapshot->reducedLatencyWhenMonitoring && ts.arm;
+        const int path = ts.processor->latencySamples() + groupsLatency[static_cast<std::size_t>(t)];
+        ts.compensation = monitoring || ts.isGroup ? 0 : slowestTrack - path;
+        ts.sendDelay = monitoring ? 0 : groupsLatency[static_cast<std::size_t>(t)];
+    }
+
+    // Mute and solo through groups: a muted group silences everything in it; a soloed track keeps
+    // its groups audible, and a soloed group everything in it.
+    {
+        auto& tracksOut = snapshot->tracks;
+        std::vector<bool> soloed(static_cast<std::size_t>(numTracks)), muted(static_cast<std::size_t>(numTracks));
+        for (int t = 0; t < numTracks; ++t)
+        {
+            soloed[static_cast<std::size_t>(t)] = tracksOut[static_cast<std::size_t>(t)].solo;
+            muted[static_cast<std::size_t>(t)] = tracksOut[static_cast<std::size_t>(t)].mute;
+        }
+        for (int t = 0; t < numTracks; ++t)
+        {
+            bool mute = muted[static_cast<std::size_t>(t)];
+            bool solo = soloed[static_cast<std::size_t>(t)];
+            for (int p = tracksOut[static_cast<std::size_t>(t)].parent; p >= 0; p = tracksOut[static_cast<std::size_t>(p)].parent)
+            {
+                mute = mute || muted[static_cast<std::size_t>(p)];
+                solo = solo || soloed[static_cast<std::size_t>(p)];
+            }
+            if (soloed[static_cast<std::size_t>(t)])
+                for (int p = tracksOut[static_cast<std::size_t>(t)].parent; p >= 0; p = tracksOut[static_cast<std::size_t>(p)].parent)
+                    tracksOut[static_cast<std::size_t>(p)].solo = true; // its groups stay audible
+            tracksOut[static_cast<std::size_t>(t)].mute = mute;
+            if (solo)
+                tracksOut[static_cast<std::size_t>(t)].solo = true;
+        }
+    }
+
+    // The groups' levels, deepest first.
+    {
+        int deepestGroup = -1;
+        std::vector<int> depth(static_cast<std::size_t>(numTracks), 0);
+        for (int t = 0; t < numTracks; ++t)
+        {
+            const int p = snapshot->tracks[static_cast<std::size_t>(t)].parent;
+            depth[static_cast<std::size_t>(t)] = p >= 0 && p < t ? depth[static_cast<std::size_t>(p)] + 1 : 0;
+            if (snapshot->tracks[static_cast<std::size_t>(t)].isGroup)
+                deepestGroup = std::max(deepestGroup, depth[static_cast<std::size_t>(t)]);
+        }
+        for (int d = deepestGroup; d >= 0; --d)
+        {
+            std::vector<int> level;
+            for (int t = 0; t < numTracks; ++t)
+                if (snapshot->tracks[static_cast<std::size_t>(t)].isGroup && depth[static_cast<std::size_t>(t)] == d)
+                    level.push_back(t);
+            if (!level.empty())
+                snapshot->groupLevels.push_back(std::move(level));
+        }
+    }
     int slowestReturn = 0;
     for (const auto& rs : snapshot->returns)
         slowestReturn = std::max(slowestReturn, rs.processor->latencySamples());
@@ -524,7 +655,8 @@ void SnapshotBuilder::rebuildNow()
     {
         std::unordered_map<std::int64_t, int> indexOf;
         for (int t = 0; t < numTracks; ++t)
-            indexOf[snapshot->tracks[static_cast<std::size_t>(t)].id] = t;
+            if (!snapshot->tracks[static_cast<std::size_t>(t)].isGroup)
+                indexOf[snapshot->tracks[static_cast<std::size_t>(t)].id] = t;
         std::vector<std::vector<int>> sources(static_cast<std::size_t>(numTracks));
         std::unordered_set<std::int64_t> tapped;
         for (int t = 0; t < numTracks; ++t)
@@ -575,6 +707,8 @@ void SnapshotBuilder::rebuildNow()
                 l = deepest + 1; // in a loop
         for (int t = 0; t < numTracks; ++t)
         {
+            if (snapshot->tracks[static_cast<std::size_t>(t)].isGroup)
+                continue; // rendered after their members (groupLevels)
             const auto l = static_cast<std::size_t>(level[static_cast<std::size_t>(t)]);
             if (snapshot->levels.size() <= l)
                 snapshot->levels.resize(l + 1);

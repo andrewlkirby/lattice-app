@@ -18,7 +18,13 @@ struct TimedMidi
     int sampleOffset = 0;
     std::uint8_t bytes[3]{};
     std::uint8_t size = 0;
+    /** Where live input came from: computerKeyboardSource (the computer and on-screen keyboards)
+        or a MIDI input's number (AudioEngine::midiSourceFor). Unused for other events. */
+    std::uint8_t source = 0;
 };
+
+/** The source number of the computer and on-screen keyboards. */
+inline constexpr std::uint8_t computerKeyboardSource = 0;
 
 /** Live MIDI from any number of producer threads (MIDI input callbacks, the on-screen and computer
     keyboards) to the audio thread.
@@ -34,7 +40,7 @@ public:
 
     /** Any thread except the audio thread. Returns false (and counts a drop) if the queue is full
         or the message is not a short message. */
-    bool push(const juce::MidiMessage& message);
+    bool push(const juce::MidiMessage& message, std::uint8_t source = computerKeyboardSource);
 
     /** Audio thread. Moves up to maxEvents queued messages into out, all at sampleOffset 0 (live
         input is played as soon as it arrives). Returns how many were written. If arrivalSeconds is

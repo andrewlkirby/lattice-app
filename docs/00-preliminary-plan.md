@@ -101,7 +101,7 @@ The user confirmed this on 2026-10-11: **sound quality and performance come befo
 | 7 | **UI** | Session view grid, device chain view, MIDI clip piano-roll (with a Colundi-aware note ruler that shows Hz instead of note names), mixer, browser, preferences (audio/MIDI/controllers). Visual style follows Live (flat, dense, keyboard-driven) |
 | 8 | **Controller layer** | Abstract `ControlSurface` API (pads, buttons, encoders, touch strip, display, LEDs).<br>• Each surface **declares its own capabilities**: grid size, number of encoders, display size.<br>• The modes (Session, Note, Device, Mix, Browse) are written against those capabilities, never against a fixed 8×8 or 8 encoders. Drivers:<br>• **Virtual Push** (on-screen, always available)<br>• **Push 2/3:** MIDI plus 960×160 display over libusb (WinUSB on Windows, a udev rule on Linux)<br>• **Generic MIDI controllers:** JSON surface definitions plus a learn wizard<br>• **The user's controller:** a native driver in M7 |
 | 9 | **MIDI I/O and external hardware** | Device routing, MIDI clock in/out, External Instrument device, MPE output, Colundi retune output |
-| 10 | **Post-MVP** | Arrangement view, audio tracks and recording, warping/time-stretch, automation lanes, freeze/bounce, export/render, Link sync |
+| 10 | **Post-MVP** | Arrangement view, audio tracks and recording, warping/time-stretch, automation lanes, freeze/bounce, export/render, Link sync, a plucked-string physical-model instrument |
 
 ### Proposed repository layout
 ```
@@ -138,7 +138,7 @@ lattice-app/
 6. **M5 Controllers**: the mode logic (Session, Note with the Colundi layout, Drum, step sequencer, Device, Mix, Browse, Clip) works on any grid or encoder count. It is built and tested first against the on-screen Virtual Push. Then come the Push 2/3 drivers (MIDI, display, MPE), **generic MIDI controllers** through JSON surface definitions plus a learn wizard, and a low-latency path for pad notes.
 7. **M6 Plugin hosting + external retune**: VST3/CLAP/AU hosting with scanning in a separate process and optional crash isolation; MTS-ESP master; .tun/.scl/.kbm/MTS sysex export; hardware retuning by MPE bend or MTS sysex; External Instrument with measured latency; MIDI clock in/out; Tuning Verifier.
 8. **M7 Native drivers + finishing the MVP**: native drivers for whichever controller(s) the user buys (Push 2/3, Launchpad Pro MK3, APC64, APC40 MKII, or Maschine MK3), built and checked together on the real device. Then the end-to-end acceptance test, an 8-hour soak test, the installer, and a licensing review. **MVP complete.**
-9. **M8+ Post-MVP**: arrangement view, audio tracks, warping, automation, export.
+9. **M8+ Post-MVP**: arrangement view, audio tracks, warping, automation, export, a plucked-string instrument (docs/08-m7-native-drivers.md, "After the MVP").
 
 ## Key risks
 - **Real-time safety**: no allocation or locks on the audio thread. Enforce this from M0 with lock-free FIFOs and atomic parameter snapshots.

@@ -1,0 +1,125 @@
+#include "ui/prefs/AppSettings.h"
+
+#include "core/model/LiveSet.h"
+#include "engine/AudioEngine.h"
+#include "engine/WorkerPool.h"
+#include "tuning/TuningRegistry.h"
+#include "tuning/TuningTable.h"
+
+#include <juce_gui_basics/juce_gui_basics.h>
+
+namespace lattice::ui::prefs
+{
+
+double zoom(const juce::PropertiesFile& settings)
+{
+    return juce::jlimit(minZoom, maxZoom, settings.getDoubleValue(zoomKey, 1.0));
+}
+
+void applyZoom(double z)
+{
+    juce::Desktop::getInstance().setGlobalScaleFactor(static_cast<float>(juce::jlimit(minZoom, maxZoom, z)));
+}
+
+int workerThreads(const juce::PropertiesFile& settings)
+{
+    if (!settings.getBoolValue(multiThreadedKey, true))
+        return 0;
+    const int chosen = settings.getIntValue(workersKey, 0);
+    return chosen > 0 ? chosen : WorkerPool::defaultWorkers();
+}
+
+void applyTestTone(const juce::PropertiesFile& settings, AudioEngine& engine)
+{
+    engine.testTone().setFrequency(static_cast<float>(settings.getDoubleValue(toneFrequencyKey, 440.0)));
+    engine.testTone().setGain(juce::Decibels::decibelsToGain(static_cast<float>(settings.getDoubleValue(toneLevelKey, -12.0))));
+}
+
+void saveDeviceState(juce::PropertiesFile& settings, AudioEngine& engine)
+{
+    if (engine.isOpening())
+        return; // the device manager belongs to the opening thread until it's open
+    if (const auto xml = engine.getDeviceManager().createStateXml())
+        settings.setValue(deviceStateKey, xml.get());
+}
+
+void loadRememberedTunings(TuningRegistry& registry, const juce::PropertiesFile& settings)
+{
+    for (const auto& path : juce::StringArray::fromLines(settings.getValue(userTuningFilesKey)))
+        if (path.isNotEmpty() && juce::File::isAbsolutePath(path))
+            registry.loadFile(juce::File(path));
+}
+
+void rememberTuningFile(juce::PropertiesFile& settings, const juce::File& file)
+{
+    auto files = juce::StringArray::fromLines(settings.getValue(userTuningFilesKey));
+    files.removeEmptyStrings();
+    files.addIfNotAlreadyThere(file.getFullPathName());
+    settings.setValue(userTuningFilesKey, files.joinIntoString("\n"));
+}
+
+void applyNewTrackDefaults(const juce::PropertiesFile& settings)
+{
+    auto& defaults = LiveSet::newTrackDefaults();
+    defaults.tuningId = settings.getValue(defaultTuningKey);
+    defaults.highNotePolicy = juce::jlimit(0, 1, settings.getIntValue(defaultHighNotesKey, 0));
+}
+
+void restoreShortcuts(const juce::PropertiesFile& settings, CommandRegistry& registry)
+{
+    if (const auto xml = settings.getXmlValue(shortcutsKey))
+        registry.restoreShortcuts(*xml);
+}
+
+void saveShortcuts(juce::PropertiesFile& settings, const CommandRegistry& registry)
+{
+    if (const auto xml = registry.shortcutsToXml())
+        settings.setValue(shortcutsKey, xml.get());
+}
+
+void applyKeyboard(const juce::PropertiesFile& settings, ComputerKeyboardInput& keyboard)
+{
+    const auto keys = settings.getValue(noteKeysKey, ComputerKeyboardInput::noteKeys);
+    if (!keyboard.setNoteKeys(keys))
+        keyboard.setNoteKeys(ComputerKeyboardInput::noteKeys);
+    keyboard.pageSizeFor = [&settings](const TuningTable& tuning) { return pageSizeFor(settings, tuning.id); };
+}
+
+int pageSizeFor(const juce::PropertiesFile& settings, const juce::String& tuningId)
+{
+    return juce::jlimit(0, TuningTable::numNotes, settings.getIntValue(pageKeyPrefix + tuningId, 0));
+}
+
+juce::StringArray remoteInputs(const juce::PropertiesFile& settings)
+{
+    auto all = juce::StringArray::fromLines(settings.getValue(remoteInputsKey));
+    all.removeEmptyStrings();
+    return all;
+}
+
+juce::StringArray nonTrackInputs(const juce::PropertiesFile& settings)
+{
+    auto all = juce::StringArray::fromLines(settings.getValue(nonTrackInputsKey));
+    all.removeEmptyStrings();
+    return all;
+}
+
+void setNonTrackInput(juce::PropertiesFile& settings, const juce::String& identifier, bool on)
+{
+    auto all = nonTrackInputs(settings);
+    all.removeString(identifier);
+    if (on)
+        all.add(identifier);
+    settings.setValue(nonTrackInputsKey, all.joinIntoString("\n"));
+}
+
+void setRemoteInput(juce::PropertiesFile& settings, const juce::String& identifier, bool on)
+{
+    auto all = remoteInputs(settings);
+    all.removeString(identifier);
+    if (on)
+        all.add(identifier);
+    settings.setValue(remoteInputsKey, all.joinIntoString("\n"));
+}
+
+} // namespace lattice::ui::prefs
