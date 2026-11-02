@@ -395,6 +395,40 @@ TEST_CASE("ADSR: segment times are accurate to within 1 ms", "[devices][dsp][env
     }
 }
 
+TEST_CASE("ADSR: blocks give what next() gives, and a changed sustain is reached exactly", "[devices][dsp][envelope]")
+{
+    dsp::Adsr::Settings s;
+    s.attackSeconds = 0.002f;
+    s.decaySeconds = 0.050f;
+    s.sustain = 0.8f;
+    dsp::Adsr byBlock, bySample;
+    for (auto* env : {&byBlock, &bySample})
+    {
+        env->setSampleRate(sr);
+        env->setSettings(s);
+        env->noteOn();
+    }
+    // Into the sustain, then the sustain level moved while the note is held.
+    const auto compare = [&](int blocks) {
+        float block[64];
+        for (int b = 0; b < blocks; ++b)
+        {
+            byBlock.renderBlock(block, 64);
+            for (int i = 0; i < 64; ++i)
+                REQUIRE(block[i] == bySample.next());
+        }
+    };
+    compare(100);
+    REQUIRE(byBlock.currentStage() == dsp::Adsr::Stage::Sustain);
+    CHECK(byBlock.currentValue() == 0.8f);
+    s.sustain = 0.3f;
+    byBlock.setSettings(s);
+    bySample.setSettings(s);
+    compare(300); // 0.4 s: well past where the steps stop changing the value
+    CHECK(byBlock.currentValue() == 0.3f);
+    CHECK(bySample.currentValue() == 0.3f);
+}
+
 TEST_CASE("Delay line: integer delays are exact, fractional ones accurate", "[devices][dsp]")
 {
     dsp::DelayLine d;

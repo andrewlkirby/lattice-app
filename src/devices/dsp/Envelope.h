@@ -76,7 +76,7 @@ public:
         case Stage::Idle:
             return 0.0f;
         case Stage::Sustain:
-            value += 0.002f * (settings.sustain - value); // follows sustain changes without zipper
+            value = towardsSustain(value, settings.sustain);
             return value;
         case Stage::Attack:
         case Stage::Decay:
@@ -105,12 +105,25 @@ public:
                     out[i] = 0.0f;
                 return;
             case Stage::Sustain:
+            {
+                // In locals: `out` could alias the members, so the compiler would otherwise store
+                // and reload them every sample. At the sustain level the recursion stays there
+                // exactly, so that's a fill.
+                float v = value;
+                const float s = settings.sustain;
+                if (v == s)
+                {
+                    std::fill(out + i, out + n, v);
+                    return;
+                }
                 for (; i < n; ++i)
                 {
-                    value += 0.002f * (settings.sustain - value);
-                    out[i] = value;
+                    v = towardsSustain(v, s);
+                    out[i] = v;
                 }
+                value = v;
                 return;
+            }
             case Stage::Attack:
             case Stage::Decay:
             case Stage::Release:
@@ -175,6 +188,15 @@ public:
     }
 
 private:
+    /** Follows sustain changes without zipper. In float the steps stop changing the value a few
+        hundred ulps short of the level (about 1e-5): there, it is the level, so that from then on
+        each block is a fill. */
+    static float towardsSustain(float v, float sustain) noexcept
+    {
+        const float next = v + 0.002f * (sustain - v);
+        return next == v ? sustain : next;
+    }
+
     void advance() noexcept
     {
         switch (stage)

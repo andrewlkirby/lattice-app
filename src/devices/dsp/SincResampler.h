@@ -30,8 +30,7 @@ namespace lattice::dsp
     crossings a side. The level used is the one just above 1/r, so the pass band stays flat to
     0.9 x Nyquist and the little that folds over lands above 0.9 x Nyquist. Each kernel is stored
     polyphase (rows of taps for evenly spaced fractional positions) and rows are interpolated
-    linearly: each row is stored with its difference to the next. Built once, shared; reading is
-    real-time safe. */
+    linearly. Built once, shared; reading is real-time safe. */
 class SincKernelBank
 {
 public:
@@ -77,8 +76,8 @@ inline void sincInterpolate(const SincKernelView& k, const float* const* data, i
     const float scaled = fraction * static_cast<float>(k.phases);
     const int phase = std::min(static_cast<int>(scaled), k.phases - 1);
     const float w = scaled - static_cast<float>(phase);
-    const float* row = k.rows + static_cast<std::size_t>(phase) * 2 * static_cast<std::size_t>(k.stride);
-    const float* diff = row + k.stride;
+    const float* row = k.rows + static_cast<std::size_t>(phase) * static_cast<std::size_t>(k.stride);
+    const float* next = row + k.stride;
     const long long first = index - k.taps / 2 + 1;
     const float* s0 = data[0] + first;
     const float* s1 = numChannels > 1 ? data[1] + first : s0;
@@ -90,7 +89,8 @@ inline void sincInterpolate(const SincKernelView& k, const float* const* data, i
     {
         for (int j = 0; j < k.stride; j += 4)
         {
-            const __m128 c = _mm_add_ps(_mm_load_ps(row + j), _mm_mul_ps(wv, _mm_load_ps(diff + j)));
+            const __m128 r = _mm_load_ps(row + j);
+            const __m128 c = _mm_add_ps(r, _mm_mul_ps(wv, _mm_sub_ps(_mm_load_ps(next + j), r)));
             acc0 = _mm_add_ps(acc0, _mm_mul_ps(c, _mm_loadu_ps(s0 + j)));
             acc1 = _mm_add_ps(acc1, _mm_mul_ps(c, _mm_loadu_ps(s1 + j)));
         }
@@ -99,7 +99,8 @@ inline void sincInterpolate(const SincKernelView& k, const float* const* data, i
     {
         for (int j = 0; j < k.stride; j += 4)
         {
-            const __m128 c = _mm_add_ps(_mm_load_ps(row + j), _mm_mul_ps(wv, _mm_load_ps(diff + j)));
+            const __m128 r = _mm_load_ps(row + j);
+            const __m128 c = _mm_add_ps(r, _mm_mul_ps(wv, _mm_sub_ps(_mm_load_ps(next + j), r)));
             acc0 = _mm_add_ps(acc0, _mm_mul_ps(c, _mm_loadu_ps(s0 + j)));
         }
         acc1 = acc0;
@@ -115,7 +116,7 @@ inline void sincInterpolate(const SincKernelView& k, const float* const* data, i
     float acc[2] = {0.0f, 0.0f};
     for (int j = 0; j < k.stride; ++j)
     {
-        const float c = row[j] + w * diff[j];
+        const float c = row[j] + w * (next[j] - row[j]);
         acc[0] += c * s0[j];
         acc[1] += c * s1[j];
     }
