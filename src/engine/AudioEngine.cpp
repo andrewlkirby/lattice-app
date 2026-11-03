@@ -247,7 +247,7 @@ void AudioEngine::noteActivity()
         listener->triggerAsyncUpdate();
 }
 
-void AudioEngine::process(float* const* outputs, int numOutputs, int numSamples) noexcept
+void AudioEngine::process(float* const* outputs, int numOutputs, int numSamples, double callbackSeconds) noexcept
 {
     // Denormals flush to zero on this thread (FTZ/DAZ), so decaying tails never slow processing.
     const juce::ScopedNoDenormals noDenormals;
@@ -263,9 +263,10 @@ void AudioEngine::process(float* const* outputs, int numOutputs, int numSamples)
     // Commands first, then the snapshot: a command is always pushed after the snapshot it refers
     // to was published, so the snapshot read below is at least that new.
     int numCommands = commands.popInto(commandScratch.data(), maxCommandsPerBlock);
-    // Live MIDI that arrived since the last block plays at the start of this one.
-    int numLive = midiQueue.popInto(liveEvents.data(), maxEventsPerBlock, liveArrivals.data());
-    const int liveReceived = numLive;
+    const int numLive = midiQueue.popInto(liveEvents.data(), maxEventsPerBlock, liveArrivals.data());
+    const double reference = callbackSeconds >= 0.0 ? callbackSeconds : MidiInputQueue::nowSeconds();
+    placeLiveInput(numLive, numSamples, callbackSeconds >= 0.0 ? reference : -1.0);
+    int nextLive = 0;
 
     // Some drivers deliver blocks larger than the size they announced; render in chunks rather
     // than ever resizing on this thread.
@@ -275,11 +276,15 @@ void AudioEngine::process(float* const* outputs, int numOutputs, int numSamples)
         {
             const RtShared<EngineSnapshot>::ReadScope scope(snapshots);
             const RtShared<WorkerPool>::ReadScope pool(workers);
-            sessionProcessor.process(scope.get(), commandScratch.data(), numCommands, liveEvents.data(), numLive, n,
-                                     left.data(), right.data(), pool.get());
+            // This chunk's live input, at offsets from its start (they're in time order).
+            int chunkLive = 0;
+            while (nextLive + chunkLive < numLive && liveEvents[static_cast<std::size_t>(nextLive + chunkLive)].sampleOffset < offset + n)
+                liveEvents[static_cast<std::size_t>(nextLive + chunkLive++)].sampleOffset -= offset;
+            sessionProcessor.process(scope.get(), commandScratch.data(), numCommands, liveEvents.data() + nextLive,
+                                     chunkLive, n, left.data(), right.data(), pool.get());
+            nextLive += chunkLive;
         }
-        numCommands = 0; // commands and live input belong to the first chunk
-        numLive = 0;
+        numCommands = 0; // commands belong to the first chunk
 
         tone.render(toneScratch.data(), n);
         juce::FloatVectorOperations::add(left.data(), toneScratch.data(), n);
@@ -320,11 +325,46 @@ void AudioEngine::process(float* const* outputs, int numOutputs, int numSamples)
         }
     }
 
-    if (liveReceived > 0)
+    // From arrival to the moment its sample plays, counted from the callback's start (the driver's
+    // output latency comes on top). With the device's clock that is one block for every event.
+    for (int i = 0; i < numLive; ++i)
+        latency.record((reference - liveArrivals[static_cast<std::size_t>(i)] + livePlaced[static_cast<std::size_t>(i)] / sampleRate) * 1000.0);
+}
+
+void AudioEngine::placeLiveInput(int numLive, int numSamples, double callbackSeconds) noexcept
+{
+    // A message that arrived one block's time before this callback plays at the block's start, one
+    // that arrived just now at its end: each plays exactly one block after it arrived, so the
+    // delay is constant whatever the callback's own timing. Older ones (a late callback) play at
+    // the start. Without the device's clock (offline), everything plays at the start.
+    for (int i = 0; i < numLive; ++i)
     {
-        const double end = MidiInputQueue::nowSeconds();
-        for (int i = 0; i < liveReceived; ++i)
-            latency.record((end - liveArrivals[static_cast<std::size_t>(i)]) * 1000.0);
+        const auto at = static_cast<std::size_t>(i);
+        int offset = 0;
+        if (callbackSeconds >= 0.0)
+        {
+            const double age = (callbackSeconds - liveArrivals[at]) * sampleRate;
+            offset = std::clamp(numSamples - static_cast<int>(std::lround(age)), 0, numSamples - 1);
+        }
+        liveEvents[at].sampleOffset = offset;
+        livePlaced[at] = offset;
+    }
+    // Producers on several threads can interleave: put them in time order (stable, in place; nearly
+    // always already sorted).
+    for (int i = 1; i < numLive; ++i)
+    {
+        const auto e = liveEvents[static_cast<std::size_t>(i)];
+        const double arrival = liveArrivals[static_cast<std::size_t>(i)];
+        int j = i;
+        for (; j > 0 && liveEvents[static_cast<std::size_t>(j - 1)].sampleOffset > e.sampleOffset; --j)
+        {
+            liveEvents[static_cast<std::size_t>(j)] = liveEvents[static_cast<std::size_t>(j - 1)];
+            liveArrivals[static_cast<std::size_t>(j)] = liveArrivals[static_cast<std::size_t>(j - 1)];
+            livePlaced[static_cast<std::size_t>(j)] = livePlaced[static_cast<std::size_t>(j - 1)];
+        }
+        liveEvents[static_cast<std::size_t>(j)] = e;
+        liveArrivals[static_cast<std::size_t>(j)] = arrival;
+        livePlaced[static_cast<std::size_t>(j)] = e.sampleOffset;
     }
 }
 
@@ -337,7 +377,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(const float* const* inputs, i
     LATTICE_ZONE("audio callback");
 
     const auto start = std::chrono::steady_clock::now();
-    process(outputs, numOutputs, numSamples);
+    process(outputs, numOutputs, numSamples, std::chrono::duration<double>(start.time_since_epoch()).count());
     const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 
     // Counted before the tap is read, so setOutputTap() can tell when the old one is free.

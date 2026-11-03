@@ -48,8 +48,8 @@ public:
     /** The browser's preview bus, mixed after the master. */
     PreviewPlayer& preview() noexcept { return previewPlayer; }
 
-    /** Live MIDI to the armed tracks (any thread except the audio thread). Enabled MIDI input
-        devices are routed here automatically. */
+    /** Live MIDI to the armed tracks (any thread; lock-free). Enabled MIDI input devices are
+        routed here automatically. */
     MidiInputQueue& midiInput() noexcept { return midiQueue; }
     /** The source number live MIDI from this input carries (by the input's identifier; 1 to 255,
         given out on first use and kept for the session). Any thread except the audio thread. */
@@ -86,9 +86,14 @@ public:
     /** Any thread except the audio thread. Returns false if the queue was full. */
     bool sendCommand(const EngineCommand& command)
     {
+        const bool queued = queueCommand(command);
         noteActivity();
-        return commands.push(command);
+        return queued;
     }
+    /** Any thread, real-time safe (a controller's input thread, docs/06-m5-controllers.md, 5b): the
+        command alone, without waking what polls the engine (call noteActivity() after, off the
+        real-time path). Returns false if the queue was full. */
+    bool queueCommand(const EngineCommand& command) noexcept LATTICE_NONBLOCKING { return commands.push(command); }
 
     /** Something the message thread may soon have to follow: a command, a new snapshot, a
         preview, MIDI coming in. What polls the engine (SessionController, ui::EngineStateFeed) does
@@ -157,8 +162,12 @@ public:
     /** Not on the audio thread. Allocates everything process() will need. */
     void prepare(double sampleRate, int maxBlockSize);
 
-    /** Audio thread (or a test). Fills every non-null output channel with numSamples samples. */
-    void process(float* const* outputs, int numOutputs, int numSamples) noexcept LATTICE_NONBLOCKING;
+    /** Audio thread (or a test). Fills every non-null output channel with numSamples samples.
+        callbackSeconds: when the callback started, on MidiInputQueue::nowSeconds()'s clock. Live
+        MIDI then plays at the sample its arrival time gives, one block after it arrived; without
+        it (-1, offline), live MIDI plays at the block's start. */
+    void process(float* const* outputs, int numOutputs, int numSamples, double callbackSeconds = -1.0) noexcept
+        LATTICE_NONBLOCKING;
 
     // juce::AudioIODeviceCallback
     void audioDeviceIOCallbackWithContext(const float* const* inputs, int numInputs, float* const* outputs,
@@ -174,6 +183,7 @@ public:
 
 private:
     void handleIncomingMidiMessage(juce::MidiInput* source, const juce::MidiMessage& message) override;
+    void placeLiveInput(int numLive, int numSamples, double callbackSeconds) noexcept LATTICE_NONBLOCKING;
 
     std::mutex midiSourcesLock;
     std::map<juce::String, std::uint8_t> midiSources;
@@ -213,6 +223,7 @@ private:
     std::vector<float> toneScratch;
     std::array<TimedMidi, maxEventsPerBlock> liveEvents{};
     std::array<double, maxEventsPerBlock> liveArrivals{};
+    std::array<int, maxEventsPerBlock> livePlaced{}; // each one's offset in the whole block
     std::array<EngineCommand, maxCommandsPerBlock> commandScratch{};
     double sampleRate = 0.0;
     bool callbackRegistered = false;

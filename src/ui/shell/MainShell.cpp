@@ -1384,13 +1384,10 @@ void MainShell::setVirtualPushVisible(bool visible)
             virtualPushWindow->toFront(false);
         return;
     }
-    control::VirtualPush::Settings s;
-    s.rows = settings.getIntValue(prefs::virtualRowsKey, 8);
-    s.columns = settings.getIntValue(prefs::virtualColumnsKey, 8);
-    s.fixedVelocity = settings.getIntValue(prefs::virtualVelocityKey, 0);
-    virtualPush = std::make_unique<control::VirtualPush>(stateFeed, s);
+    virtualPush = std::make_unique<control::VirtualPush>(stateFeed, virtualPushSettings());
     virtualSurface = std::make_unique<control::SurfaceController>(control::SurfaceContext{session, registry, selected, stateFeed}, *virtualPush);
     virtualSurface->setColours(surfaceColours());
+    virtualSurface->setExpression(expressionSettings());
     placeVirtualPush();
 }
 
@@ -1431,10 +1428,34 @@ void MainShell::placeVirtualPush()
     resized();
 }
 
+control::Expression MainShell::expressionSettings() const
+{
+    control::Expression e;
+    e.velocityCurve = static_cast<float>(juce::jlimit(-100, 100, settings.getIntValue(prefs::velocityCurveKey, 0))) / 100.0f;
+    e.pressure = static_cast<control::Expression::Pressure>(juce::jlimit(0, 2, settings.getIntValue(prefs::pressureKey, 1)));
+    e.pressureThreshold = static_cast<float>(juce::jlimit(0, 50, settings.getIntValue(prefs::pressureThresholdKey, 0))) / 100.0f;
+    e.strip = static_cast<control::Expression::Strip>(juce::jlimit(0, 2, settings.getIntValue(prefs::stripKey, 0)));
+    return e;
+}
+
+control::VirtualPush::Settings MainShell::virtualPushSettings() const
+{
+    control::VirtualPush::Settings s;
+    s.rows = juce::jlimit(4, 16, settings.getIntValue(prefs::virtualRowsKey, 8));
+    s.columns = juce::jlimit(4, 16, settings.getIntValue(prefs::virtualColumnsKey, 8));
+    s.fixedVelocity = juce::jlimit(0, 127, settings.getIntValue(prefs::virtualVelocityKey, 0));
+    return s;
+}
+
 void MainShell::applyVirtualPushSettings()
 {
     if (virtualPush == nullptr)
         return;
+    if (virtualPush->settings() == virtualPushSettings())
+    {
+        virtualSurface->setExpression(expressionSettings()); // the same device: only how it plays
+        return;
+    }
     setVirtualPushVisible(false);
     setVirtualPushVisible(true);
 }

@@ -151,6 +151,9 @@ public:
     control::SurfaceController* virtualPushController() noexcept { return virtualSurface.get(); }
     /** Its settings changed (the Preferences' Controllers tab): it's made again at the new size. */
     void applyVirtualPushSettings();
+    /** How the pads play, and Virtual Push's own settings, as the Preferences have them. */
+    control::Expression expressionSettings() const;
+    control::VirtualPush::Settings virtualPushSettings() const;
     /** The LEDs' state colours, from the theme. */
     control::SurfaceColours surfaceColours() const;
 

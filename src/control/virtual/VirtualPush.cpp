@@ -38,6 +38,9 @@ constexpr float leftWidth = 2.0f;   // two buttons, a unit each
 constexpr float gapUnits = 0.3f;    // between the panel, the grid and the scene buttons
 constexpr float sceneWidth = 0.8f;
 constexpr float trackHeight = 0.6f;
+constexpr float stripWidth = 0.45f;
+constexpr float statusHeight = 0.45f;
+constexpr float labelMinPixels = 7.0f; // smaller labels than this go unshown
 constexpr float padInset = 0.06f;   // each side of a pad, inside its unit
 constexpr float buttonInset = 0.05f;
 
@@ -108,6 +111,7 @@ juce::String VirtualPush::labelFor(ButtonId id)
 VirtualPush::VirtualPush(ui::EngineStateFeed& f, Settings settings)
     : feed(f), config(settings), caps(presets::virtualPush(settings.rows, settings.columns))
 {
+    caps.velocity = config.fixedVelocity <= 0; // a fixed velocity plays as it is, with no curve
     config.rows = caps.rows;
     config.columns = caps.columns;
     frame = LedFrame::blank(caps);
@@ -122,14 +126,20 @@ VirtualPush::~VirtualPush() = default;
 VirtualPush::Layout VirtualPush::layoutFor(const SurfaceCapabilities& c, juce::Rectangle<float> bounds)
 {
     Layout l;
-    const float widthUnits = leftWidth + gapUnits + static_cast<float>(c.columns) + gapUnits + sceneWidth;
-    const float heightUnits = static_cast<float>(c.rows) + gapUnits + trackHeight;
+    const float stripUnits = c.touchStrip ? stripWidth + gapUnits : 0.0f;
+    const float widthUnits = leftWidth + gapUnits + stripUnits + static_cast<float>(c.columns) + gapUnits + sceneWidth;
+    const float heightUnits = statusHeight + gapUnits + static_cast<float>(c.rows) + gapUnits + trackHeight;
     const float u = std::max(0.0f, std::min(bounds.getWidth() / widthUnits, bounds.getHeight() / heightUnits));
     l.unit = u;
     // Centred across, at the top: the room left over is below it.
     const juce::Point<float> origin{bounds.getCentreX() - widthUnits * u * 0.5f, bounds.getY()};
-    const float gridX = origin.x + (leftWidth + gapUnits) * u;
-    const float gridY = origin.y;
+    const float gridX = origin.x + (leftWidth + gapUnits + stripUnits) * u;
+    const float gridY = origin.y + (statusHeight + gapUnits) * u;
+    l.status = juce::Rectangle<float>(gridX, origin.y, static_cast<float>(c.columns) * u, statusHeight * u)
+                   .reduced(u * buttonInset, 0.0f);
+    if (c.touchStrip)
+        l.strip = juce::Rectangle<float>(origin.x + (leftWidth + gapUnits) * u, gridY, stripWidth * u, static_cast<float>(c.rows) * u)
+                      .reduced(u * buttonInset, u * padInset);
 
     for (int r = 0; r < c.rows; ++r)
         for (int col = 0; col < c.columns; ++col)
@@ -182,7 +192,22 @@ VirtualPush::Hit VirtualPush::hitTest(juce::Point<float> p) const
     for (std::size_t i = 0; i < places.buttons.size(); ++i)
         if (places.buttons[i].bounds.contains(p))
             return {-1, static_cast<int>(i)};
+    if (places.strip.contains(p))
+        return {-1, -1, true};
     return {};
+}
+
+float VirtualPush::stripAt(juce::Point<float> p) const
+{
+    const auto r = places.strip;
+    return juce::jlimit(0.0f, 1.0f, (r.getBottom() - p.y) / std::max(1.0f, r.getHeight()));
+}
+
+float VirtualPush::pressureFor(juce::Point<float> pressedAt, juce::Point<float> p, float penPressure) const
+{
+    if (penPressure >= 0.0f)
+        return juce::jlimit(0.0f, 1.0f, penPressure);
+    return juce::jlimit(0.0f, 1.0f, (pressedAt.y - p.y) / std::max(1.0f, places.unit));
 }
 
 float VirtualPush::velocityAt(int pad, juce::Point<float> p) const
@@ -213,6 +238,12 @@ void VirtualPush::showLeds(const LedFrame& f, const LedFrame::Changes& changed)
             repaint(areaOf({-1, b}));
     }
     updateAnimator();
+}
+
+void VirtualPush::showText(const SurfaceText& t)
+{
+    words = t;
+    repaint(); // the labels can change on every pad at once (a new layout)
 }
 
 void VirtualPush::updateAnimator()
@@ -261,6 +292,8 @@ juce::Rectangle<int> VirtualPush::areaOf(const Target& t) const
         return places.pads[static_cast<std::size_t>(t.pad)].getSmallestIntegerContainer().expanded(2);
     if (t.button >= 0 && t.button < static_cast<int>(places.buttons.size()))
         return places.buttons[static_cast<std::size_t>(t.button)].bounds.getSmallestIntegerContainer().expanded(2);
+    if (t.strip)
+        return places.strip.getSmallestIntegerContainer().expanded(2);
     return {};
 }
 
@@ -276,6 +309,7 @@ void VirtualPush::paint(juce::Graphics& g)
     const auto clip = g.getClipBounds().toFloat();
     const double beat = beatNow();
     const float radius = std::max(1.0f, places.unit * 0.08f);
+    const float labelHeight = std::min(t.fontSmall, places.unit * 0.24f);
     const auto isPressed = [this](const Target& target) {
         const auto same = [&](const Target& o) { return o.pad == target.pad && o.button == target.button; };
         return std::any_of(active.begin(), active.end(), [&](const auto& a) { return same(a.second); }) ||
@@ -295,6 +329,32 @@ void VirtualPush::paint(juce::Graphics& g)
             g.setColour(t.text);
             g.drawRoundedRectangle(r.reduced(1.0f), radius, std::max(1.5f, places.unit * 0.04f));
         }
+        if (i < words.pads.size() && words.pads[i].isNotEmpty() && labelHeight >= labelMinPixels)
+        {
+            const auto fill = ledColour(led, padOff, beat);
+            g.setColour((fill.getPerceivedBrightness() > 0.6f ? juce::Colours::black : juce::Colour(0xffe8e8ea)).withAlpha(0.85f));
+            g.setFont(t.font(labelHeight));
+            g.drawFittedText(words.pads[i], r.reduced(r.getWidth() * 0.08f).toNearestInt(), juce::Justification::bottomLeft, 2, 0.6f);
+        }
+    }
+
+    if (!places.status.isEmpty() && places.status.intersects(clip))
+    {
+        g.setColour(t.text);
+        g.setFont(t.font(std::min(t.fontNormal, places.status.getHeight() * 0.7f)));
+        g.drawFittedText(words.status, places.status.toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+    }
+
+    if (!places.strip.isEmpty() && places.strip.intersects(clip))
+    {
+        g.setColour(buttonOff);
+        g.fillRoundedRectangle(places.strip, radius);
+        const bool held = std::any_of(active.begin(), active.end(), [](const auto& a) { return a.second.strip; });
+        const float h = std::max(2.0f, places.unit * 0.08f);
+        const float y = juce::jlimit(places.strip.getY(), places.strip.getBottom() - h,
+                                     places.strip.getBottom() - stripShown * places.strip.getHeight() - h * 0.5f);
+        g.setColour(held ? t.focus : t.text.withMultipliedAlpha(0.5f));
+        g.fillRoundedRectangle(places.strip.getX(), y, places.strip.getWidth(), h, h * 0.5f);
     }
 
     for (std::size_t i = 0; i < places.buttons.size(); ++i)
@@ -331,36 +391,46 @@ bool VirtualPush::isLatched(int index, bool isButton) const
                        [&](const Target& t) { return isButton ? t.button == index : t.pad == index; });
 }
 
-void VirtualPush::press(const Target& t, float velocity)
+void VirtualPush::press(const Target& t, float value)
 {
-    if (onInput)
+    if (t.strip)
     {
-        if (t.pad >= 0)
-            onInput(SurfaceInput::padDown(t.pad / caps.columns, t.pad % caps.columns, velocity));
-        else
-            onInput(SurfaceInput::buttonDown(caps.buttons[static_cast<std::size_t>(t.button)].id));
+        stripShown = value;
+        deliver(SurfaceInput::strip(value));
     }
+    else if (t.pad >= 0)
+        deliver(SurfaceInput::padDown(t.pad / caps.columns, t.pad % caps.columns, value));
+    else
+        deliver(SurfaceInput::buttonDown(caps.buttons[static_cast<std::size_t>(t.button)].id));
     repaint(areaOf(t));
 }
 
 void VirtualPush::release(const Target& t)
 {
-    if (onInput)
+    if (t.strip)
     {
-        if (t.pad >= 0)
-            onInput(SurfaceInput::padUp(t.pad / caps.columns, t.pad % caps.columns));
-        else
-            onInput(SurfaceInput::buttonUp(caps.buttons[static_cast<std::size_t>(t.button)].id));
+        stripShown = 0.5f; // the marker goes back to the middle, as a bend does
+        deliver(SurfaceInput::stripRelease());
     }
+    else if (t.pad >= 0)
+        deliver(SurfaceInput::padUp(t.pad / caps.columns, t.pad % caps.columns));
+    else
+        deliver(SurfaceInput::buttonUp(caps.buttons[static_cast<std::size_t>(t.button)].id));
     repaint(areaOf(t));
 }
 
 void VirtualPush::mouseDown(const juce::MouseEvent& e)
 {
     const auto hit = hitTest(e.position);
-    if (hit.pad < 0 && hit.button < 0)
+    if (hit.pad < 0 && hit.button < 0 && !hit.strip)
         return;
-    const Target target{hit.pad, hit.button};
+    const Target target{hit.pad, hit.button, hit.strip, e.position};
+    if (hit.strip)
+    {
+        active[e.source.getIndex()] = target;
+        press(target, stripAt(e.position));
+        return;
+    }
     const auto same = [&](const Target& o) { return o.pad == target.pad && o.button == target.button; };
     if (const auto it = std::find_if(latched.begin(), latched.end(), same); it != latched.end())
     {
@@ -380,6 +450,29 @@ void VirtualPush::mouseDown(const juce::MouseEvent& e)
         release(it->second);
     active[source] = target;
     press(target, velocityAt(hit.pad, e.position));
+}
+
+void VirtualPush::mouseDrag(const juce::MouseEvent& e)
+{
+    const auto it = active.find(e.source.getIndex());
+    if (it == active.end())
+        return;
+    auto& target = it->second;
+    if (target.strip)
+    {
+        stripShown = stripAt(e.position);
+        deliver(SurfaceInput::strip(stripShown));
+        repaint(areaOf(target));
+    }
+    else if (target.pad >= 0)
+    {
+        const float pressure = pressureFor(target.pressedAt, e.position, e.isPressureValid() ? e.pressure : -1.0f);
+        if (const int step = juce::roundToInt(pressure * 127.0f); step != target.pressure)
+        {
+            target.pressure = step;
+            deliver(SurfaceInput::padPressure(target.pad / caps.columns, target.pad % caps.columns, pressure));
+        }
+    }
 }
 
 void VirtualPush::mouseUp(const juce::MouseEvent& e)

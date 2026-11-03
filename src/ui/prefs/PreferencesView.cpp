@@ -392,11 +392,43 @@ public:
         if (velocity.getSelectedId() == 0)
             velocity.setSelectedId(1, juce::dontSendNotification);
         velocity.onChange = [this] { save(prefs::virtualVelocityKey, velocity.getSelectedId() - 1); };
+        curve.setTitle("Velocity curve");
+        for (const auto& [name, value] : {std::pair{"Softest", -100}, {"Soft", -50}, {"Linear", 0}, {"Hard", 50}, {"Hardest", 100}})
+            curve.addItem(name, value + 101);
+        curve.setSelectedId(juce::jlimit(-100, 100, context.settings.getIntValue(prefs::velocityCurveKey, 0)) + 101, juce::dontSendNotification);
+        if (curve.getSelectedId() == 0)
+            curve.setSelectedId(101, juce::dontSendNotification);
+        curve.onChange = [this] { save(prefs::velocityCurveKey, curve.getSelectedId() - 101); };
+        pressure.setTitle("Pad pressure");
+        pressure.addItem("Off", 1);
+        pressure.addItem("Each note its own (polyphonic)", 2);
+        pressure.addItem("The whole channel", 3);
+        pressure.setSelectedId(juce::jlimit(0, 2, context.settings.getIntValue(prefs::pressureKey, 1)) + 1, juce::dontSendNotification);
+        pressure.onChange = [this] { save(prefs::pressureKey, pressure.getSelectedId() - 1); };
+        threshold.setTitle("Pressure threshold");
+        for (const int pct : {0, 10, 20, 30, 50})
+            threshold.addItem(pct == 0 ? juce::String("None") : juce::String(pct) + "%", pct + 1);
+        threshold.setSelectedId(context.settings.getIntValue(prefs::pressureThresholdKey, 0) + 1, juce::dontSendNotification);
+        if (threshold.getSelectedId() == 0)
+            threshold.setSelectedId(1, juce::dontSendNotification);
+        threshold.onChange = [this] { save(prefs::pressureThresholdKey, threshold.getSelectedId() - 1); };
+        strip.setTitle("Touch strip");
+        strip.addItem("Pitch bend (springs back)", 1);
+        strip.addItem("Mod wheel", 2);
+        strip.addItem("Scroll the Note mode pads", 3);
+        strip.setSelectedId(juce::jlimit(0, 2, context.settings.getIntValue(prefs::stripKey, 0)) + 1, juce::dontSendNotification);
+        strip.onChange = [this] { save(prefs::stripKey, strip.getSelectedId() - 1); };
+
         row("Virtual Push rows", rows, 5.0f);
         row("Virtual Push columns", columns, 5.0f);
         row("Pad velocity", velocity, 14.0f);
-        note("Virtual Push (View menu, Ctrl+Alt+P) plays the session from the screen: pads launch clips, the buttons beside them "
-             "run the transport and the modes. Right-click latches a pad or a button, so Shift or Delete can be held with one mouse.",
+        row("Velocity curve", curve, 8.0f);
+        row("Pad pressure", pressure, 14.0f);
+        row("Pressure threshold", threshold, 5.0f);
+        row("Touch strip", strip, 14.0f);
+        note("Virtual Push (View menu, Ctrl+Alt+P) plays the session from the screen. Session mode: pads launch clips. Note mode: "
+             "pads play the selected track in its tuning (Colundi's table, or In Key and Chromatic for 12-TET); Scale opens the "
+             "layout menu. Right-click latches a pad or a button; drag up on a held pad to press it harder.",
              3);
         note("Ableton Push 2 and 3 (with their displays) and other controllers come later in M5. Until then, any MIDI controller can "
              "play tracks (MIDI tab: Track) and control anything with MIDI Map (Ctrl+M; MIDI tab: Remote).",
@@ -412,7 +444,7 @@ private:
     }
 
     Context& context;
-    juce::ComboBox rows, columns, velocity;
+    juce::ComboBox rows, columns, velocity, curve, pressure, threshold, strip;
 };
 
 // --- Look & Feel ---------------------------------------------------------------------------------

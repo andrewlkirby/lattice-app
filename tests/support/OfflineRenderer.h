@@ -106,7 +106,7 @@ public:
             std::array<float*, 2> outputs{left.data(), right.data()};
             {
                 const rt::ScopedAudioThread audioThread;
-                engine.process(outputs.data(), 2, n);
+                engine.process(outputs.data(), 2, n, clockStart >= 0.0 ? clockStart + static_cast<double>(position) / sampleRate : -1.0);
             }
             if (captureAudio)
             {
@@ -118,6 +118,12 @@ public:
     }
 
     void renderFor(std::int64_t samples) { renderTo(position + samples); }
+    /** From now on each block is a device callback starting at clockStart plus the time rendered
+        so far (MidiInputQueue::nowSeconds()'s clock): live MIDI plays at the sample its arrival
+        time gives. Negative: offline again (live MIDI at the block's start). */
+    void useClock(double startSeconds) { clockStart = startSeconds < 0.0 ? -1.0 : startSeconds - static_cast<double>(position) / sampleRate; }
+    /** The device clock's time at an absolute sample (with useClock). */
+    double timeAt(std::int64_t sample) const noexcept { return clockStart + static_cast<double>(sample) / sampleRate; }
     void renderToBeat(double beat, double bpm = 120.0) { renderTo(samplesForBeats(beat, bpm)); }
     std::int64_t now() const noexcept { return position; }
 
@@ -191,6 +197,7 @@ private:
     BlockPattern pattern;
     std::uint32_t rng;
     std::int64_t position = 0;
+    double clockStart = -1.0; // the clock's time at sample 0, or -1 (offline)
     std::vector<float> left;
     std::vector<float> right;
     std::vector<std::shared_ptr<TrackProcessor>> tapped;

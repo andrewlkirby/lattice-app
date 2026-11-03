@@ -102,6 +102,7 @@ inline const juce::Identifier followChanceA{"followChanceA"};
 inline const juce::Identifier followTime{"followTime"};
 inline const juce::Identifier clipTimeSigNum{"timeSigNum"}; // the clip's own grid signature (absent: the set's)
 inline const juce::Identifier clipTimeSigDen{"timeSigDen"};
+inline const juce::Identifier noteLayout{"noteLayout"}; // on a TRACK: its Note mode layout (M5), saved, not undoable
 inline const juce::Identifier highlight{"highlight"}; // on a CLIP or a TRACK: table indices the piano roll marks
 
 // Note

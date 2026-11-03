@@ -10,6 +10,8 @@
 #include "devices/effects/EqEight.h"
 #include "devices/racks/Rack.h"
 #include "devices/racks/RackEditing.h"
+#include "control/modes/NoteMode.h"
+#include "control/surface/SurfaceController.h"
 #include "support/Snapshots.h"
 #include "ui/shell/MainShell.h"
 
@@ -190,6 +192,24 @@ const std::vector<Subject>& subjects()
              auto* push = f.shell->virtualPushView();
              push->setSize(push->getWidth(), push->getHeight()); // laid out
              f.shell->virtualPushController()->refresh();
+             return std::pair<juce::Component*, juce::Rectangle<int>>{push, push->getLocalBounds()};
+         }},
+        {"virtual-push-note",
+         [](Fixture& f) {
+             // Note mode on the Colundi track: anchors in its colour, its highlighted entries white,
+             // each pad labelled with its entry, one pad pressed (it and its duplicate green).
+             f.shell->setVirtualPushDocked(true);
+             f.shell->setVirtualPushVisible(true);
+             f.session.set().setHighlight(f.session.set().track(1), {45, 47, 52});
+             f.shell->selection().set({Kind::track, 1, 0});
+             auto* controller = f.shell->virtualPushController();
+             controller->setMode(control::ModeKind::note);
+             f.settle();
+             auto* push = f.shell->virtualPushView();
+             // Shown, not played: straight to the controller (each theme's pass presses it again).
+             controller->handle(control::SurfaceInput::padUp(7, 5));
+             controller->handle(control::SurfaceInput::padDown(7, 5, 1.0f));
+             controller->refresh();
              return std::pair<juce::Component*, juce::Rectangle<int>>{push, push->getLocalBounds()};
          }},
     };

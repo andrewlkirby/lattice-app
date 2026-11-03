@@ -12,6 +12,7 @@ namespace lattice::control
 {
 
 class SessionMode;
+class NoteMode;
 
 /** Runs one connected device (docs/06-m5-controllers.md, "SurfaceController and ModeStack"): its
     current mode, the global buttons (transport, undo, Shift, the mode buttons), and its LEDs.
@@ -36,10 +37,19 @@ public:
     void handle(const SurfaceInput& input);
 
     ModeKind modeKind() const noexcept;
-    /** Modes come phase by phase (5a: Session); false for one that doesn't exist yet. */
+    /** Modes come phase by phase (5a: Session, 5b: Note); false for one that doesn't exist yet. */
     bool isAvailable(ModeKind kind) const noexcept;
     void setMode(ModeKind kind);
     SessionMode& sessionMode() noexcept { return *session; }
+    NoteMode& noteMode() noexcept { return *note; }
+
+    /** The fast path the driver's input goes through first (docs/06-m5-controllers.md, 5b). */
+    PadPlayer& padPlayer() noexcept { return *player; }
+    /** The pads' map as published now. */
+    const PadNoteMap& padMap() const noexcept { return *published; }
+    /** The source number this surface's notes carry (tracks listening to all inputs hear them). */
+    std::uint8_t midiSource() const noexcept { return source; }
+    void setExpression(const Expression& e);
 
     void setFollowsSelection(bool follow);
     void setColours(const SurfaceColours& c);
@@ -59,6 +69,8 @@ public:
     using ModeHost::isHeld;
     bool followsSelection() const override { return follow; }
     void requestRefresh() override { triggerAsyncUpdate(); }
+    int trackOfColumn(int column) const override;
+    const Expression& expression() const override { return expressionSettings; }
 
 private:
     /** The transport, undo, Shift and mode buttons: true if it was one. */
@@ -66,6 +78,7 @@ private:
     void renderGlobals(LedFrame& frame) const;
     Mode& current() noexcept { return *modes[static_cast<std::size_t>(active)]; }
     void listenToFeed();
+    void publishPadMap();
 
     void engineStateChanged(std::uint32_t aspects) override;
     void selectionChanged(const ui::SessionSelection&) override;
@@ -81,6 +94,13 @@ private:
     SurfaceColours palette;
     std::vector<std::unique_ptr<Mode>> modes; // by ModeKind; null for those not built yet
     SessionMode* session = nullptr;
+    NoteMode* note = nullptr;
+    Expression expressionSettings;
+    std::uint8_t source = 0;
+    std::unique_ptr<PadPlayer> player;
+    std::shared_ptr<const PadNoteMap> published;
+    SurfaceText shownText;
+    bool shownAnyText = false;
     std::size_t active = 0;
     std::vector<ButtonId> held;
     bool follow = true;

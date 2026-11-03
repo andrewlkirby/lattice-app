@@ -175,12 +175,13 @@ bool SessionMode::handle(const SurfaceInput& input)
         }
         if (const auto slot = slotAt(input.row, input.column))
         {
-            pressSlot(index, slot->first, slot->second);
+            pressSlot(index, slot->first, slot->second, input.played);
             return true;
         }
         if (scenesOnGrid() && input.column == columns - 1 && input.row < sceneRows())
         {
-            pressScene(scene0 + input.row);
+            if (!input.played) // the fast path launched it already
+                pressScene(scene0 + input.row);
             return true;
         }
         if (trackRowShown() && input.row == caps().rows - 1)
@@ -196,7 +197,8 @@ bool SessionMode::handle(const SurfaceInput& input)
         const int index = input.row * columns + input.column;
         if (const auto it = pressed.find(index); it != pressed.end())
         {
-            host.context().session.releaseSlot(it->second.first, it->second.second);
+            if (!input.played) // the fast path released it already
+                host.context().session.releaseSlot(it->second.first, it->second.second);
             pressed.erase(it);
         }
         return true;
@@ -206,7 +208,10 @@ bool SessionMode::handle(const SurfaceInput& input)
         const auto id = input.button;
         switch (id.role)
         {
-        case Role::scene: pressScene(scene0 + id.index); return true;
+        case Role::scene:
+            if (!input.played)
+                pressScene(scene0 + id.index);
+            return true;
         case Role::trackSelect: if (const int t = trackOfColumn(id.index); t >= 0) pressTrack(t); return true;
         case Role::displayLower:
             if (!caps().has(ButtonId{Role::trackSelect, 0}))
@@ -225,7 +230,50 @@ bool SessionMode::handle(const SurfaceInput& input)
     }
 }
 
-void SessionMode::pressSlot(int padIndex, int track, int scene)
+void SessionMode::padMap(PadNoteMap& map)
+{
+    for (const auto role : {Role::shift, Role::deleteClip, Role::duplicate, Role::stopClip, Role::mute, Role::solo, Role::modeSession})
+        map.addModifier(role);
+    if (overviewShown() || trackRowShown())
+        return;
+    auto& session = host.context().session;
+    const int numScenes = session.set().numScenes();
+    const auto sceneLaunch = [](int scene) {
+        EngineCommand c;
+        c.type = CommandType::LaunchScene;
+        c.scene = scene;
+        return c;
+    };
+    for (int i = 0; i < caps().countOf(Role::scene); ++i)
+        if (scene0 + i < numScenes)
+            map.buttons.push_back({ButtonId{Role::scene, i}, sceneLaunch(scene0 + i)});
+    if (scenesOnGrid())
+        for (int r = 0; r < std::min(map.rows, sceneRows()); ++r)
+            if (scene0 + r < numScenes)
+            {
+                auto& pad = map.pad(r, map.columns - 1);
+                pad.kind = PadNoteMap::Pad::Kind::command;
+                pad.onDown = sceneLaunch(scene0 + r);
+            }
+    for (int r = 0; r < map.rows; ++r)
+        for (int col = 0; col < map.columns; ++col)
+        {
+            const auto slot = slotAt(r, col);
+            if (!slot)
+                continue;
+            const auto direct = session.directLaunch(slot->first, slot->second);
+            if (!direct)
+                continue;
+            auto& pad = map.pad(r, col);
+            pad.kind = PadNoteMap::Pad::Kind::command;
+            pad.onDown = direct->down;
+            pad.hasUp = direct->up.has_value();
+            if (direct->up)
+                pad.onUp = *direct->up;
+        }
+}
+
+void SessionMode::pressSlot(int padIndex, int track, int scene, bool played)
 {
     auto& c = host.context();
     auto& set = c.session.set();
@@ -235,8 +283,8 @@ void SessionMode::pressSlot(int padIndex, int track, int scene)
     const bool wasArmed = c.session.isArmed(track);
     if (host.followsSelection())
         c.selection.set({SessionSelection::Kind::slot, track, scene});
-    if (host.shiftHeld())
-        return; // select only
+    if (host.shiftHeld() || played)
+        return; // select only (or the fast path launched it already)
     const auto clip = set.clip(track, scene);
     if (host.isHeld(Role::deleteClip))
     {

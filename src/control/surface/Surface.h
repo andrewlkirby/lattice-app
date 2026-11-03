@@ -144,7 +144,8 @@ struct SurfaceInput
         encoderTurn, // encoder, delta: steps (positive clockwise)
         encoderTouch,
         encoderRelease,
-        strip        // value 0..1
+        strip,       // value 0..1 (the bottom: 0)
+        stripRelease // let go of the strip
     };
     Kind kind = Kind::padDown;
     int row = 0, column = 0;
@@ -152,11 +153,17 @@ struct SurfaceInput
     ButtonId button{};
     int encoder = 0;
     int delta = 0;
+    /** Already played by the fast path (PadPlayer) on the driver's input thread: a mode only
+        shows it (lights, selection), it doesn't play or launch it again. */
+    bool played = false;
 
     static SurfaceInput padDown(int row, int column, float velocity) { return {Kind::padDown, row, column, velocity}; }
+    static SurfaceInput padPressure(int row, int column, float pressure) { return {Kind::padPressure, row, column, pressure}; }
     static SurfaceInput padUp(int row, int column) { return {Kind::padUp, row, column}; }
     static SurfaceInput buttonDown(ButtonId id) { return {Kind::buttonDown, 0, 0, 0.0f, id}; }
     static SurfaceInput buttonUp(ButtonId id) { return {Kind::buttonUp, 0, 0, 0.0f, id}; }
+    static SurfaceInput strip(float position) { return {Kind::strip, 0, 0, position}; }
+    static SurfaceInput stripRelease() { return {Kind::stripRelease}; }
 };
 
 // --- LEDs -------------------------------------------------------------------------------------------
@@ -217,11 +224,29 @@ struct LedFrame
     bool operator==(const LedFrame&) const = default;
 };
 
+/** Words a device can show beside its lights, until the display renderer (5c): a label on each
+    pad (Virtual Push draws them; hardware ignores them) and a status line (the pressed notes, the
+    Scale menu's choices). */
+struct SurfaceText
+{
+    std::vector<juce::String> pads; // row by row, like LedFrame::pads; empty: no labels
+    juce::String status;
+
+    bool operator==(const SurfaceText&) const = default;
+};
+
 // --- Drivers ----------------------------------------------------------------------------------------
 
+class PadPlayer;
+
 /** A device, real or on screen (docs/06-m5-controllers.md, "Drivers"). The controller sends it
-    LED frames with what changed; it sends the controller its input. Message thread, unless a
-    driver says otherwise (5b adds the pads' fast path for MIDI threads). */
+    LED frames with what changed; it sends the controller its input.
+
+    Input goes through the fast path first, on the driver's own input thread: `pads` (set by the
+    controller) plays notes and launches clips straight into the engine, then the input goes on
+    to the controller on the message thread (onInput), marked as played. A driver whose input
+    arrives on the message thread (Virtual Push) does both with deliver(); one with its own input
+    thread calls pads->handle() there and hands the input to the message thread itself. */
 class SurfaceDriver
 {
 public:
@@ -231,9 +256,16 @@ public:
     /** Shows a frame; `changed` lists what differs from the frame shown before, so a driver
         sends only that (the first frame after connecting lists everything). */
     virtual void showLeds(const LedFrame& frame, const LedFrame::Changes& changed) = 0;
+    /** Shows the pads' labels and the status line (only called when they change). */
+    virtual void showText(const SurfaceText&) {}
 
     /** Set by the controller: the device's input goes here (message thread). */
     std::function<void(const SurfaceInput&)> onInput;
+    /** Set by the controller: the fast path (the driver's input thread). */
+    PadPlayer* pads = nullptr;
+
+    /** For input that arrives on the message thread: the fast path, then the controller. */
+    void deliver(SurfaceInput input);
 };
 
 } // namespace lattice::control

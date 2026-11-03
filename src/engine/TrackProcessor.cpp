@@ -164,11 +164,24 @@ void TrackProcessor::reportEvents(int numSamples) noexcept
     }
 
     // The chain's MIDI input: the scheduler's events, in non-decreasing time order, kept in the block.
+    for (int i = 0; i < sink.count; ++i)
+        sink.events[i].sampleOffset = std::clamp(sink.events[i].sampleOffset, 0, numSamples - 1);
+    // Live input lands where it arrived, before the clips' events are added: merge them in (stable,
+    // in place; only when something is out of order).
+    for (int i = 1; i < sink.count; ++i)
+    {
+        if (sink.events[i].sampleOffset >= sink.events[i - 1].sampleOffset)
+            continue;
+        const auto e = sink.events[i];
+        int j = i;
+        for (; j > 0 && sink.events[j - 1].sampleOffset > e.sampleOffset; --j)
+            sink.events[j] = sink.events[j - 1];
+        sink.events[j] = e;
+    }
     auto* eventTapped = eventTap.load(std::memory_order_relaxed);
     for (int i = 0; i < sink.count; ++i)
     {
         auto& e = sink.events[i];
-        e.sampleOffset = std::clamp(e.sampleOffset, 0, numSamples - 1);
         if (eventTapped != nullptr)
             eventTapped->onTrackEvent(id, sink.chunkStart + e.sampleOffset, e);
         if (isNoteOn(e))

@@ -137,6 +137,86 @@ Playing pads must feel as tight as a dedicated instrument. **Pad-to-sound latenc
 - **Tests:** the layout formulas and colors; timing through `OfflineRenderer`; a stalled UI (500 ms) not delaying notes or launches; and RealtimeCheck on the input threads during a pad fuzz.
 - **Hands-on check:** play the Colundi table from Virtual Push.
 
+##### As built (5b, 2026-11-03)
+- **Engine:**
+  - **Queues:** `MpscQueue` (commands) and `MidiInputQueue` (live MIDI) are lock-free for any number of producers: a bounded queue whose cells carry sequence numbers (Vyukov's). A producer claims a cell with one compare-exchange and never waits for another producer or for the audio thread.
+    - **Change from the plan:** one queue shared by every producer, not one per producer. The OS doesn't promise one thread per MIDI input, so a per-producer queue couldn't be guaranteed a single producer. The effect is the same: no mutex anywhere.
+  - **Timing:** each live message keeps its arrival time.
+    - Each callback places it at `block length − its age in samples`, so it plays exactly one block after it arrived: a constant delay, whatever the callback's own jitter.
+    - Older ones (a late callback) play at the block's start, and so does everything offline.
+    - A track's events are merged into time order in place, without allocating, only when out of order.
+    - `AudioEngine::process` takes the callback's start time; `OfflineRenderer::useClock` gives tests a device clock.
+  - **Latency probe:** it now measures from arrival to the moment the message's sample plays, counted from the callback's start. That's one block for every event, with the driver's output latency on top.
+  - **`AudioEngine::queueCommand`:** real-time safe. `sendCommand` also wakes what polls the engine, which can lock, so the fast path calls that afterwards.
+  - **Still to do (5e):** the JUCE MIDI-input callback still takes two short locks: the input's source number and MIDI Map's inbox. Its notes go into the lock-free queue. Lock-free tables for both come with 5e's generic MIDI drivers, which replace that path.
+- **The fast path (`PadPlayer`, `PadNoteMap`):**
+  - The controller makes a `PadNoteMap` from the current mode on each refresh and publishes it through `RtShared` only when it changed. Each pad has one of:
+    - a note;
+    - a command, with an optional release command;
+    - nothing: the message thread handles it.
+  - The map also holds the surface's source and channel, the velocity and pressure tables, the strip mode, and the modifier buttons.
+  - **How drivers use it:** a driver's input goes through `PadPlayer::handle` on its own thread, then to the controller marked `played`. Virtual Push and `FakeSurface` do both through `SurfaceDriver::deliver`.
+  - **Modifiers:** while a modifier is held (tracked on the input thread), pads go to the message thread.
+  - **Notes:**
+    - A pad remembers the note it started, so its release ends that note even if the layout changed in between.
+    - A second pad on a held note plays it again (off, then on), and the note ends with the last release.
+    - `releaseAll` ends everything when the driver goes away.
+  - **Pressure:** polyphonic sends each note its own. Channel sends the most any held pad is pressed, and goes back down as pads are let go. A device without aftertouch sends none.
+  - **Strip:** pitch bend springs back to the middle on release, and the mod wheel stays put; both are on the fast path. Scroll goes to the mode.
+  - **Session mode:** a slot pad gets `SessionController::directLaunch`'s launch (with a release for Gate clips) or its stop button. Scene buttons, and the scene column of a grid without them, launch their scenes (`PadNoteMap::buttons`).
+    - It gives nothing for group slots, armed empty slots and recordings; those still go through the message thread.
+    - The modifiers are Shift, Delete, Duplicate, Stop Clip, Mute, Solo and Session.
+    - A played press only selects, so it doesn't launch twice. A stale clip ID is ignored by the engine.
+  - **Routing:**
+    - Each surface has its own source number (`lattice.surface.<name>`).
+    - Tracks listening to all inputs (the default) hear it when armed or monitoring In, as in Live. There's no target track in the map: auto-arm puts the selected track there.
+- **Note mode:**
+  - **Layouts** (`NoteLayout`, plain functions):
+    - **Table:** `origin + column×step + row×rowOffset`. Presets: Sequential, and Overlap 3/5/7 (`columns − n`). Fine −1/+1 row steps.
+    - **In Key:** 14 scales, rows 4ths/3rds/Sequential, the root lit.
+    - **Chromatic:** rows a 4th apart, notes outside the scale dimmed.
+  - **Choosing a layout:** a table tuning offers only Table; 12-TET offers all three, In Key by default. The default Table origin is the computer keyboard's default page.
+  - **Saving:** the layout is kept on the track's node (`noteLayout`, not undoable, no engine rebuild), tagged with its tuning. When the track's tuning changes, it starts from that tuning's default.
+  - **Colours:**
+    - **Table:** anchors in the track's colour, the track's highlight set white, the rest dim (`padDim` 0.22). Entries the track can't play are unlit, and red while pressed.
+    - **12-TET:** the root in the track's colour, the scale white.
+    - **A pressed pad:** green, together with every pad playing the same note.
+  - **Buttons:**
+    - Octave up/down, or the up/down arrows, move by a row or a page (Table) or an octave. With Shift they move by one entry, or by one semitone of the root in In Key.
+    - Left/right and the track buttons choose the track.
+    - Layout cycles the layouts.
+  - **Scale/Tuning menu (Scale button):** shown on the pads until 5c's display renderer.
+    - Each setting gets a row of choices: Tuning (an undoable change of the track's tuning), Layout, Root and Scale (12-TET), Rows, and Octave buttons (Table).
+    - The pads are labelled on Virtual Push, and the status line shows the choice touched. The arrows scroll it on small grids.
+  - **Status line:** each pressed note's entry or name and its Hz; otherwise the track, tuning, layout, origin and the number of highlighted entries.
+- **Words on devices (`SurfaceText`):** pad labels and a status line, which Virtual Push draws and hardware ignores until 5c.
+- **Virtual Push:**
+  - A touch strip left of the grid (`stripAt`), and a status line above it.
+  - Dragging up from a held pad is pressure: a pad's height is all of it, and a pen's own pressure is used if it has one.
+  - Labels are shown when the pads are big enough.
+  - With a fixed velocity, it has no velocity curve: it plays as set.
+- **Preferences → Controllers:**
+  - velocity curve (Softest…Hardest);
+  - pad pressure (Off, Polyphonic, Channel) and its threshold;
+  - touch strip (Pitch bend, Mod wheel, Scroll).
+  - A change applies at once; only a new grid size or velocity rebuilds Virtual Push.
+- **Tests:**
+  - `tests/control/FastPathTests.cpp`:
+    - the curve and threshold;
+    - `PadPlayer`'s notes, duplicates, releases after a layout change, modifiers, pressure and strip;
+    - placement one block after arrival at 64 and 512 samples (and the latency probe);
+    - four producer threads with nothing lost;
+    - a 500 ms stall of the message thread delaying neither a note nor a launch (under 100 ms with 10 ms blocks in real time);
+    - RealtimeCheck on an input thread through a 40,000-event pad fuzz while maps are republished;
+    - Session mode's direct launches.
+  - `tests/control/NoteModeTests.cpp`:
+    - the formulas and presets, octave limits, saving;
+    - the Colundi and 12-TET colours, duplicates lighting together;
+    - the menu, including scrolling on 4×4;
+    - every preset device, the transport lights, and notes reaching the armed track.
+  - Virtual Push: strip, pressure and text tests.
+  - A `virtual-push-note` render snapshot in each theme.
+
 #### 5c: Display and encoders: Device and Mix modes
 - **The display renderer,** shared by Virtual Push and Push: it draws a `DisplayFrame` into an image at the device's size, in one column per encoder, with a detail view while an encoder is touched.
 - **Encoders:**

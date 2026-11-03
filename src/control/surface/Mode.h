@@ -1,5 +1,6 @@
 #pragma once
 
+#include "control/surface/PadPlayer.h"
 #include "control/surface/Surface.h"
 #include "engine/SessionController.h"
 #include "ui/commands/CommandRegistry.h"
@@ -30,6 +31,7 @@ struct SurfaceColours
     std::uint32_t solo = 0x3d8de0;
     std::uint32_t arm = 0xe5383b;
     float dim = 0.3f;               // how bright an available but inactive button is
+    float padDim = 0.22f;           // how bright a note pad outside the key or highlight is
 };
 
 enum class ModeKind : std::uint8_t
@@ -57,6 +59,11 @@ public:
     virtual bool followsSelection() const = 0;
     /** Something the LEDs show changed outside the feed and the set (a hold, the box). */
     virtual void requestRefresh() = 0;
+    /** The track a track button (or a lower display button) selects, from the Session box: -1
+        for none. */
+    virtual int trackOfColumn(int column) const = 0;
+    /** The settings the pads play with (the strip's mode, pressure). */
+    virtual const Expression& expression() const = 0;
 };
 
 /** One mode (Session, Note, Device...). Modes are plain classes: tests drive them headlessly
@@ -80,6 +87,11 @@ public:
     virtual void selectionChanged() {}
     /** The feed's aspects this mode's LEDs show (the controller refreshes when any changes). */
     virtual std::uint32_t aspects() const { return ui::EngineStateFeed::transportAspect | ui::EngineStateFeed::slotsAspect; }
+    /** What the pads do on the fast path (the controller has made it empty and sized; a mode
+        fills in its pads and the buttons that change them). Default: everything goes to handle(). */
+    virtual void padMap(PadNoteMap&) {}
+    /** The pads' labels and the status line. */
+    virtual void describe(SurfaceText&) {}
 
 protected:
     ModeHost& host;

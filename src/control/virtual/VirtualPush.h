@@ -19,9 +19,13 @@ namespace lattice::control
     button per column underneath, and the other buttons in two columns on the left. Everything is
     sized from the space it has: nothing is a fixed pixel size.
 
-    - Mouse: a pad's velocity comes from where it's clicked (top: loudest), or is fixed. A
+    - Mouse: a pad's velocity comes from where it's clicked (top: loudest), or is fixed. Dragging
+      up from a held pad presses it harder (pressure; a pen's own pressure if it has one). A
       right-click latches a pad or a button (pressed until right-clicked again), so Shift, Delete
       or a held pad work with one mouse. Each touch on a touchscreen is its own press.
+    - The touch strip, left of the grid: dragging on it bends (springing back when let go), or
+      what the Preferences set.
+    - Pads show their labels (a note's index or name) and a status line sits above the grid.
     - It repaints only the lights that changed. Blinking and pulsing lights follow the beat
       (the feed's transport while playing; the tempo otherwise) on the display's refresh, and
       only while one is shown, so a still set costs nothing.
@@ -59,20 +63,32 @@ public:
         };
         std::vector<juce::Rectangle<float>> pads; // row by row, from the top
         std::vector<Button> buttons;              // in the order of the capabilities' buttons
+        juce::Rectangle<float> strip;             // the touch strip, left of the grid (if it has one)
+        juce::Rectangle<float> status;            // the status line, above the grid
         float unit = 0.0f;                        // a pad and its gap
     };
     static Layout layoutFor(const SurfaceCapabilities& caps, juce::Rectangle<float> bounds);
     const Layout& layout() const noexcept { return places; }
 
-    /** What's at a point: a pad index or a button index (-1 for none). */
+    /** What's at a point: a pad index or a button index (-1 for none), or the strip. */
     struct Hit
     {
         int pad = -1;
         int button = -1;
+        bool strip = false;
     };
     Hit hitTest(juce::Point<float> p) const;
     /** The velocity a click at p gives the pad (0..1]. */
     float velocityAt(int pad, juce::Point<float> p) const;
+    /** The strip's position at a point: 0 at its bottom, 1 at its top. */
+    float stripAt(juce::Point<float> p) const;
+    /** A held pad's pressure, dragging from where it was pressed to p: a pen's own pressure, or
+        how far up it's dragged (a pad's height is all of it). */
+    float pressureFor(juce::Point<float> pressedAt, juce::Point<float> p, float penPressure) const;
+
+    // SurfaceDriver
+    void showText(const SurfaceText& text) override;
+    const SurfaceText& text() const noexcept { return words; }
 
     bool isLatched(int padOrButton, bool isButton) const;
     /** True while an animated light is shown (the display refresh repaints them). */
@@ -84,6 +100,7 @@ public:
     void lookAndFeelChanged() override;
     void mouseDown(const juce::MouseEvent&) override;
     void mouseUp(const juce::MouseEvent&) override;
+    void mouseDrag(const juce::MouseEvent&) override;
     void visibilityChanged() override { updateAnimator(); }
     void parentHierarchyChanged() override { updateAnimator(); }
 
@@ -95,6 +112,9 @@ private:
     {
         int pad = -1;
         int button = -1;
+        bool strip = false;
+        juce::Point<float> pressedAt{};
+        int pressure = 0; // the last sent, 0..127
     };
     void press(const Target& t, float velocity);
     void release(const Target& t);
@@ -108,6 +128,8 @@ private:
     SurfaceCapabilities caps;
     Layout places;
     LedFrame frame;
+    SurfaceText words;
+    float stripShown = 0.5f; // where the strip's marker is
     std::map<int, Target> active; // by mouse source: what it's pressing
     std::vector<Target> latched;
     std::unique_ptr<juce::VBlankAttachment> animator;

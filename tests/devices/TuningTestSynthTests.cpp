@@ -192,6 +192,6 @@ TEST_CASE("MIDI input queue drops when full instead of blocking", "[engine][midi
     int accepted = 0;
     for (int i = 0; i < MidiInputQueue::capacity + 10; ++i)
         accepted += queue.push(juce::MidiMessage::noteOn(1, 60, static_cast<juce::uint8>(100))) ? 1 : 0;
-    CHECK(accepted == MidiInputQueue::capacity - 1);
-    CHECK(queue.droppedCount() == 11);
+    CHECK(accepted == MidiInputQueue::capacity);
+    CHECK(queue.droppedCount() == 10);
 }

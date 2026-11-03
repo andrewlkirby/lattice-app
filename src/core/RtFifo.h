@@ -6,7 +6,8 @@
 
 #include <atomic>
 #include <cstdint>
-#include <mutex>
+#include <cstddef>
+#include <memory>
 #include <type_traits>
 #include <vector>
 
@@ -88,29 +89,107 @@ private:
     std::atomic<std::uint32_t> dropped{0};
 };
 
-/** Many producers (never the audio thread), one lock-free consumer (typically the audio thread).
-    Producers serialise among themselves with a mutex that the consumer never takes. */
+/** Many producers on any threads, one consumer (typically the audio thread), with no lock on
+    either side: a bounded queue in which each cell carries a sequence number (Vyukov's). A producer
+    claims a cell with one compare-exchange and never waits for another producer, so a MIDI input
+    thread, the message thread and a controller's thread can all push at once
+    (docs/06-m5-controllers.md, 5b). Storage is allocated once, in the constructor; push and pop
+    never allocate or block. A push to a full queue is dropped and counted.
+
+    A producer that is preempted between claiming a cell and filling it holds back what was pushed
+    after it until it finishes: the consumer stops at that cell and takes the rest next time. */
 template <typename T>
 class MpscQueue
 {
-public:
-    explicit MpscQueue(int capacity) : fifo(capacity) {}
+    static_assert(std::is_trivially_copyable_v<T>);
 
-    /** Any thread except the audio thread. Returns false (and counts a drop) if the queue is full. */
-    bool push(const T& item)
+public:
+    /** Holds at least `capacity` items (rounded up to a power of two). */
+    explicit MpscQueue(int capacity)
+        : size(roundUp(capacity)), mask(size - 1), cells(std::make_unique<Cell[]>(size))
     {
-        RT_ASSERT_NOT_AUDIO_THREAD();
-        const std::scoped_lock lock(producerMutex);
-        return fifo.push(item);
+        for (std::size_t i = 0; i < size; ++i)
+            cells[i].sequence.store(i, std::memory_order_relaxed);
     }
 
-    int popInto(T* out, int maxItems) noexcept LATTICE_NONBLOCKING { return fifo.popInto(out, maxItems); }
-    bool pop(T& item) noexcept LATTICE_NONBLOCKING { return fifo.pop(item); }
-    std::uint32_t droppedCount() const noexcept { return fifo.droppedCount(); }
+    MpscQueue(const MpscQueue&) = delete;
+    MpscQueue& operator=(const MpscQueue&) = delete;
+
+    /** Any thread. Returns false (and counts a drop) if the queue is full. */
+    bool push(const T& item) noexcept LATTICE_NONBLOCKING
+    {
+        auto pos = tail.load(std::memory_order_relaxed);
+        for (;;)
+        {
+            auto& cell = cells[pos & mask];
+            const auto sequence = cell.sequence.load(std::memory_order_acquire);
+            const auto diff = static_cast<std::ptrdiff_t>(sequence - pos);
+            if (diff == 0)
+            {
+                if (tail.compare_exchange_weak(pos, pos + 1, std::memory_order_relaxed))
+                {
+                    cell.item = item;
+                    cell.sequence.store(pos + 1, std::memory_order_release);
+                    return true;
+                }
+            }
+            else if (diff < 0)
+            {
+                dropped.fetch_add(1, std::memory_order_relaxed);
+                return false; // full: the consumer hasn't freed this cell yet
+            }
+            else
+            {
+                pos = tail.load(std::memory_order_relaxed);
+            }
+        }
+    }
+
+    /** The consumer. Returns false if nothing is ready. */
+    bool pop(T& item) noexcept LATTICE_NONBLOCKING
+    {
+        auto& cell = cells[head & mask];
+        if (cell.sequence.load(std::memory_order_acquire) != head + 1)
+            return false; // empty, or a producer is still filling it
+        item = cell.item;
+        cell.sequence.store(head + size, std::memory_order_release);
+        ++head;
+        return true;
+    }
+
+    /** The consumer. Moves up to maxItems ready items into out, oldest first; returns how many. */
+    int popInto(T* out, int maxItems) noexcept LATTICE_NONBLOCKING
+    {
+        int written = 0;
+        while (written < maxItems && pop(out[written]))
+            ++written;
+        return written;
+    }
+
+    /** The most items it can hold. */
+    int capacity() const noexcept { return static_cast<int>(size); }
+    std::uint32_t droppedCount() const noexcept { return dropped.load(std::memory_order_relaxed); }
 
 private:
-    std::mutex producerMutex;
-    SpscFifo<T> fifo;
+    struct Cell
+    {
+        std::atomic<std::size_t> sequence{0};
+        T item{};
+    };
+    static std::size_t roundUp(int capacity)
+    {
+        std::size_t n = 2;
+        while (n < static_cast<std::size_t>(juce::jmax(2, capacity)))
+            n <<= 1;
+        return n;
+    }
+
+    const std::size_t size;
+    const std::size_t mask;
+    std::unique_ptr<Cell[]> cells;
+    alignas(64) std::atomic<std::size_t> tail{0}; // producers
+    alignas(64) std::size_t head = 0;             // the consumer only
+    std::atomic<std::uint32_t> dropped{0};
 };
 
 } // namespace lattice

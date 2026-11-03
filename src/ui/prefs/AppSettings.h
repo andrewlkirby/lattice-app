@@ -36,6 +36,11 @@ constexpr auto userTuningFilesKey = "userTuningFiles";      // tuning files load
 constexpr auto virtualRowsKey = "virtualPush.rows";         // Virtual Push's grid (4 .. 16)
 constexpr auto virtualColumnsKey = "virtualPush.columns";
 constexpr auto virtualVelocityKey = "virtualPush.velocity"; // 1 .. 127; 0: from where a pad is clicked
+// How every controller's pads play (docs/06-m5-controllers.md, 5b: control::Expression).
+constexpr auto velocityCurveKey = "controllers.velocityCurve";         // -100 (soft) .. 100 (hard)
+constexpr auto pressureKey = "controllers.pressure";                   // 0 off, 1 polyphonic, 2 channel
+constexpr auto pressureThresholdKey = "controllers.pressureThreshold"; // percent, 0 .. 50
+constexpr auto stripKey = "controllers.strip";                         // 0 pitch bend, 1 mod wheel, 2 scroll
 
 constexpr double minZoom = 0.5, maxZoom = 2.5;
 

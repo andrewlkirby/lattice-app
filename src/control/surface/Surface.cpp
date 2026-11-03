@@ -1,5 +1,7 @@
 #include "control/surface/Surface.h"
 
+#include "control/surface/PadPlayer.h"
+
 #include <array>
 #include <cmath>
 
@@ -136,6 +138,14 @@ bool LedFrame::anyAnimated() const noexcept
         if (!b.isOff() && b.animation != LedState::Animation::solid)
             return true;
     return false;
+}
+
+void SurfaceDriver::deliver(SurfaceInput input)
+{
+    if (pads != nullptr)
+        pads->handle(input);
+    if (onInput)
+        onInput(input);
 }
 
 } // namespace lattice::control

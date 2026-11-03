@@ -1,5 +1,6 @@
 #include "control/surface/SurfaceController.h"
 
+#include "control/modes/NoteMode.h"
 #include "control/modes/SessionMode.h"
 
 #include <algorithm>
@@ -30,8 +31,16 @@ SurfaceController::SurfaceController(SurfaceContext context, SurfaceDriver& d) :
     auto s = std::make_unique<SessionMode>(*this);
     session = s.get();
     modes[static_cast<std::size_t>(ModeKind::session)] = std::move(s);
+    auto n = std::make_unique<NoteMode>(*this);
+    note = n.get();
+    modes[static_cast<std::size_t>(ModeKind::note)] = std::move(n);
     active = static_cast<std::size_t>(ModeKind::session);
 
+    auto& engine = ctx.session.audioEngine();
+    source = engine.midiSourceFor("lattice.surface." + driver.capabilities().name);
+    player = std::make_unique<PadPlayer>(engine, driver.capabilities());
+    published = std::make_shared<const PadNoteMap>(*player->published());
+    driver.pads = player.get();
     driver.onInput = [this](const SurfaceInput& input) { handle(input); };
     ctx.selection.addListener(this);
     ctx.session.set().state().addListener(this);
@@ -44,6 +53,8 @@ SurfaceController::~SurfaceController()
 {
     cancelPendingUpdate();
     driver.onInput = nullptr;
+    driver.pads = nullptr;
+    player.reset(); // ends what the pads hold
     ctx.feed.removeListener(this);
     ctx.session.set().state().removeListener(this);
     ctx.selection.removeListener(this);
@@ -79,6 +90,17 @@ void SurfaceController::setFollowsSelection(bool f)
     refresh();
 }
 
+void SurfaceController::setExpression(const Expression& e)
+{
+    expressionSettings = e;
+    refresh();
+}
+
+int SurfaceController::trackOfColumn(int column) const
+{
+    return session->trackOfColumn(column);
+}
+
 void SurfaceController::setColours(const SurfaceColours& c)
 {
     palette = c;
@@ -101,8 +123,8 @@ void SurfaceController::handle(const SurfaceInput& input)
 
     if (!handleGlobal(input))
         current().handle(input);
-    if (input.kind == Kind::buttonDown || wasRelease)
-        requestRefresh(); // what a held button shows
+    if (input.kind == Kind::buttonDown || wasRelease || input.kind == Kind::padDown || input.kind == Kind::padUp)
+        requestRefresh(); // what a held button or a pressed pad shows
 }
 
 bool SurfaceController::handleGlobal(const SurfaceInput& input)
@@ -175,6 +197,17 @@ void SurfaceController::renderGlobals(LedFrame& frame) const
 void SurfaceController::refresh()
 {
     cancelPendingUpdate();
+    publishPadMap();
+
+    SurfaceText text;
+    current().describe(text);
+    if (!shownAnyText || !(text == shownText))
+    {
+        shownText = std::move(text);
+        shownAnyText = true;
+        driver.showText(shownText);
+    }
+
     auto frame = LedFrame::blank(capabilities());
     renderGlobals(frame);
     current().render(frame);
@@ -185,6 +218,18 @@ void SurfaceController::refresh()
     shownAny = true;
     ++sent;
     driver.showLeds(shown, changes);
+}
+
+void SurfaceController::publishPadMap()
+{
+    auto map = PadNoteMap::empty(capabilities());
+    map.source = source;
+    map.setExpression(expressionSettings, capabilities());
+    current().padMap(map);
+    if (published != nullptr && map == *published)
+        return;
+    published = std::make_shared<const PadNoteMap>(std::move(map));
+    player->publish(published);
 }
 
 void SurfaceController::listenToFeed()

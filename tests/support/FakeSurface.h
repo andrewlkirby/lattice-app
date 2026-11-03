@@ -9,7 +9,8 @@ namespace lattice::test
 {
 
 /** A device with any capabilities (docs/06-m5-controllers.md, Tests 1): it keeps the LED frames
-    it's shown, and tests press its pads and buttons. */
+    and text it's shown, and tests press its pads and buttons. Input goes through the fast path
+    first, as a driver's does (deliver()). */
 class FakeSurface final : public control::SurfaceDriver
 {
 public:
@@ -22,12 +23,9 @@ public:
         lastChanges = changed;
         ++frames;
     }
+    void showText(const control::SurfaceText& t) override { text = t; }
 
-    void send(const control::SurfaceInput& input)
-    {
-        if (onInput)
-            onInput(input);
-    }
+    void send(const control::SurfaceInput& input) { deliver(input); }
     void press(int row, int column, float velocity = 0.8f) { send(control::SurfaceInput::padDown(row, column, velocity)); }
     void release(int row, int column) { send(control::SurfaceInput::padUp(row, column)); }
     void tap(int row, int column)
@@ -47,6 +45,11 @@ public:
     {
         return leds.pads[static_cast<std::size_t>(row * caps.columns + column)];
     }
+    juce::String label(int row, int column) const
+    {
+        const auto i = static_cast<std::size_t>(row * caps.columns + column);
+        return i < text.pads.size() ? text.pads[i] : juce::String();
+    }
     /** A button's LED (off if the device has no such button). */
     control::LedState button(control::Role role, int index = 0) const
     {
@@ -57,6 +60,7 @@ public:
     control::SurfaceCapabilities caps;
     control::LedFrame leds;
     control::LedFrame::Changes lastChanges;
+    control::SurfaceText text;
     int frames = 0;
 };
 

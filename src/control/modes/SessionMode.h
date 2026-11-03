@@ -55,6 +55,13 @@ public:
 
     /** The slot under a pad (track, scene), or nothing (outside the set, a scene or track pad). */
     std::optional<std::pair<int, int>> slotAt(int row, int column) const;
+    /** The track a track button or track pad acts on, or -1. */
+    int trackOfColumn(int gridColumn) const;
+
+    /** Slot pads launch (or stop) on the fast path, when SessionController::directLaunch says
+        they can, and scene buttons (or the grid's scene column) launch their scenes; a held
+        modifier (Shift, Delete, Duplicate, Stop Clip, Mute, Solo, Session) sends them to handle(). */
+    void padMap(PadNoteMap& map) override;
 
 private:
     enum class Modifier
@@ -65,11 +72,9 @@ private:
         solo
     };
     Modifier heldModifier() const;
-    /** The track a track button or track pad acts on, or -1. */
-    int trackOfColumn(int gridColumn) const;
     void pressTrack(int track);
     void pressScene(int scene);
-    void pressSlot(int padIndex, int track, int scene);
+    void pressSlot(int padIndex, int track, int scene, bool played);
     void navigate(int dx, int dy);
     void showSelection();
     /** The overview's pages: across and down. */

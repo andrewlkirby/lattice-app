@@ -77,6 +77,10 @@ TEST_CASE("Virtual Push: at every size its pads are square, inside its bounds, a
             REQUIRE(l.buttons.size() == caps.buttons.size());
             CHECK(l.unit > 0.0f);
             std::vector<juce::Rectangle<float>> all = l.pads;
+            CHECK_FALSE(l.strip.isEmpty());
+            CHECK_FALSE(l.status.isEmpty());
+            all.push_back(l.strip);
+            all.push_back(l.status);
             for (const auto& b : l.buttons)
             {
                 CHECK_FALSE(b.bounds.isEmpty()); // every role has a place
@@ -139,6 +143,48 @@ TEST_CASE("Virtual Push: clicks press pads and buttons; a right-click latches un
     }
 }
 
+TEST_CASE("Virtual Push: the strip bends and springs back; dragging up from a held pad presses it harder", "[control][virtual]")
+{
+    ShellFixture f;
+    VirtualPush push(f.shell->feed(), {});
+    push.setSize(900, 600);
+    std::vector<SurfaceInput> got;
+    push.onInput = [&](const SurfaceInput& in) { got.push_back(in); };
+    const auto& l = push.layout();
+
+    const auto strip = l.strip;
+    push.mouseDown(mouseAt(push, {strip.getCentreX(), strip.getY() + strip.getHeight() * 0.25f}));
+    push.mouseDrag(mouseAt(push, {strip.getCentreX(), strip.getBottom() - 1.0f}));
+    push.mouseUp(mouseAt(push, {strip.getCentreX(), strip.getBottom() - 1.0f}));
+    REQUIRE(got.size() == 3);
+    CHECK(got[0].kind == SurfaceInput::Kind::strip);
+    CHECK(std::abs(got[0].value - 0.75f) < 0.02f);
+    CHECK(got[1].value < 0.02f);
+    CHECK(got[2].kind == SurfaceInput::Kind::stripRelease);
+
+    got.clear();
+    const auto pad = l.pads[10];
+    push.mouseDown(mouseAt(push, pad.getCentre()));
+    push.mouseDrag(mouseAt(push, pad.getCentre().translated(0.0f, -l.unit * 0.5f)));
+    push.mouseDrag(mouseAt(push, pad.getCentre().translated(0.0f, -l.unit * 0.5f))); // the same: nothing new
+    push.mouseDrag(mouseAt(push, pad.getCentre().translated(0.0f, -l.unit * 2.0f)));
+    push.mouseUp(mouseAt(push, pad.getCentre()));
+    REQUIRE(got.size() == 4);
+    CHECK(got[1].kind == SurfaceInput::Kind::padPressure);
+    CHECK(std::abs(got[1].value - 0.5f) < 0.02f);
+    CHECK(got[2].value == 1.0f);
+    CHECK(got[3].kind == SurfaceInput::Kind::padUp);
+    CHECK(push.pressureFor({0, 100}, {0, 120}, -1.0f) == 0.0f); // dragging down presses nothing
+    CHECK(push.pressureFor({0, 100}, {0, 100}, 0.7f) == 0.7f);  // a pen's own pressure
+
+    // Its text: what the controller shows.
+    SurfaceText text;
+    text.pads.assign(64, "47");
+    text.status = "Colundi";
+    push.showText(text);
+    CHECK(push.text() == text);
+}
+
 TEST_CASE("Shell: Virtual Push shows docked at the right, or in its own window, and follows its settings", "[control][virtual][ui]")
 {
     ShellFixture f;
@@ -164,6 +210,16 @@ TEST_CASE("Shell: Virtual Push shows docked at the right, or in its own window, 
     CHECK(f.shell->feed().slot(1, 0) == SlotState::QueuedLaunch);
     // Queued: it blinks, so the display refresh repaints it (only while a light moves).
     CHECK(push->leds().anyAnimated());
+
+    // Note mode: the pads show their notes, and the armed track plays them.
+    const auto note = push->capabilities().indexOf({Role::modeNote, 0});
+    const auto noteAt = push->layout().buttons[static_cast<std::size_t>(note)].bounds.getCentre();
+    push->mouseDown(mouseAt(*push, noteAt));
+    push->mouseUp(mouseAt(*push, noteAt));
+    CHECK(shell.virtualPushController()->modeKind() == ModeKind::note);
+    shell.virtualPushController()->refresh();
+    CHECK(push->text().pads[56].isNotEmpty());
+    CHECK(push->text().status.isNotEmpty());
 
     // A new grid size makes it again.
     f.settings->setValue(ui::prefs::virtualRowsKey, 4);

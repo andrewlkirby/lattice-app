@@ -134,6 +134,8 @@ SurfaceCapabilities virtualPush(int rows, int columns, int encoders)
     c.encoders = encoders;
     c.encoderTouch = true;
     c.tempoEncoder = true;
+    c.aftertouch = Aftertouch::polyphonic; // dragging up from a held pad
+    c.touchStrip = true;
     addNumbered(c, Role::scene, c.rows, LedKind::rgb);
     addNumbered(c, Role::trackSelect, c.columns, LedKind::rgb);
     for (int r = 0; r < static_cast<int>(Role::count); ++r)

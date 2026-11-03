@@ -304,7 +304,10 @@ endif()
 
 # --- UI (M4, docs/05-m4-ui.md): a library, so the tests can drive the views headless ---------------
 add_library(lattice_ui STATIC
+    src/control/modes/NoteLayout.cpp
+    src/control/modes/NoteMode.cpp
     src/control/modes/SessionMode.cpp
+    src/control/surface/PadPlayer.cpp
     src/control/surface/Presets.cpp
     src/control/surface/Surface.cpp
     src/control/surface/SurfaceController.cpp

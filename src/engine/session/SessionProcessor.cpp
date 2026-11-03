@@ -711,7 +711,6 @@ void SessionProcessor::routeLiveInput(const EngineSnapshot& snapshot, const Time
 {
     if (numInput <= 0)
         return;
-    const double beat = clock.beatAt(sample);
 
     for (const auto& t : snapshot.tracks)
     {
@@ -729,10 +728,12 @@ void SessionProcessor::routeLiveInput(const EngineSnapshot& snapshot, const Time
                 continue;
             if (t.inputChannel > 0 && e.size > 0 && (e.bytes[0] & 0xf0) != 0xf0 && (e.bytes[0] & 0x0f) + 1 != t.inputChannel)
                 continue;
+            const std::int64_t at = sample + e.sampleOffset; // where it arrived in the chunk
             if (hear)
-                sink.add(sample, e);
+                sink.add(at, e);
             if (!t.arm || st.captureClipId == 0 || e.size < 3)
                 continue;
+            const double beat = clock.beatAt(at);
 
             const auto status = static_cast<std::uint8_t>(e.bytes[0] & statusMask);
             const auto pitch = static_cast<std::uint8_t>(e.bytes[1] & 0x7f);
