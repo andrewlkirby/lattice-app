@@ -73,6 +73,56 @@ Playing pads must feel as tight as a dedicated instrument. **Pad-to-sound latenc
   - the idle budget with Virtual Push shown.
 - **Hands-on check:** launch clips and scenes and use the transport from Virtual Push, at 8×8 and at 8×12.
 
+##### As built (5a, 2026-11-02)
+- **Where things are:**
+  - `src/control/surface/`: `Surface.h` (roles, capabilities, input, LED frames, `SurfaceDriver`), `Presets` (every candidate device, Virtual Push, grid only), `Mode.h` (`SurfaceContext`, `ModeHost`, `Mode`), `SurfaceController`;
+  - `src/control/modes/SessionMode`;
+  - `src/control/virtual/VirtualPush`.
+  
+  They're built into `lattice_ui`, since the modes use its commands, feed and selection.
+- **LEDs:**
+  - A light is a colour (`0xRRGGBB`) plus an animation. A pulse takes one beat; a blink is on for the first half of each half-beat.
+  - Colours for states come from the theme (play, record, arm, mute, solo). White stays white, since it's the light's colour.
+  - The controller works the frame out again only when something changes: a feed tick it listens to, the set, the selection, or a held button. It then sends only the differences.
+- **Global buttons (the controller's):**
+  - Play: play/stop. Shift+Play continues.
+  - Record: session record.
+  - Undo; Shift+Undo redoes.
+  - New: a clip in the selected slot. Shift+New: a scene.
+  - Stop All, or Shift+Stop Clip (as on Push 2).
+  - Metronome, Tap Tempo, Shift, and the mode buttons. A mode that isn't built yet is unlit.
+- **Session mode as built:**
+  - **Pads and the selection:**
+    - Pressing a pad selects its slot. With Shift it only selects.
+    - The first press on an empty slot of a track that isn't armed only selects it, which auto-arms it in the app. It stops the track if the slot has a stop button. The next press records.
+    - Launching a scene doesn't select it, since that would take the selection, and auto-arm, off the track being played. Shift+scene selects it.
+  - **Delete and Duplicate held:** they act on the clip, or on the scene from a scene button. Each is one undo step.
+  - **Track buttons** (trackSelect, or the buttons under a display on Push): they select the track. With Stop Clip, Mute or Solo held they stop, mute or solo it instead; Shift+Solo adds to the soloed tracks. A device without track buttons gets a row of track pads at the bottom while one of those three is held.
+  - **A grid with no buttons:**
+    - its last column launches scenes;
+    - the box follows the selection made on screen;
+    - everything else stays on screen.
+  - **Columns** are the tracks the Session view shows, so a folded group hides its tracks. A group's pad launches its row, as in the Session view.
+  - **The overview** (Session held) shows the current page white, a page with a playing clip in the play colour, and dim pages with or without clips. A pad moves the box there, and the selection to the page's first slot.
+- **Virtual Push:**
+  - **Where it shows:**
+    - By default it's docked at the window's right, full height, with its width dragged at its left edge; the default is 35% of the window.
+    - "Virtual Push in Its Own Window" moves it to a window of its own, which remembers its place.
+    - It and its controller exist only while shown.
+    - Toggle it with View → Show Virtual Push (Ctrl+Alt+P).
+  - **Layout:** the grid, a scene button per row and a track button per column, with the other buttons in two columns on the left (all 30 roles). Everything is sized from one unit, the largest that fits, at the top of the panel.
+  - **Drawing:** unlit pads and buttons are dark in every theme, as on a device, so a light's brightness reads the same on the light theme.
+  - **Input:**
+    - Velocity comes from where a pad is clicked (top: loudest), or is fixed in Preferences → Controllers, which also sets the rows and columns (4–16).
+    - A right-click latches a pad or a button, so Shift, Delete or Mute can be held with one mouse.
+    - Each touch is its own press.
+  - **Animation:** a display-refresh repaint runs only while a blinking or pulsing light is shown. A still set adds no timers.
+- **Tests:**
+  - `tests/control/SessionModeTests.cpp`: Session mode on every preset (Push 2/3, Launchpad Pro MK3, APC64, APC40 MKII, Maschine MK3, Virtual Push at 8×8, 8×12, 16×16 and 4×4, and grids only), and the global buttons.
+  - `tests/control/VirtualPushTests.cpp`: the layout at six sizes in three shapes, clicks, latches and velocity, and the shell docking it, floating it and rebuilding it.
+  - A `virtual-push` render snapshot in each theme.
+  - `lattice_ui_bench --idle N --virtual-push` measures idle CPU with it shown, for the next quiet-machine session.
+
 #### 5b: Playing: the fast path and Note mode
 - **Engine:**
   - live MIDI and commands from lock-free queues, one per producer, with no mutex;

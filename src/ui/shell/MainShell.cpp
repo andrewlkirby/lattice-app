@@ -362,6 +362,12 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
     selected.addListener(this);
     selectionChanged(selected.get());
 
+    addControllerCommands();
+    pushDocked = !settings.getBoolValue(virtualPushWindowKey, false);
+    pushWidth = settings.getIntValue(virtualPushWidthKey, 0);
+    if (settings.getBoolValue(virtualPushKey, false))
+        setVirtualPushVisible(true);
+
     stateFeed.attachTo(*this);
     // Every mouse event in the window, for the Info view and the dividers (not a global listener:
     // JUCE polls the mouse ten times a second for those, idle or not).
@@ -371,6 +377,9 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
 MainShell::~MainShell()
 {
     session.onSetReplaced = nullptr;
+    virtualSurface.reset();
+    virtualPushWindow.reset();
+    virtualPush.reset();
     preferencesWindow.reset();
     findBox.reset();
     finder.reset();
@@ -765,6 +774,7 @@ PreferencesView::Context MainShell::preferencesContext()
                                .keyboard = computerKeyboard,
                                .audioError = audioError};
     c.setTheme = [this](const Theme& t) { setTheme(t); };
+    c.controllersChanged = [this] { applyVirtualPushSettings(); };
     c.theme = [this]() -> const Theme& { return theme(); };
     c.keyboardChanged = [this] {
         if (computerKeyboard != nullptr)
@@ -1020,6 +1030,10 @@ void MainShell::setTheme(const Theme& t)
     for (int i = 0; i < tabs.getNumTabs(); ++i)
         tabs.setTabBackgroundColour(i, t.background);
     sendLookAndFeelChange();
+    if (virtualSurface != nullptr)
+        virtualSurface->setColours(surfaceColours());
+    if (virtualPushWindow != nullptr)
+        virtualPushWindow->setBackgroundColour(t.surface);
     resized(); // sizes come from the theme too
     repaint();
 }
@@ -1229,10 +1243,17 @@ void MainShell::mouseDown(const juce::MouseEvent& e)
     const auto at = e.getEventRelativeTo(this).getPosition();
     dragStartHeight = showDetail && detailDivider.contains(at) ? detail->getHeight() : -1;
     dragStartWidth = showBrowser && browserDivider.contains(at) ? browser->getWidth() : -1;
+    dragStartPushWidth = pushDivider.contains(at) && virtualPush != nullptr ? virtualPush->getWidth() : -1;
 }
 
 void MainShell::mouseDrag(const juce::MouseEvent& e)
 {
+    if (dragStartPushWidth >= 0)
+    {
+        pushWidth = dragStartPushWidth - e.getDistanceFromDragStartX();
+        resized();
+        return;
+    }
     if (dragStartWidth >= 0)
     {
         browserWidth = dragStartWidth + e.getDistanceFromDragStartX();
@@ -1251,8 +1272,11 @@ void MainShell::mouseUp(const juce::MouseEvent&)
         settings.setValue(detailHeightKey, detail->getHeight());
     if (dragStartWidth >= 0)
         settings.setValue(browserWidthKey, browser->getWidth());
+    if (dragStartPushWidth >= 0 && virtualPush != nullptr)
+        settings.setValue(virtualPushWidthKey, virtualPush->getWidth());
     dragStartHeight = -1;
     dragStartWidth = -1;
+    dragStartPushWidth = -1;
 }
 
 void MainShell::setInfoVisible(bool visible)
@@ -1275,8 +1299,144 @@ void MainShell::mouseMove(const juce::MouseEvent& e)
         showInfoFor(e.eventComponent);
     if (e.eventComponent == this)
         setMouseCursor(showDetail && detailDivider.contains(e.getPosition())    ? juce::MouseCursor::UpDownResizeCursor
-                       : showBrowser && browserDivider.contains(e.getPosition()) ? juce::MouseCursor::LeftRightResizeCursor
+                       : (showBrowser && browserDivider.contains(e.getPosition())) || pushDivider.contains(e.getPosition())
+                           ? juce::MouseCursor::LeftRightResizeCursor
                                                                                  : juce::MouseCursor::NormalCursor);
+}
+
+// --- Virtual Push ----------------------------------------------------------------------------------------
+
+/** Virtual Push in its own window: closing it hides Virtual Push. */
+class MainShell::VirtualPushWindow final : public juce::DocumentWindow
+{
+public:
+    VirtualPushWindow(MainShell& s, juce::Colour background)
+        : juce::DocumentWindow("Virtual Push", background, juce::DocumentWindow::closeButton | juce::DocumentWindow::minimiseButton),
+          shell(s)
+    {
+        setUsingNativeTitleBar(true);
+        setResizable(true, false);
+    }
+    void closeButtonPressed() override
+    {
+        // Not from inside this window's own callback: hiding Virtual Push deletes the window.
+        juce::MessageManager::callAsync([safe = juce::Component::SafePointer<MainShell>(&shell)] {
+            if (safe != nullptr)
+                safe->setVirtualPushVisible(false);
+        });
+    }
+
+private:
+    MainShell& shell;
+};
+
+void MainShell::addControllerCommands()
+{
+    using juce::KeyPress;
+    using juce::ModifierKeys;
+    registry.add({.id = "view.virtualPush",
+                  .name = "Show Virtual Push",
+                  .category = "View",
+                  .description = "Shows or hides Virtual Push: an on-screen controller whose pads launch clips, with the transport and the modes beside them.",
+                  .defaultKeys = {KeyPress('p', ModifierKeys::commandModifier | ModifierKeys::altModifier, 0)},
+                  .perform = [this] { setVirtualPushVisible(virtualPush == nullptr); },
+                  .isTicked = [this] { return virtualPush != nullptr; }});
+    registry.add({.id = "view.virtualPushWindow",
+                  .name = "Virtual Push in Its Own Window",
+                  .category = "View",
+                  .description = "Shows Virtual Push in a window of its own (for a second screen or a touchscreen) instead of at the right of this one.",
+                  .perform =
+                      [this] {
+                          setVirtualPushDocked(!pushDocked);
+                          setVirtualPushVisible(true);
+                      },
+                  .isTicked = [this] { return !pushDocked; }});
+}
+
+control::SurfaceColours MainShell::surfaceColours() const
+{
+    const auto& t = theme();
+    control::SurfaceColours c;
+    c.play = control::rgbOf(t.play.getARGB());
+    c.record = control::rgbOf(t.record.getARGB());
+    c.arm = control::rgbOf(t.arm.getARGB());
+    c.mute = control::rgbOf(t.mute.getARGB());
+    c.solo = control::rgbOf(t.solo.getARGB());
+    return c; // white stays white: it's the light's colour, not the text's
+}
+
+void MainShell::setVirtualPushVisible(bool visible)
+{
+    settings.setValue(virtualPushKey, visible);
+    if (!visible)
+    {
+        if (virtualPushWindow != nullptr)
+            settings.setValue(virtualPushBoundsKey, virtualPushWindow->getWindowStateAsString());
+        virtualSurface.reset();
+        virtualPushWindow.reset();
+        virtualPush.reset();
+        resized();
+        return;
+    }
+    if (virtualPush != nullptr)
+    {
+        if (virtualPushWindow != nullptr)
+            virtualPushWindow->toFront(false);
+        return;
+    }
+    control::VirtualPush::Settings s;
+    s.rows = settings.getIntValue(prefs::virtualRowsKey, 8);
+    s.columns = settings.getIntValue(prefs::virtualColumnsKey, 8);
+    s.fixedVelocity = settings.getIntValue(prefs::virtualVelocityKey, 0);
+    virtualPush = std::make_unique<control::VirtualPush>(stateFeed, s);
+    virtualSurface = std::make_unique<control::SurfaceController>(control::SurfaceContext{session, registry, selected, stateFeed}, *virtualPush);
+    virtualSurface->setColours(surfaceColours());
+    placeVirtualPush();
+}
+
+void MainShell::setVirtualPushDocked(bool docked)
+{
+    settings.setValue(virtualPushWindowKey, !docked);
+    if (docked == pushDocked)
+        return;
+    pushDocked = docked;
+    if (virtualPush != nullptr)
+        placeVirtualPush();
+}
+
+void MainShell::placeVirtualPush()
+{
+    if (pushDocked)
+    {
+        if (virtualPushWindow != nullptr)
+        {
+            settings.setValue(virtualPushBoundsKey, virtualPushWindow->getWindowStateAsString());
+            virtualPushWindow->clearContentComponent();
+            virtualPushWindow.reset();
+        }
+        addAndMakeVisible(*virtualPush);
+        resized();
+        return;
+    }
+    removeChildComponent(virtualPush.get());
+    virtualPushWindow = std::make_unique<VirtualPushWindow>(*this, theme().surface);
+    virtualPushWindow->setLookAndFeel(&lookAndFeel);
+    const auto& t = theme();
+    virtualPush->setSize(juce::roundToInt(t.controlHeight * 30.0f), juce::roundToInt(t.controlHeight * 21.0f));
+    virtualPushWindow->setContentNonOwned(virtualPush.get(), true);
+    const auto saved = settings.getValue(virtualPushBoundsKey);
+    if (saved.isEmpty() || !virtualPushWindow->restoreWindowStateFromString(saved))
+        virtualPushWindow->centreWithSize(virtualPushWindow->getWidth(), virtualPushWindow->getHeight());
+    virtualPushWindow->setVisible(true);
+    resized();
+}
+
+void MainShell::applyVirtualPushSettings()
+{
+    if (virtualPush == nullptr)
+        return;
+    setVirtualPushVisible(false);
+    setVirtualPushVisible(true);
 }
 
 void MainShell::tickMapper()
@@ -1360,6 +1520,14 @@ void MainShell::resized()
         }
         if (showBrowser)
             browser->setBounds(side);
+    }
+    pushDivider = {};
+    if (virtualPush != nullptr && pushDocked)
+    {
+        const int minimum = juce::roundToInt(t.controlHeight * 12.0f);
+        const int wanted = pushWidth > 0 ? pushWidth : area.getWidth() * 7 / 20;
+        virtualPush->setBounds(area.removeFromRight(juce::jlimit(juce::jmin(minimum, area.getWidth() / 2), juce::jmax(minimum, area.getWidth() / 2), wanted)));
+        pushDivider = area.removeFromRight(gap);
     }
     detailDivider = {};
     if (showDetail)

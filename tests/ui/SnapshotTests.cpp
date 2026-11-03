@@ -1,5 +1,6 @@
 // Render snapshots (docs/05-m4-ui.md, Tests 5): the session grid, the Colundi piano-roll ruler,
-// the EQ curve, the Drum Rack pads and the macro section, from the window as the app builds it,
+// the EQ curve, the Drum Rack pads, the macro section and Virtual Push (docs/06-m5-controllers.md,
+// Tests 6), from the window as the app builds it,
 // in every theme at 100% and 200% zoom, compared with reference images (support/Snapshots.h).
 //
 // "[.ui-snapshot]" also writes the whole window and each component at 50%, 100%, 150%, 200% and
@@ -143,6 +144,7 @@ const std::vector<Subject>& subjects()
     static const std::vector<Subject> all{
         {"session-grid",
          [](Fixture& f) {
+             f.shell->setVirtualPushVisible(false); // the last subject shows it
              f.shell->selection().set({Kind::slot, 1, 1});
              f.settle();
              auto& view = f.shell->sessionView();
@@ -176,6 +178,19 @@ const std::vector<Subject>& subjects()
              f.showDevicesOf(3);
              auto* macros = Fixture::titled(f.shell->deviceView(), "Macros");
              return std::pair<juce::Component*, juce::Rectangle<int>>{macros, macros != nullptr ? macros->getLocalBounds() : juce::Rectangle<int>()};
+         }},
+        {"virtual-push",
+         [](Fixture& f) {
+             // Docked, 8 x 8, with the set's clips and the armed track's empty slots lit, and track 2
+             // selected (its button white).
+             f.shell->setVirtualPushDocked(true);
+             f.shell->setVirtualPushVisible(true);
+             f.shell->selection().set({Kind::slot, 2, 0});
+             f.settle();
+             auto* push = f.shell->virtualPushView();
+             push->setSize(push->getWidth(), push->getHeight()); // laid out
+             f.shell->virtualPushController()->refresh();
+             return std::pair<juce::Component*, juce::Rectangle<int>>{push, push->getLocalBounds()};
          }},
     };
     return all;

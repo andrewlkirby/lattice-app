@@ -3,7 +3,7 @@
 // charter's 8 ms frame time while busy.
 //
 //   lattice_ui_bench [--frames N] [--filter name]
-//   lattice_ui_bench --idle SECONDS [--audio [--device-type TYPE]]
+//   lattice_ui_bench --idle SECONDS [--audio [--device-type TYPE]] [--virtual-push]
 //
 // Each case paints its view headless (JUCE's software renderer into an image: the app's own
 // renderer on Windows is Direct2D, usually faster) once per frame while the view changes, and
@@ -22,7 +22,9 @@
 // uses (its saved setup) and the app's worker threads, as when the app sits open with the
 // transport stopped, and only reports (the driver's share of the audio thread isn't the app's);
 // --device-type opens the same device through another type (e.g. "Windows Audio", which doesn't
-// take the device from other programs as exclusive mode does).
+// take the device from other programs as exclusive mode does). --virtual-push also shows Virtual Push
+// docked in the window, with its controller following the set (docs/06-m5-controllers.md, 5a: shown,
+// it stays within the same budget).
 
 #include "devices/racks/Rack.h"
 #include "engine/WorkerPool.h"
@@ -427,7 +429,7 @@ struct Idle
 
 /** Lattice's window idle, then a bare JUCE window's with nothing of Lattice's left running (its
     engine and session gone); prints what it measured. */
-Idle measureIdle(double seconds, bool audio, const juce::String& deviceType)
+Idle measureIdle(double seconds, bool audio, const juce::String& deviceType, bool virtualPush)
 {
     juce::PropertiesFile::Options options;
     options.applicationName = "LatticeBench";
@@ -485,6 +487,8 @@ Idle measureIdle(double seconds, bool audio, const juce::String& deviceType)
     shell->setVisible(true);
     shell->selection().set({SessionSelection::Kind::slot, 0, 1});
     shell->showClipView();
+    if (virtualPush)
+        shell->setVirtualPushVisible(true);
 
 #if JUCE_WINDOWS
     cyclesPerSecond(); // calibrated before, not during
@@ -589,6 +593,7 @@ int main(int argc, char* argv[])
     double idleSeconds = 0.0;
     bool audio = false;
     juce::String deviceType;
+    bool virtualPush = false;
     for (int i = 1; i < argc; ++i)
     {
         if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc)
@@ -599,13 +604,15 @@ int main(int argc, char* argv[])
             idleSeconds = std::max(1.0, std::atof(argv[++i]));
         else if (std::strcmp(argv[i], "--audio") == 0)
             audio = true;
+        else if (std::strcmp(argv[i], "--virtual-push") == 0)
+            virtualPush = true;
         else if (std::strcmp(argv[i], "--device-type") == 0 && i + 1 < argc)
             deviceType = juce::String::fromUTF8(argv[++i]);
     }
     const juce::ScopedJuceInitialiser_GUI juceInit;
     if (idleSeconds > 0.0)
     {
-        const auto idle = measureIdle(idleSeconds, audio, deviceType);
+        const auto idle = measureIdle(idleSeconds, audio, deviceType, virtualPush);
         if (idle.process < 0.0)
             return 1;
         const double above = idle.process - idle.bareWindow;

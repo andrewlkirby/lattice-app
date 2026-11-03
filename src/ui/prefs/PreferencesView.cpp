@@ -370,12 +370,49 @@ private:
 class ControllersPage final : public Page
 {
 public:
-    ControllersPage() : Page("Controllers")
+    explicit ControllersPage(Context& c) : Page("Controllers"), context(c)
     {
-        note("Ableton Push 2 and 3 (with their displays) and Maschine MK3 come in M5. Until then, any MIDI controller can play "
-             "tracks (MIDI tab: Track) and control anything with MIDI Map (Ctrl+M; MIDI tab: Remote).",
-             4);
+        rows.setTitle("Virtual Push rows");
+        columns.setTitle("Virtual Push columns");
+        for (int n = 4; n <= 16; ++n)
+        {
+            rows.addItem(juce::String(n), n);
+            columns.addItem(juce::String(n), n);
+        }
+        rows.setSelectedId(juce::jlimit(4, 16, context.settings.getIntValue(prefs::virtualRowsKey, 8)), juce::dontSendNotification);
+        columns.setSelectedId(juce::jlimit(4, 16, context.settings.getIntValue(prefs::virtualColumnsKey, 8)), juce::dontSendNotification);
+        rows.onChange = [this] { save(prefs::virtualRowsKey, rows.getSelectedId()); };
+        columns.onChange = [this] { save(prefs::virtualColumnsKey, columns.getSelectedId()); };
+        velocity.setTitle("Virtual Push pad velocity");
+        velocity.addItem("From where the pad is clicked", 1);
+        for (const int v : {32, 64, 100, 127})
+            velocity.addItem("Always " + juce::String(v), v + 1);
+        const int saved = context.settings.getIntValue(prefs::virtualVelocityKey, 0);
+        velocity.setSelectedId(saved > 0 ? saved + 1 : 1, juce::dontSendNotification);
+        if (velocity.getSelectedId() == 0)
+            velocity.setSelectedId(1, juce::dontSendNotification);
+        velocity.onChange = [this] { save(prefs::virtualVelocityKey, velocity.getSelectedId() - 1); };
+        row("Virtual Push rows", rows, 5.0f);
+        row("Virtual Push columns", columns, 5.0f);
+        row("Pad velocity", velocity, 14.0f);
+        note("Virtual Push (View menu, Ctrl+Alt+P) plays the session from the screen: pads launch clips, the buttons beside them "
+             "run the transport and the modes. Right-click latches a pad or a button, so Shift or Delete can be held with one mouse.",
+             3);
+        note("Ableton Push 2 and 3 (with their displays) and other controllers come later in M5. Until then, any MIDI controller can "
+             "play tracks (MIDI tab: Track) and control anything with MIDI Map (Ctrl+M; MIDI tab: Remote).",
+             3);
     }
+
+private:
+    void save(const char* key, int value)
+    {
+        context.settings.setValue(key, value);
+        if (context.controllersChanged)
+            context.controllersChanged();
+    }
+
+    Context& context;
+    juce::ComboBox rows, columns, velocity;
 };
 
 // --- Look & Feel ---------------------------------------------------------------------------------
@@ -811,7 +848,7 @@ void PreferencesView::show(Page p)
     {
     case Page::audio: current = std::make_unique<AudioPage>(context); break;
     case Page::midi: current = std::make_unique<MidiPage>(context); break;
-    case Page::controllers: current = std::make_unique<ControllersPage>(); break;
+    case Page::controllers: current = std::make_unique<ControllersPage>(context); break;
     case Page::look: current = std::make_unique<LookPage>(context); break;
     case Page::library: current = std::make_unique<LibraryPage>(context); break;
     case Page::cpu: current = std::make_unique<CpuPage>(context); break;

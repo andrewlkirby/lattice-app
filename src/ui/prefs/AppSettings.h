@@ -33,6 +33,9 @@ constexpr auto toneFrequencyKey = "testToneFrequency";      // Hz
 constexpr auto toneLevelKey = "testToneLevelDb";            // dB
 constexpr auto computerKeyboardKey = "computerKeyboardOn";  // bool: the computer keyboard plays notes
 constexpr auto userTuningFilesKey = "userTuningFiles";      // tuning files loaded from elsewhere, one per line
+constexpr auto virtualRowsKey = "virtualPush.rows";         // Virtual Push's grid (4 .. 16)
+constexpr auto virtualColumnsKey = "virtualPush.columns";
+constexpr auto virtualVelocityKey = "virtualPush.velocity"; // 1 .. 127; 0: from where a pad is clicked
 
 constexpr double minZoom = 0.5, maxZoom = 2.5;
 
