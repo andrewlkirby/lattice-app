@@ -121,7 +121,10 @@ Playing pads must feel as tight as a dedicated instrument. **Pad-to-sound latenc
   - `tests/control/SessionModeTests.cpp`: Session mode on every preset (Push 2/3, Launchpad Pro MK3, APC64, APC40 MKII, Maschine MK3, Virtual Push at 8×8, 8×12, 16×16 and 4×4, and grids only), and the global buttons.
   - `tests/control/VirtualPushTests.cpp`: the layout at six sizes in three shapes, clicks, latches and velocity, and the shell docking it, floating it and rebuilding it.
   - A `virtual-push` render snapshot in each theme.
-  - `lattice_ui_bench --idle N --virtual-push` measures idle CPU with it shown, for the next quiet-machine session.
+  - `lattice_ui_bench --idle N --virtual-push` measures idle CPU with it shown.
+- **Checks (2026-11-02):**
+  - The user's hands-on check passed.
+  - Quiet-machine idle with Virtual Push shown: 0.25-0.27% above a bare JUCE window (budget 0.3%). Without it, in the same session, 0.25-0.29%, so it adds nothing measurable (`perf/reference-machine.md`).
 
 #### 5b: Playing: the fast path and Note mode
 - **Engine:**
