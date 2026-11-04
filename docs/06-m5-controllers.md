@@ -216,6 +216,9 @@ Playing pads must feel as tight as a dedicated instrument. **Pad-to-sound latenc
     - every preset device, the transport lights, and notes reaching the armed track.
   - Virtual Push: strip, pressure and text tests.
   - A `virtual-push-note` render snapshot in each theme.
+- **Checks (2026-11-03):**
+  - The user's hands-on check passed: the Colundi table played from Virtual Push.
+  - From the check: docked Virtual Push was hard to read at half the window. It can now widen until the main view is 16 control heights wide (its pads size to the width); the window form (View menu) goes full screen.
 
 #### 5c: Display and encoders: Device and Mix modes
 - **The display renderer,** shared by Virtual Push and Push: it draws a `DisplayFrame` into an image at the device's size, in one column per encoder, with a detail view while an encoder is touched.

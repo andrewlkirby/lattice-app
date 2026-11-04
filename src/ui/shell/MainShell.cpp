@@ -1545,9 +1545,12 @@ void MainShell::resized()
     pushDivider = {};
     if (virtualPush != nullptr && pushDocked)
     {
+        // Up to what leaves the main view room for a few tracks: the pads size to the width.
         const int minimum = juce::roundToInt(t.controlHeight * 12.0f);
+        const int mainMinimum = juce::roundToInt(t.controlHeight * 16.0f);
         const int wanted = pushWidth > 0 ? pushWidth : area.getWidth() * 7 / 20;
-        virtualPush->setBounds(area.removeFromRight(juce::jlimit(juce::jmin(minimum, area.getWidth() / 2), juce::jmax(minimum, area.getWidth() / 2), wanted)));
+        const int widest = juce::jmax(area.getWidth() / 2, area.getWidth() - mainMinimum);
+        virtualPush->setBounds(area.removeFromRight(juce::jlimit(juce::jmin(minimum, area.getWidth() / 2), juce::jmax(minimum, widest), wanted)));
         pushDivider = area.removeFromRight(gap);
     }
     detailDivider = {};
