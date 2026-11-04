@@ -20,7 +20,9 @@ SurfaceCapabilities apc40Mk2();
 SurfaceCapabilities maschineMk3();
 
 /** Virtual Push (docs/06-m5-controllers.md, "Virtual Push"): every role, a grid of rows x columns
-    (4 to 16 each), a scene button per row and a track button per column. */
+    (4 to 16 each), a scene button per row and a track button per column; with encoders, a display
+    of a cell each (in rows as wide as the grid, at least 8) and a button above and below each
+    column of cells. */
 SurfaceCapabilities virtualPush(int rows = 8, int columns = 8, int encoders = 8);
 inline constexpr int minVirtualSize = 4;
 inline constexpr int maxVirtualSize = 16;

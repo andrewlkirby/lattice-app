@@ -1,5 +1,6 @@
 #include "control/surface/Presets.h"
 
+#include <algorithm>
 #include <initializer_list>
 
 namespace lattice::control::presets
@@ -131,9 +132,6 @@ SurfaceCapabilities virtualPush(int rows, int columns, int encoders)
     c.name = "Virtual Push";
     c.rows = juce::jlimit(minVirtualSize, maxVirtualSize, rows);
     c.columns = juce::jlimit(minVirtualSize, maxVirtualSize, columns);
-    c.encoders = encoders;
-    c.encoderTouch = true;
-    c.tempoEncoder = true;
     c.aftertouch = Aftertouch::polyphonic; // dragging up from a held pad
     c.touchStrip = true;
     addNumbered(c, Role::scene, c.rows, LedKind::rgb);
@@ -141,6 +139,20 @@ SurfaceCapabilities virtualPush(int rows, int columns, int encoders)
     for (int r = 0; r < static_cast<int>(Role::count); ++r)
         if (const auto role = static_cast<Role>(r); !isNumbered(role))
             c.buttons.push_back({ButtonId{role, 0}, LedKind::rgb});
+    c.encoders = std::max(0, encoders);
+    c.encoderTouch = c.tempoEncoder = c.encoders > 0;
+    if (c.encoders > 0)
+    {
+        // A display above the grid, its cells (the encoders) in rows as wide as the grid or 8,
+        // with a button above and below each column of cells. The pixel size is nominal (a
+        // Push-shaped cell each): Virtual Push draws it at whatever size it has.
+        c.displayColumns = std::min(c.encoders, std::max(8, c.columns));
+        const int cellRows = (c.encoders + c.displayColumns - 1) / c.displayColumns;
+        c.displayWidth = 120 * c.displayColumns;
+        c.displayHeight = 112 * cellRows + 48;
+        addNumbered(c, Role::displayUpper, c.displayColumns, LedKind::rgb);
+        addNumbered(c, Role::displayLower, c.displayColumns, LedKind::rgb);
+    }
     return c;
 }
 

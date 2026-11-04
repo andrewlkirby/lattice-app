@@ -1385,7 +1385,7 @@ void MainShell::setVirtualPushVisible(bool visible)
         return;
     }
     virtualPush = std::make_unique<control::VirtualPush>(stateFeed, virtualPushSettings());
-    virtualSurface = std::make_unique<control::SurfaceController>(control::SurfaceContext{session, registry, selected, stateFeed}, *virtualPush);
+    virtualSurface = std::make_unique<control::SurfaceController>(control::SurfaceContext{session, registry, selected, stateFeed, &deviceSpecs}, *virtualPush);
     virtualSurface->setColours(surfaceColours());
     virtualSurface->setExpression(expressionSettings());
     placeVirtualPush();
@@ -1419,7 +1419,10 @@ void MainShell::placeVirtualPush()
     virtualPushWindow = std::make_unique<VirtualPushWindow>(*this, theme().surface);
     virtualPushWindow->setLookAndFeel(&lookAndFeel);
     const auto& t = theme();
-    virtualPush->setSize(juce::roundToInt(t.controlHeight * 30.0f), juce::roundToInt(t.controlHeight * 21.0f));
+    // As tall as its layout is for the width (a display above the grid makes it taller).
+    const float width = t.controlHeight * 30.0f;
+    const auto shape = control::VirtualPush::layoutFor(virtualPush->capabilities(), {0.0f, 0.0f, width - t.padding * 2.0f, 1.0e6f});
+    virtualPush->setSize(juce::roundToInt(width), juce::roundToInt(shape.used.getHeight() + t.padding * 2.0f));
     virtualPushWindow->setContentNonOwned(virtualPush.get(), true);
     const auto saved = settings.getValue(virtualPushBoundsKey);
     if (saved.isEmpty() || !virtualPushWindow->restoreWindowStateFromString(saved))
@@ -1444,6 +1447,7 @@ control::VirtualPush::Settings MainShell::virtualPushSettings() const
     s.rows = juce::jlimit(4, 16, settings.getIntValue(prefs::virtualRowsKey, 8));
     s.columns = juce::jlimit(4, 16, settings.getIntValue(prefs::virtualColumnsKey, 8));
     s.fixedVelocity = juce::jlimit(0, 127, settings.getIntValue(prefs::virtualVelocityKey, 0));
+    s.encoders = control::VirtualPush::encoderCountFor(settings.getIntValue(prefs::virtualEncodersKey, 8));
     return s;
 }
 

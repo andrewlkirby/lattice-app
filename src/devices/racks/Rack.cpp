@@ -62,10 +62,15 @@ bool RackDevice::isRackType(const juce::String& typeId) noexcept
 
 std::vector<ParameterGroup> RackDevice::customPages(int encoderCount) const
 {
+    return macroPages(macroCount(), encoderCount);
+}
+
+std::vector<ParameterGroup> RackDevice::macroPages(int count, int encoderCount)
+{
     // Only the macros in use, paged by the surface's encoder count.
     encoderCount = std::max(1, encoderCount);
+    count = juce::jlimit(0, maxMacros, count);
     std::vector<ParameterGroup> pages;
-    const int count = macroCount();
     for (int first = 0; first < count; first += encoderCount)
     {
         ParameterGroup page;

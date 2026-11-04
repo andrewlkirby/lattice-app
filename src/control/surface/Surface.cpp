@@ -140,6 +140,41 @@ bool LedFrame::anyAnimated() const noexcept
     return false;
 }
 
+std::vector<juce::String> displayText(const DisplayFrame& frame, int lines, int characters)
+{
+    std::vector<juce::String> out;
+    if (lines <= 0 || characters <= 0)
+        return out;
+    const auto fit = [characters](const juce::String& s) { return s.trim().substring(0, characters); };
+    // "name value", the name shortened so that the value fits.
+    const auto pair = [characters](const juce::String& name, const juce::String& value) {
+        const int room = juce::jmax(0, characters - value.length() - 1);
+        return (name.trim().substring(0, room) + " " + value).trim().substring(0, characters);
+    };
+    if (frame.detail >= 0 && frame.detail < static_cast<int>(frame.cells.size()))
+    {
+        const auto& d = frame.cells[static_cast<std::size_t>(frame.detail)];
+        out.push_back(fit(d.caption.isNotEmpty() ? d.caption + " " + d.name : d.name));
+        out.push_back(fit(d.value));
+        out.push_back(fit(d.detail));
+    }
+    else
+    {
+        auto heading = frame.title;
+        for (const auto& b : frame.upper)
+            if (b.selected)
+                heading = b.label;
+        out.push_back(fit(heading));
+        if (frame.message.isNotEmpty())
+            out.push_back(fit(frame.message));
+        for (const auto& d : frame.cells)
+            if (d.name.isNotEmpty())
+                out.push_back(pair(d.caption.isNotEmpty() ? d.caption : d.name, d.value));
+    }
+    out.resize(static_cast<std::size_t>(lines));
+    return out;
+}
+
 void SurfaceDriver::deliver(SurfaceInput input)
 {
     if (pads != nullptr)

@@ -228,6 +228,69 @@ Playing pads must feel as tight as a dedicated instrument. **Pad-to-sound latenc
   - an encoder turn is one gesture, so a turn is one undo step.
 - **Tests:** the pages match `ParameterPager` for 8, 16 and 32 encoders, plus display snapshots.
 
+##### As built (5c, 2026-11-03)
+- **Where things are:**
+  - `src/control/surface/Display.h` (`DisplayFrame`: cells, the labels along the display, the detail, a message; `displayText` for text displays);
+  - `src/control/display/DisplayRenderer` (drawing; an image at a device's size);
+  - `src/control/surface/EncoderBank` (what each encoder edits, and its gestures);
+  - `src/control/modes/DeviceMode`, `MixMode`, `PadFaders.h`;
+  - `src/ui/mapping/Targets` (MIDI Map's address-to-binding code, now shared with the encoders).
+- **Two modes at once:**
+  - On a device with encoders, a pad mode (Session or Note) runs on the grid and an encoder mode (Device or Mix) on the encoders, the display and the buttons along it, as on a Push. It starts in Device.
+  - The buttons along the display go to the encoder mode first, everything else to the pad mode first. The Mode buttons light for both.
+  - **Graceful degradation:** on a device without encoders (a Launchpad), Device and Mix take the grid. Its columns are faders (lit from the bottom, or from the middle for pan), the scene buttons choose pages or what to mix, and the arrows move along the chain or the tracks.
+- **Encoders (`EncoderBank`):**
+  - Each encoder is given a value's address (`device:<id>/<parameter>`, a track's volume or pan, a send) and edits it through the same bindings as MIDI Map and the window's knobs.
+  - **One turn is one undo step:** from touch to release, or until the encoder rests for 400 ms on a device without touch. The step is named with the value, as a mouse drag's is.
+  - **How far a turn moves:**
+    - a whole range takes `encoderResolution` steps (a capability; 200 by default, unverified per device);
+    - Shift makes it ten times finer;
+    - a value with up to 24 settings (a switch, a choice, a small whole number) moves one setting every 10 steps, never sooner.
+  - An absolute control (`encoderSet`: APC40, APC64) picks the value up before moving it.
+- **Device mode:**
+  - **Which device:** the device selected in the shared selection. `SessionSelectionModel::selectDevice` now holds it, and the Device view writes and follows it, opening the rack chains a device is in. With none selected, it uses the first device of the track (or return, or master).
+  - **Pages:** `ParameterPager::pagesFor` for the encoder count. A rack's pages are its macros in use, read from the set (`RackDevice::macroPages`), with their names and colours.
+  - **Upper buttons:**
+    - they show the devices of the chain, in groups as wide as the buttons;
+    - pressing the selected rack again shows its chains, and choosing a chain goes into it;
+    - inside a rack, the first button ("‹ Rack") goes back out;
+    - an empty chain says so.
+  - **Lower buttons:** the device's On switch (undoable), then its pages. Each device remembers its page.
+  - **Display:** each parameter's name, value and an arc (drawn from the middle when bipolar), with the devices above and the pages below. A touched encoder is shown three cells wide, with its range.
+- **Mix mode:**
+  - **Upper buttons:** Volume, Pan, Sends (press again for the next return's) and Track (the selected track's volume, pan and every send).
+  - **Which tracks:** the tracks in view from the Session box. The box follows the selection under any pad mode, so Note mode moves it too.
+  - **Lower buttons:** select tracks; with Stop Clip, Mute or Solo held they stop, mute or solo them, through Session mode's track buttons.
+  - **Display:** each track's name in its colour, the value, an arc and its meter, drawn as the mixer draws its meters. Meters are read only while Mix is shown, in 64ths, so a still level doesn't redraw the display.
+- **The renderer (`DisplayRenderer`):**
+  - **Layout:** label strips above and below the cells, `across` cells to a row (Push: 8). Everything is sized from the bounds: a Push-shaped cell is 120 × 112, and each strip is 24.
+  - **Theme:** dark in every theme, as a device's screen is. The theme gives the accent and meter colours, and the high-contrast theme gets brighter text.
+  - `render()` gives an image at a device's size, for the Push driver (5f). Text displays get `displayText` (the touched encoder's name and value, otherwise the title and the cells).
+- **Virtual Push:**
+  - **Encoders setting** (Preferences → Controllers): none, 8, 16 or 32, default 8. With encoders it shows a display above the grid, as wide as the whole panel, with cells in rows of 8 (or the grid's width, if wider), and a button above and below each column.
+  - **The cells are the encoders:**
+    - pressing a cell touches its encoder;
+    - dragging turns it: a whole range is three pads' height, and Shift (the key, or the button) makes it ten times finer;
+    - the mouse wheel turns it by a fortieth of the range for each notch.
+- **Scale/Tuning menu:** it stays on the pads, which work on every device. It can move to the display once a pixel display's driver exists to check it on.
+- **Tests:**
+  - **`tests/control/DeviceMixTests.cpp`:**
+    - **Device:** pages equal to `ParameterPager`'s for 8, 16 and 32 encoders, and their addresses and cells; rack macros (12 in use: two pages on 8 encoders, named and coloured); choosing devices shared with the selection; the On switch and its undo; per-device pages; a track with no devices; going into a rack, choosing a chain, an empty chain, and back out.
+    - **Turns:** a turn as one undo step; Shift; rests; detents; absolute pickup.
+    - **Display frames:** a frame only sent when it changes; the detail on touch; text lines.
+    - **Mix:** volumes, pans, sends cycling, the Track page following the selection, the lower buttons with modifiers, and the box following the selection.
+    - **Without encoders:** faders on a Launchpad Pro, including their LEDs and undo.
+    - **Running together:** both modes at once and their lights.
+    - **Every candidate device:** Device and Mix usable and sized from what it has.
+  - **Virtual Push:** the layout with 0, 8, 16 and 32 encoders at every size (cells inside the display, nothing overlapping), and drags, Shift and the wheel turning encoders.
+  - **Snapshots:**
+    - the renderer at 960 × 160 and 1920 × 320 in every theme: a device page, a touched encoder, Mix with meters, and no devices;
+    - `virtual-push-device`: the 16-macro rack, with an encoder touched;
+    - the earlier Virtual Push snapshots, redrawn with the display.
+- **Checks:**
+  - All 483 fast tests pass on Windows; all 472 on Linux (warnings as errors), with its snapshot references written and looked at. Callgrind: the engine benchmark -0.88%, the UI benchmark -0.02%.
+  - Idle with Virtual Push shown, measured on a busy machine: 0.42% above a bare window with it shown, 0.48% without it in the same session. The display adds nothing measurable, but the busy machine puts both over the 0.3% budget. A quiet-machine run waits for the user's go-ahead.
+
 #### 5d: Drum, the step sequencers, and the Clip and Browse modes
 - The Drum layout and its zones, the melodic step sequencer, and the Clip and Browse modes, with previews on the M4 preview bus.
 

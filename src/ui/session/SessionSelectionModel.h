@@ -4,6 +4,8 @@
 
 #include <juce_events/juce_events.h>
 
+#include <cstdint>
+
 namespace lattice::ui
 {
 
@@ -36,6 +38,8 @@ public:
         virtual void selectionChanged(const SessionSelection& now) = 0;
         /** Whose devices to show changed (the selected track, or a return or the master). */
         virtual void deviceOwnerChanged(const DeviceOwner&) {}
+        /** The selected device changed (its document ID; 0 for none). */
+        virtual void deviceSelected(std::int64_t) {}
     };
 
     const SessionSelection& get() const noexcept { return current; }
@@ -47,12 +51,19 @@ public:
     /** Shows a return's or the master's devices (or a track's) without changing the selection. */
     void showDevicesOf(const DeviceOwner& o);
 
+    /** The selected device, shared by the Device view and the controllers' Device mode: its
+        document ID (0: none). It may be on another owner than the one shown, or gone; whoever
+        reads it checks. */
+    std::int64_t selectedDevice() const noexcept { return device; }
+    void selectDevice(std::int64_t id);
+
     void addListener(Listener* l) { listeners.add(l); }
     void removeListener(Listener* l) { listeners.remove(l); }
 
 private:
     SessionSelection current;
     DeviceOwner owner;
+    std::int64_t device = 0;
     juce::ListenerList<Listener> listeners;
 };
 
@@ -72,6 +83,14 @@ inline void SessionSelectionModel::showDevicesOf(const DeviceOwner& o)
         return;
     owner = o;
     listeners.call([this](Listener& l) { l.deviceOwnerChanged(owner); });
+}
+
+inline void SessionSelectionModel::selectDevice(std::int64_t id)
+{
+    if (id == device)
+        return;
+    device = id;
+    listeners.call([this](Listener& l) { l.deviceSelected(device); });
 }
 
 } // namespace lattice::ui

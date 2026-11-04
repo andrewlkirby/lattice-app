@@ -10,6 +10,7 @@ add_executable(lattice_tests
     test_main.cpp
     app/HandsOnTests.cpp
     control/ComputerKeyboardTests.cpp
+    control/DeviceMixTests.cpp
     control/FastPathTests.cpp
     control/NoteModeTests.cpp
     control/SessionModeTests.cpp

@@ -44,6 +44,9 @@ public:
     /** Message thread: the number of macros in use (from the STATE). */
     int macroCount() const noexcept { return macros.load(std::memory_order_relaxed); }
     std::vector<ParameterGroup> customPages(int encoderCount) const override;
+    /** The pages of a rack with `count` macros in use (macro m is parameter m), for a surface's
+        encoder count: what customPages gives once the STATE is read. */
+    static std::vector<ParameterGroup> macroPages(int count, int encoderCount);
 
     /** Audio thread, when the track switches to a new layout: this rack's part of it. */
     void activate(const RackLayout* layout) noexcept LATTICE_NONBLOCKING;

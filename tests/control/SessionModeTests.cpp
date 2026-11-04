@@ -374,7 +374,8 @@ TEST_CASE("Surface controller: the global buttons run the transport, undo and th
 
     f.refresh();
     CHECK(f.surface.button(Role::modeSession) == LedState::solid(colours.white));
-    CHECK(f.surface.button(Role::modeDevice).isOff()); // not built yet
+    CHECK(f.surface.button(Role::modeDevice) == LedState::solid(colours.white)); // on the encoders, under Session
+    CHECK(f.surface.button(Role::modeBrowse).isOff());                          // not built yet
 }
 
 TEST_CASE("Surface controller: only what changed goes to the driver, and nothing when nothing did", "[control][surface]")

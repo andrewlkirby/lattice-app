@@ -4,6 +4,7 @@
 #include "devices/racks/Rack.h"
 #include "devices/racks/RackEditing.h"
 #include "ui/device/DevicePanels.h"
+#include "ui/mapping/Targets.h"
 #include "ui/session/SessionView.h"
 #include "ui/theme/LatticeLookAndFeel.h"
 #include "ui/widgets/Accessible.h"
@@ -137,6 +138,7 @@ void DeviceView::rebuild()
             *v = {};
     if (!mapRack.isValid())
         mapMacro = -1;
+    shareSelection();
     titleMaybeChanged();
     layout();
 }
@@ -258,8 +260,38 @@ void DeviceView::select(const juce::ValueTree& device)
     }
     if (device.isValid())
         focused = device.getParent();
+    shareSelection();
     if (isShowing())
         grabKeyboardFocus();
+    accessible::selectionChanged(*this);
+}
+
+void DeviceView::shareSelection()
+{
+    // Only a device of the owner shown: one left selected on another track isn't the selection.
+    const auto owner = ownerNode();
+    const bool here = selected.isValid() && owner.isValid() && selected.isAChildOf(owner);
+    selection.selectDevice(here ? LiveSet::idOf(selected) : 0);
+}
+
+void DeviceView::deviceSelected(std::int64_t id)
+{
+    // Chosen elsewhere (a controller's Device mode): shown here too, inside its racks' chains.
+    if (id == 0 || (selected.isValid() && LiveSet::idOf(selected) == id))
+        return;
+    const auto node = findDeviceById(ownerNode(), id);
+    if (!node.isValid())
+        return; // another owner's
+    for (auto c = node.getParent(); c.isValid(); c = c.getParent())
+        if (c.hasType(ids::rackChain))
+            selectChain(c.getParent().getParent(), c);
+    selected = node;
+    focused = node.getParent();
+    shareSelection(); // opening a chain cleared it on the way
+    if (top != nullptr)
+        top->repaint();
+    if (auto* f = frameFor(node))
+        scrollIntoView(*f);
     accessible::selectionChanged(*this);
 }
 
@@ -290,7 +322,10 @@ void DeviceView::focusChain(const juce::ValueTree& devicesNode)
         focused = devicesNode;
         // The selection moves to the chain clicked (if it isn't already in it).
         if (selected.isValid() && selected.getParent() != focused)
+        {
             selected = {};
+            shareSelection();
+        }
         if (top != nullptr)
             top->repaint();
     }
@@ -724,6 +759,7 @@ void DeviceView::edit(const juce::String& id)
         if (chain.getNumChildren() > 0)
             selected = chain.getChild(juce::jmin(index, chain.getNumChildren() - 1));
         focused = chain;
+        shareSelection();
         flushUpdates();
     }
 }

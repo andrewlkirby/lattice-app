@@ -1,5 +1,6 @@
 #pragma once
 
+#include "control/surface/EncoderBank.h"
 #include "control/surface/PadPlayer.h"
 #include "control/surface/Surface.h"
 #include "engine/SessionController.h"
@@ -18,6 +19,8 @@ struct SurfaceContext
     ui::CommandRegistry& commands;
     ui::SessionSelectionModel& selection;
     ui::EngineStateFeed& feed;
+    /** The device descriptions the window uses (null: the controller keeps its own). */
+    DeviceSpecs* specs = nullptr;
 };
 
 /** The colours the LEDs use for states (0xRRGGBB): the theme's, so a pad and the Session view
@@ -64,10 +67,28 @@ public:
     virtual int trackOfColumn(int column) const = 0;
     /** The settings the pads play with (the strip's mode, pressure). */
     virtual const Expression& expression() const = 0;
+
+    /** The encoders: what each controls, and their gestures (5c). */
+    virtual EncoderBank& encoders() = 0;
+    virtual DeviceSpecs& specs() = 0;
+    /** Up to `count` tracks from the Session box's first column on (as the Session view shows
+        them): the tracks Mix mode's encoders control. */
+    virtual std::vector<int> tracksInView(int count) const = 0;
+    /** Moves the Session box across by a number of tracks (Mix mode's banks). */
+    virtual void scrollTracks(int columns) = 0;
+    /** What a track button does (Session mode's: select, or stop, mute or solo with those held). */
+    virtual void pressTrack(int track) = 0;
+    /** The light of a button that does that. */
+    virtual LedState trackLed(int track) const = 0;
 };
 
 /** One mode (Session, Note, Device...). Modes are plain classes: tests drive them headlessly
-    through FakeSurface. Message thread. */
+    through FakeSurface. Message thread.
+
+    Session and Note are pad modes: they own the grid. Device and Mix own the encoders, the
+    display and the buttons along it, and leave the grid to the pad mode under them; on a device
+    without encoders they take the grid instead, its columns as faders (docs/06-m5-controllers.md,
+    "Graceful degradation"). */
 class Mode
 {
 public:
@@ -92,6 +113,11 @@ public:
     virtual void padMap(PadNoteMap&) {}
     /** The pads' labels and the status line. */
     virtual void describe(SurfaceText&) {}
+    /** What each encoder controls (an address each, ValueBinding::target), worked out on every
+        refresh: the controller's EncoderBank turns them. Default: nothing. */
+    virtual void encoderTargets(std::vector<juce::String>&) {}
+    /** What the display shows (only asked of a device that has one). */
+    virtual void display(DisplayFrame&) {}
 
 protected:
     ModeHost& host;

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "control/surface/Display.h"
+
 #include <juce_core/juce_core.h>
 
 #include <cstdint>
@@ -105,6 +107,8 @@ struct SurfaceCapabilities
     bool encoderTouch = false;
     bool encodersRelative = true;
     bool tempoEncoder = false;
+    /** Relative steps across a value's whole range (fine, with Shift: ten times as many). */
+    int encoderResolution = 200;
 
     struct Button
     {
@@ -116,6 +120,8 @@ struct SurfaceCapabilities
     // The display: a pixel display (width x height), or a text display (lines x characters).
     int displayWidth = 0, displayHeight = 0;
     int textLines = 0, textCharacters = 0;
+    /** The display's cells across (one per encoder, in rows): 0 for all the encoders in one row. */
+    int displayColumns = 0;
 
     bool touchStrip = false;
 
@@ -126,6 +132,9 @@ struct SurfaceCapabilities
     /** Where a button is in `buttons`, or -1. */
     int indexOf(ButtonId id) const noexcept;
     int numPads() const noexcept { return rows * columns; }
+    bool hasDisplay() const noexcept { return (displayWidth > 0 && displayHeight > 0) || textLines > 0; }
+    /** Cells across the display: displayColumns, or every encoder. */
+    int cellsAcross() const noexcept { return displayColumns > 0 ? displayColumns : encoders; }
 };
 
 // --- Input ------------------------------------------------------------------------------------------
@@ -142,6 +151,7 @@ struct SurfaceInput
         buttonDown,  // button
         buttonUp,    // button
         encoderTurn, // encoder, delta: steps (positive clockwise)
+        encoderSet,  // encoder, value 0..1: an absolute control's position
         encoderTouch,
         encoderRelease,
         strip,       // value 0..1 (the bottom: 0)
@@ -163,6 +173,10 @@ struct SurfaceInput
     static SurfaceInput buttonDown(ButtonId id) { return {Kind::buttonDown, 0, 0, 0.0f, id}; }
     static SurfaceInput buttonUp(ButtonId id) { return {Kind::buttonUp, 0, 0, 0.0f, id}; }
     static SurfaceInput strip(float position) { return {Kind::strip, 0, 0, position}; }
+    static SurfaceInput encoderTurn(int index, int steps) { return {Kind::encoderTurn, 0, 0, 0.0f, {}, index, steps}; }
+    static SurfaceInput encoderSet(int index, float position) { return {Kind::encoderSet, 0, 0, position, {}, index}; }
+    static SurfaceInput encoderTouch(int index) { return {Kind::encoderTouch, 0, 0, 0.0f, {}, index}; }
+    static SurfaceInput encoderRelease(int index) { return {Kind::encoderRelease, 0, 0, 0.0f, {}, index}; }
     static SurfaceInput stripRelease() { return {Kind::stripRelease}; }
 };
 
@@ -224,9 +238,8 @@ struct LedFrame
     bool operator==(const LedFrame&) const = default;
 };
 
-/** Words a device can show beside its lights, until the display renderer (5c): a label on each
-    pad (Virtual Push draws them; hardware ignores them) and a status line (the pressed notes, the
-    Scale menu's choices). */
+/** Words a device can show beside its lights: a label on each pad (Virtual Push draws them;
+    hardware ignores them) and a status line (the pressed notes, the Scale menu's choices). */
 struct SurfaceText
 {
     std::vector<juce::String> pads; // row by row, like LedFrame::pads; empty: no labels
@@ -258,6 +271,9 @@ public:
     virtual void showLeds(const LedFrame& frame, const LedFrame::Changes& changed) = 0;
     /** Shows the pads' labels and the status line (only called when they change). */
     virtual void showText(const SurfaceText&) {}
+    /** Shows what the display shows (only called when it changes, and only for a device with
+        a display). */
+    virtual void showDisplay(const DisplayFrame&) {}
 
     /** Set by the controller: the device's input goes here (message thread). */
     std::function<void(const SurfaceInput&)> onInput;

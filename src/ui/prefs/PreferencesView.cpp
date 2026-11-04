@@ -1,5 +1,6 @@
 #include "ui/prefs/PreferencesView.h"
 
+#include "control/virtual/VirtualPush.h"
 #include "engine/WorkerPool.h"
 #include "ui/prefs/AppSettings.h"
 #include "ui/theme/LatticeLookAndFeel.h"
@@ -383,6 +384,13 @@ public:
         columns.setSelectedId(juce::jlimit(4, 16, context.settings.getIntValue(prefs::virtualColumnsKey, 8)), juce::dontSendNotification);
         rows.onChange = [this] { save(prefs::virtualRowsKey, rows.getSelectedId()); };
         columns.onChange = [this] { save(prefs::virtualColumnsKey, columns.getSelectedId()); };
+        encoders.setTitle("Virtual Push encoders");
+        encoders.addItem("None", 1);
+        for (const int n : {8, 16, 32})
+            encoders.addItem(juce::String(n) + ", with a display", n + 1);
+        encoders.setSelectedId(control::VirtualPush::encoderCountFor(context.settings.getIntValue(prefs::virtualEncodersKey, 8)) + 1,
+                               juce::dontSendNotification);
+        encoders.onChange = [this] { save(prefs::virtualEncodersKey, encoders.getSelectedId() - 1); };
         velocity.setTitle("Virtual Push pad velocity");
         velocity.addItem("From where the pad is clicked", 1);
         for (const int v : {32, 64, 100, 127})
@@ -421,6 +429,7 @@ public:
 
         row("Virtual Push rows", rows, 5.0f);
         row("Virtual Push columns", columns, 5.0f);
+        row("Virtual Push encoders", encoders, 10.0f);
         row("Pad velocity", velocity, 14.0f);
         row("Velocity curve", curve, 8.0f);
         row("Pad pressure", pressure, 14.0f);
@@ -430,8 +439,12 @@ public:
              "pads play the selected track in its tuning (Colundi's table, or In Key and Chromatic for 12-TET); Scale opens the "
              "layout menu. Right-click latches a pad or a button; drag up on a held pad to press it harder.",
              3);
-        note("Ableton Push 2 and 3 (with their displays) and other controllers come later in M5. Until then, any MIDI controller can "
-             "play tracks (MIDI tab: Track) and control anything with MIDI Map (Ctrl+M; MIDI tab: Remote).",
+        note("Its encoders are the display's cells: drag one up or down (Shift: finely) or use the mouse wheel. Device mode: the "
+             "selected device's parameters, the buttons above choosing the device and those below its pages. Mix mode: the volume, "
+             "pan or sends of the tracks in view.",
+             3);
+        note("Ableton Push 2 and 3 and other controllers come later in M5. Until then, any MIDI controller can play tracks "
+             "(MIDI tab: Track) and control anything with MIDI Map (Ctrl+M; MIDI tab: Remote).",
              3);
     }
 
@@ -444,7 +457,7 @@ private:
     }
 
     Context& context;
-    juce::ComboBox rows, columns, velocity, curve, pressure, threshold, strip;
+    juce::ComboBox rows, columns, encoders, velocity, curve, pressure, threshold, strip;
 };
 
 // --- Look & Feel ---------------------------------------------------------------------------------

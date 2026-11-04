@@ -24,6 +24,11 @@ public:
         ++frames;
     }
     void showText(const control::SurfaceText& t) override { text = t; }
+    void showDisplay(const control::DisplayFrame& f) override
+    {
+        display = f;
+        ++displays;
+    }
 
     void send(const control::SurfaceInput& input) { deliver(input); }
     void press(int row, int column, float velocity = 0.8f) { send(control::SurfaceInput::padDown(row, column, velocity)); }
@@ -40,6 +45,9 @@ public:
         down(role, index);
         up(role, index);
     }
+    void turn(int encoder, int steps) { send(control::SurfaceInput::encoderTurn(encoder, steps)); }
+    void touch(int encoder) { send(control::SurfaceInput::encoderTouch(encoder)); }
+    void untouch(int encoder) { send(control::SurfaceInput::encoderRelease(encoder)); }
 
     const control::LedState& pad(int row, int column) const
     {
@@ -61,7 +69,9 @@ public:
     control::LedFrame leds;
     control::LedFrame::Changes lastChanges;
     control::SurfaceText text;
+    control::DisplayFrame display;
     int frames = 0;
+    int displays = 0;
 };
 
 } // namespace lattice::test

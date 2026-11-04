@@ -1,5 +1,6 @@
 #include "control/virtual/VirtualPush.h"
 
+#include "control/display/DisplayRenderer.h"
 #include "control/surface/Presets.h"
 #include "ui/theme/LatticeLookAndFeel.h"
 
@@ -43,6 +44,8 @@ constexpr float statusHeight = 0.45f;
 constexpr float labelMinPixels = 7.0f; // smaller labels than this go unshown
 constexpr float padInset = 0.06f;   // each side of a pad, inside its unit
 constexpr float buttonInset = 0.05f;
+constexpr float displayButtonHeight = 0.5f; // the buttons above and below the display
+constexpr float dragUnitsPerRange = 3.0f;   // an encoder's whole range: three pads' height of drag
 
 bool isArrow(Role r)
 {
@@ -108,12 +111,19 @@ juce::String VirtualPush::labelFor(ButtonId id)
     return {};
 }
 
+int VirtualPush::encoderCountFor(int n) noexcept
+{
+    return n <= 0 ? 0 : n <= 12 ? 8 : n <= 24 ? 16 : 32;
+}
+
 VirtualPush::VirtualPush(ui::EngineStateFeed& f, Settings settings)
-    : feed(f), config(settings), caps(presets::virtualPush(settings.rows, settings.columns))
+    : feed(f), config(settings),
+      caps(presets::virtualPush(settings.rows, settings.columns, encoderCountFor(settings.encoders)))
 {
     caps.velocity = config.fixedVelocity <= 0; // a fixed velocity plays as it is, with no curve
     config.rows = caps.rows;
     config.columns = caps.columns;
+    config.encoders = caps.encoders;
     frame = LedFrame::blank(caps);
     setTitle("Virtual Push");
     setDescription("An on-screen controller: pads, scene and track buttons, transport and modes. Right-click latches a pad or button.");
@@ -128,15 +138,27 @@ VirtualPush::Layout VirtualPush::layoutFor(const SurfaceCapabilities& c, juce::R
     Layout l;
     const float stripUnits = c.touchStrip ? stripWidth + gapUnits : 0.0f;
     const float widthUnits = leftWidth + gapUnits + stripUnits + static_cast<float>(c.columns) + gapUnits + sceneWidth;
-    const float heightUnits = statusHeight + gapUnits + static_cast<float>(c.rows) + gapUnits + trackHeight;
+    // The display, as wide as everything below it (its words need the room), and the buttons
+    // above and below it.
+    const bool display = c.encoders > 0 && c.hasDisplay();
+    const float displayUnits = display ? DisplayRenderer::heightFor(widthUnits, c.encoders, c.cellsAcross()) : 0.0f;
+    const float topUnits = display ? displayButtonHeight * 2.0f + displayUnits + gapUnits : 0.0f;
+    const float heightUnits = topUnits + statusHeight + gapUnits + static_cast<float>(c.rows) + gapUnits + trackHeight;
     const float u = std::max(0.0f, std::min(bounds.getWidth() / widthUnits, bounds.getHeight() / heightUnits));
     l.unit = u;
     // Centred across, at the top: the room left over is below it.
     const juce::Point<float> origin{bounds.getCentreX() - widthUnits * u * 0.5f, bounds.getY()};
+    l.used = {origin.x, origin.y, widthUnits * u, heightUnits * u};
     const float gridX = origin.x + (leftWidth + gapUnits + stripUnits) * u;
-    const float gridY = origin.y + (statusHeight + gapUnits) * u;
-    l.status = juce::Rectangle<float>(gridX, origin.y, static_cast<float>(c.columns) * u, statusHeight * u)
-                   .reduced(u * buttonInset, 0.0f);
+    const float gridY = origin.y + (topUnits + statusHeight + gapUnits) * u;
+    const float gridWidth = static_cast<float>(c.columns) * u;
+    l.status = juce::Rectangle<float>(gridX, origin.y + topUnits * u, gridWidth, statusHeight * u).reduced(u * buttonInset, 0.0f);
+    if (display)
+    {
+        l.display = juce::Rectangle<float>(origin.x, origin.y + displayButtonHeight * u, widthUnits * u, displayUnits * u);
+        l.encoders = DisplayRenderer::layoutFor(l.display, c.encoders, c.cellsAcross()).cells;
+    }
+    const float cellWidth = l.display.getWidth() / static_cast<float>(std::max(1, c.cellsAcross()));
     if (c.touchStrip)
         l.strip = juce::Rectangle<float>(origin.x + (leftWidth + gapUnits) * u, gridY, stripWidth * u, static_cast<float>(c.rows) * u)
                       .reduced(u * buttonInset, u * padInset);
@@ -162,6 +184,12 @@ VirtualPush::Layout VirtualPush::layoutFor(const SurfaceCapabilities& c, juce::R
         else if (id.role == Role::trackSelect)
             b.bounds = juce::Rectangle<float>(gridX + static_cast<float>(id.index) * u, gridBottom + gapUnits * u, u, trackHeight * u)
                            .reduced(u * buttonInset);
+        else if (id.role == Role::displayUpper || id.role == Role::displayLower)
+        {
+            const float y = id.role == Role::displayUpper ? origin.y : l.display.getBottom();
+            b.bounds = juce::Rectangle<float>(origin.x + static_cast<float>(id.index) * cellWidth, y, cellWidth, displayButtonHeight * u)
+                           .reduced(u * buttonInset);
+        }
         else
             for (std::size_t row = 0; row < leftPanel.size(); ++row)
                 if (leftPanel[row].first == id.role || leftPanel[row].second == id.role)
@@ -194,6 +222,9 @@ VirtualPush::Hit VirtualPush::hitTest(juce::Point<float> p) const
             return {-1, static_cast<int>(i)};
     if (places.strip.contains(p))
         return {-1, -1, true};
+    for (std::size_t i = 0; i < places.encoders.size(); ++i)
+        if (places.encoders[i].contains(p))
+            return {-1, -1, false, static_cast<int>(i)};
     return {};
 }
 
@@ -208,6 +239,12 @@ float VirtualPush::pressureFor(juce::Point<float> pressedAt, juce::Point<float> 
     if (penPressure >= 0.0f)
         return juce::jlimit(0.0f, 1.0f, penPressure);
     return juce::jlimit(0.0f, 1.0f, (pressedAt.y - p.y) / std::max(1.0f, places.unit));
+}
+
+float VirtualPush::stepsForDrag(float pixels, bool fine) const
+{
+    const float range = std::max(1.0f, places.unit * dragUnitsPerRange);
+    return pixels / range * static_cast<float>(caps.encoderResolution) / (fine ? 10.0f : 1.0f);
 }
 
 float VirtualPush::velocityAt(int pad, juce::Point<float> p) const
@@ -244,6 +281,12 @@ void VirtualPush::showText(const SurfaceText& t)
 {
     words = t;
     repaint(); // the labels can change on every pad at once (a new layout)
+}
+
+void VirtualPush::showDisplay(const DisplayFrame& f)
+{
+    screen = f;
+    repaint(places.display.getSmallestIntegerContainer().expanded(1));
 }
 
 void VirtualPush::updateAnimator()
@@ -294,6 +337,8 @@ juce::Rectangle<int> VirtualPush::areaOf(const Target& t) const
         return places.buttons[static_cast<std::size_t>(t.button)].bounds.getSmallestIntegerContainer().expanded(2);
     if (t.strip)
         return places.strip.getSmallestIntegerContainer().expanded(2);
+    if (t.encoder >= 0)
+        return places.display.getSmallestIntegerContainer().expanded(1);
     return {};
 }
 
@@ -338,6 +383,9 @@ void VirtualPush::paint(juce::Graphics& g)
         }
     }
 
+    if (!places.display.isEmpty() && places.display.intersects(clip))
+        DisplayRenderer::draw(g, screen, places.display, caps.cellsAcross(), t);
+
     if (!places.status.isEmpty() && places.status.intersects(clip))
     {
         g.setColour(t.text);
@@ -375,7 +423,8 @@ void VirtualPush::paint(juce::Graphics& g)
         g.setColour(ink.withMultipliedAlpha(led.isOff() ? 0.6f : 1.0f));
         if (isArrow(b.id.role))
             arrow(g, b.bounds, b.id.role);
-        else if (b.id.role != Role::scene && b.id.role != Role::trackSelect)
+        else if (b.id.role != Role::scene && b.id.role != Role::trackSelect && b.id.role != Role::displayUpper &&
+                 b.id.role != Role::displayLower) // the display labels those
         {
             g.setFont(t.font(std::min(t.fontSmall, b.bounds.getHeight() * 0.42f)));
             g.drawFittedText(b.label, b.bounds.reduced(2.0f).toNearestInt(), juce::Justification::centred, 2, 0.7f);
@@ -422,6 +471,15 @@ void VirtualPush::release(const Target& t)
 void VirtualPush::mouseDown(const juce::MouseEvent& e)
 {
     const auto hit = hitTest(e.position);
+    if (hit.encoder >= 0)
+    {
+        Target target;
+        target.encoder = hit.encoder;
+        target.lastY = e.position.y;
+        active[e.source.getIndex()] = target;
+        deliver(SurfaceInput::encoderTouch(hit.encoder));
+        return;
+    }
     if (hit.pad < 0 && hit.button < 0 && !hit.strip)
         return;
     const Target target{hit.pad, hit.button, hit.strip, e.position};
@@ -458,6 +516,17 @@ void VirtualPush::mouseDrag(const juce::MouseEvent& e)
     if (it == active.end())
         return;
     auto& target = it->second;
+    if (target.encoder >= 0)
+    {
+        target.steps += stepsForDrag(target.lastY - e.position.y, e.mods.isShiftDown());
+        target.lastY = e.position.y;
+        if (const int whole = static_cast<int>(target.steps); whole != 0)
+        {
+            target.steps -= static_cast<float>(whole);
+            deliver(SurfaceInput::encoderTurn(target.encoder, whole));
+        }
+        return;
+    }
     if (target.strip)
     {
         stripShown = stripAt(e.position);
@@ -481,8 +550,25 @@ void VirtualPush::mouseUp(const juce::MouseEvent& e)
     {
         const auto target = it->second;
         active.erase(it);
-        release(target);
+        if (target.encoder >= 0)
+            deliver(SurfaceInput::encoderRelease(target.encoder));
+        else
+            release(target);
     }
+}
+
+void VirtualPush::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
+{
+    const auto hit = hitTest(e.position);
+    if (hit.encoder < 0 || wheel.deltaY == 0.0f)
+    {
+        juce::Component::mouseWheelMove(e, wheel);
+        return;
+    }
+    // A notch (about a tenth) moves a fortieth of the range; at least a step.
+    const float exact = wheel.deltaY * 0.25f * static_cast<float>(caps.encoderResolution) / (e.mods.isShiftDown() ? 10.0f : 1.0f);
+    const int steps = exact > 0.0f ? std::max(1, juce::roundToInt(exact)) : std::min(-1, juce::roundToInt(exact));
+    deliver(SurfaceInput::encoderTurn(hit.encoder, steps));
 }
 
 } // namespace lattice::control

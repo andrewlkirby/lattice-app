@@ -69,32 +69,42 @@ TEST_CASE("Virtual Push: at every size its pads are square, inside its bounds, a
 {
     for (const auto& [rows, columns] : {std::pair{8, 8}, {8, 12}, {16, 16}, {4, 4}, {4, 16}, {16, 4}})
         for (const auto& bounds : {juce::Rectangle<float>(0, 0, 900, 600), {0, 0, 400, 900}, {10, 20, 1920, 400}})
-        {
-            INFO(rows << "x" << columns << " in " << bounds.toString());
-            const auto caps = control::presets::virtualPush(rows, columns);
-            const auto l = VirtualPush::layoutFor(caps, bounds);
-            REQUIRE(l.pads.size() == static_cast<std::size_t>(rows * columns));
-            REQUIRE(l.buttons.size() == caps.buttons.size());
-            CHECK(l.unit > 0.0f);
-            std::vector<juce::Rectangle<float>> all = l.pads;
-            CHECK_FALSE(l.strip.isEmpty());
-            CHECK_FALSE(l.status.isEmpty());
-            all.push_back(l.strip);
-            all.push_back(l.status);
-            for (const auto& b : l.buttons)
+            for (const int encoders : {0, 8, 16, 32})
             {
-                CHECK_FALSE(b.bounds.isEmpty()); // every role has a place
-                all.push_back(b.bounds);
+                INFO(rows << "x" << columns << ", " << encoders << " encoders, in " << bounds.toString());
+                const auto caps = control::presets::virtualPush(rows, columns, encoders);
+                const auto l = VirtualPush::layoutFor(caps, bounds);
+                REQUIRE(l.pads.size() == static_cast<std::size_t>(rows * columns));
+                REQUIRE(l.buttons.size() == caps.buttons.size());
+                CHECK(l.unit > 0.0f);
+                std::vector<juce::Rectangle<float>> all = l.pads;
+                CHECK_FALSE(l.strip.isEmpty());
+                CHECK_FALSE(l.status.isEmpty());
+                all.push_back(l.strip);
+                all.push_back(l.status);
+                // The display: a cell for each encoder, inside it; a button above and below each column.
+                CHECK(l.display.isEmpty() == (encoders == 0));
+                REQUIRE(l.encoders.size() == static_cast<std::size_t>(encoders));
+                for (const auto& cell : l.encoders)
+                    CHECK(l.display.expanded(0.01f).contains(cell));
+                CHECK(caps.countOf(Role::displayUpper) == (encoders > 0 ? caps.cellsAcross() : 0));
+                CHECK(caps.countOf(Role::displayLower) == caps.countOf(Role::displayUpper));
+                if (encoders > 0)
+                    all.push_back(l.display);
+                for (const auto& b : l.buttons)
+                {
+                    CHECK_FALSE(b.bounds.isEmpty()); // every role has a place
+                    all.push_back(b.bounds);
+                }
+                for (const auto& p : l.pads)
+                    CHECK(std::abs(p.getWidth() - p.getHeight()) < 0.01f);
+                for (std::size_t i = 0; i < all.size(); ++i)
+                {
+                    CHECK(bounds.expanded(0.5f).contains(all[i]));
+                    for (std::size_t j = i + 1; j < all.size(); ++j)
+                        CHECK_FALSE(all[i].intersects(all[j]));
+                }
             }
-            for (const auto& p : l.pads)
-                CHECK(std::abs(p.getWidth() - p.getHeight()) < 0.01f);
-            for (std::size_t i = 0; i < all.size(); ++i)
-            {
-                CHECK(bounds.expanded(0.5f).contains(all[i]));
-                for (std::size_t j = i + 1; j < all.size(); ++j)
-                    CHECK_FALSE(all[i].intersects(all[j]));
-            }
-        }
 }
 
 TEST_CASE("Virtual Push: clicks press pads and buttons; a right-click latches until clicked again", "[control][virtual]")
@@ -183,6 +193,56 @@ TEST_CASE("Virtual Push: the strip bends and springs back; dragging up from a he
     text.status = "Colundi";
     push.showText(text);
     CHECK(push.text() == text);
+}
+
+TEST_CASE("Virtual Push: its display's cells are the encoders: pressed to touch, dragged or scrolled to turn", "[control][virtual]")
+{
+    ShellFixture f;
+    VirtualPush push(f.shell->feed(), {.rows = 8, .columns = 8, .fixedVelocity = 0, .encoders = 16});
+    push.setSize(900, 900);
+    CHECK(push.capabilities().encoders == 16);
+    CHECK(push.capabilities().cellsAcross() == 8); // two rows of 8
+    std::vector<SurfaceInput> got;
+    push.onInput = [&](const SurfaceInput& in) { got.push_back(in); };
+    const auto& l = push.layout();
+    REQUIRE(l.encoders.size() == 16);
+    CHECK(l.encoders[8].getY() > l.encoders[0].getY());
+    CHECK(push.hitTest(l.encoders[11].getCentre()).encoder == 11);
+
+    const auto at = l.encoders[3].getCentre();
+    const float range = l.unit * 3.0f; // a value's whole range
+    push.mouseDown(mouseAt(push, at));
+    push.mouseDrag(mouseAt(push, at.translated(0.0f, -range * 0.5f)));
+    push.mouseDrag(mouseAt(push, at.translated(0.0f, -range * 0.5f - 0.1f))); // less than a step: kept for later
+    push.mouseDrag(mouseAt(push, at.translated(0.0f, -range * 0.25f)));       // back down
+    push.mouseUp(mouseAt(push, at));
+    REQUIRE(got.size() == 4);
+    CHECK(got[0].kind == SurfaceInput::Kind::encoderTouch);
+    CHECK(got[0].encoder == 3);
+    CHECK(got[1].kind == SurfaceInput::Kind::encoderTurn);
+    const int resolution = push.capabilities().encoderResolution;
+    CHECK(std::abs(got[1].delta - resolution / 2) <= 1);
+    CHECK(got[2].kind == SurfaceInput::Kind::encoderTurn);
+    CHECK(got[2].delta < 0);
+    CHECK(got[3].kind == SurfaceInput::Kind::encoderRelease);
+    CHECK(std::abs(push.stepsForDrag(range, true) - static_cast<float>(resolution) / 10.0f) < 0.01f); // Shift: finer
+
+    got.clear();
+    juce::MouseWheelDetails wheel{};
+    wheel.deltaY = 0.1f;
+    push.mouseWheelMove(mouseAt(push, l.encoders[5].getCentre()), wheel);
+    wheel.deltaY = -0.001f;
+    push.mouseWheelMove(mouseAt(push, l.encoders[5].getCentre()), wheel);
+    REQUIRE(got.size() == 2);
+    CHECK(got[0].encoder == 5);
+    CHECK(got[0].delta == juce::roundToInt(0.1f * 0.25f * static_cast<float>(resolution)));
+    CHECK(got[1].delta == -1); // at least a step
+
+    // What the controller shows is drawn there.
+    DisplayFrame frame;
+    frame.title = "Bass";
+    push.showDisplay(frame);
+    CHECK(push.displayed() == frame);
 }
 
 TEST_CASE("Shell: Virtual Push shows docked at the right, or in its own window, and follows its settings", "[control][virtual][ui]")

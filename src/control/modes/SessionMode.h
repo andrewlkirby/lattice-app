@@ -57,6 +57,11 @@ public:
     std::optional<std::pair<int, int>> slotAt(int row, int column) const;
     /** The track a track button or track pad acts on, or -1. */
     int trackOfColumn(int gridColumn) const;
+    /** What a track button does to a track: selects it, or stops, mutes or solos it while Stop
+        Clip, Mute or Solo is held (Mix mode's buttons along the display do the same). */
+    void pressTrack(int track);
+    /** A track button's light, for what a press would do now. */
+    LedState trackLed(int track) const;
 
     /** Slot pads launch (or stop) on the fast path, when SessionController::directLaunch says
         they can, and scene buttons (or the grid's scene column) launch their scenes; a held
@@ -72,7 +77,6 @@ private:
         solo
     };
     Modifier heldModifier() const;
-    void pressTrack(int track);
     void pressScene(int scene);
     void pressSlot(int padIndex, int track, int scene, bool played);
     void navigate(int dx, int dy);
@@ -82,7 +86,6 @@ private:
 
     LedState slotLed(int track, int scene) const;
     LedState sceneLed(int scene) const;
-    LedState trackLed(int track) const;
     void renderOverview(LedFrame& frame) const;
 
     int column0 = 0, scene0 = 0;

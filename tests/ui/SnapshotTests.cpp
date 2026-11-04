@@ -1,7 +1,8 @@
 // Render snapshots (docs/05-m4-ui.md, Tests 5): the session grid, the Colundi piano-roll ruler,
-// the EQ curve, the Drum Rack pads, the macro section and Virtual Push (docs/06-m5-controllers.md,
-// Tests 6), from the window as the app builds it,
-// in every theme at 100% and 200% zoom, compared with reference images (support/Snapshots.h).
+// the EQ curve, the Drum Rack pads, the macro section, Virtual Push (docs/06-m5-controllers.md,
+// Tests 6) in Session, Note and Device modes, from the window as the app builds it, and the
+// controller display renderer at Push's size, in every theme at 100% and 200% zoom, compared
+// with reference images (support/Snapshots.h).
 //
 // "[.ui-snapshot]" also writes the whole window and each component at 50%, 100%, 150%, 200% and
 // 250% in every theme, drawn as the app draws (its own renderer), to LATTICE_SNAPSHOT_DIR, for
@@ -10,6 +11,7 @@
 #include "devices/effects/EqEight.h"
 #include "devices/racks/Rack.h"
 #include "devices/racks/RackEditing.h"
+#include "control/display/DisplayRenderer.h"
 #include "control/modes/NoteMode.h"
 #include "control/surface/SurfaceController.h"
 #include "support/Snapshots.h"
@@ -212,6 +214,25 @@ const std::vector<Subject>& subjects()
              controller->refresh();
              return std::pair<juce::Component*, juce::Rectangle<int>>{push, push->getLocalBounds()};
          }},
+        {"virtual-push-device",
+         [](Fixture& f) {
+             // Device mode on the rack with 16 macros: its first page of 8 (named and coloured
+             // macros), the pages below, and the second encoder touched (shown large).
+             f.shell->setVirtualPushDocked(true);
+             f.shell->setVirtualPushVisible(true);
+             f.shell->selection().set({Kind::track, 3, 0});
+             for (const auto& d : LiveSet::chainOf(f.session.set().track(3)))
+                 if (RackDevice::isRackType(d[ids::deviceType].toString()))
+                     f.shell->selection().selectDevice(LiveSet::idOf(d));
+             auto* controller = f.shell->virtualPushController();
+             controller->setMode(control::ModeKind::session);
+             controller->setMode(control::ModeKind::device);
+             f.settle();
+             controller->handle(control::SurfaceInput::encoderTouch(1));
+             controller->refresh();
+             auto* push = f.shell->virtualPushView();
+             return std::pair<juce::Component*, juce::Rectangle<int>>{push, push->getLocalBounds()};
+         }},
     };
     return all;
 }
@@ -220,7 +241,78 @@ juce::String themeTag(const Theme& theme)
 {
     return theme.name.removeCharacters(" ").toLowerCase();
 }
+
+/** Display frames as Device and Mix modes fill them, for the renderer's snapshots. */
+std::vector<std::pair<const char*, control::DisplayFrame>> displayFrames()
+{
+    using control::DisplayCell;
+    control::DisplayFrame device;
+    device.title = "Bass > Synth";
+    device.upper = {{.label = "Synth", .colour = 0x2060e0, .selected = true}, {.label = "EQ Eight"}, {.label = "Reverb"}};
+    const char* names[] = {"Cutoff", "Resonance", "Drive", "Env Amount", "Key Track", "Pan", "Glide", "Volume"};
+    const char* values[] = {"1.20 kHz", "40 %", "3.0 dB", "+24 st", "50 %", "12 L", "0 ms", "-6.0 dB"};
+    const float positions[] = {0.62f, 0.4f, 0.15f, 0.8f, 0.5f, 0.38f, 0.0f, 0.75f};
+    for (int i = 0; i < 8; ++i)
+    {
+        DisplayCell c;
+        c.name = names[i];
+        c.value = values[i];
+        c.position = positions[i];
+        c.bipolar = i == 3 || i == 5;
+        c.detail = "Low - High";
+        device.cells.push_back(c);
+    }
+    device.lower = {{.label = "On", .selected = true},
+                    {.label = "Oscillator"},
+                    {.label = "Filter", .selected = true},
+                    {.label = "Envelopes"},
+                    {.label = "LFO"}};
+
+    auto touched = device;
+    touched.detail = 0;
+    touched.cells[0].detail = "20 Hz - 20.0 kHz";
+
+    control::DisplayFrame mix;
+    mix.upper = {{.label = "Volume", .selected = true}, {.label = "Pan"}, {.label = "Send A"}, {.label = "Track"}};
+    const std::uint32_t colours[] = {0x2060e0, 0xe0a020, 0x30c060, 0xc04080};
+    for (int i = 0; i < 4; ++i)
+    {
+        DisplayCell c;
+        c.caption = juce::String("Track ") + juce::String(i + 1);
+        c.colour = colours[i];
+        c.name = "Volume";
+        c.value = juce::String(-3 * i) + ".0 dB";
+        c.position = 0.85f - 0.1f * static_cast<float>(i);
+        c.meter = 0.95f - 0.25f * static_cast<float>(i);
+        c.selected = i == 1;
+        mix.cells.push_back(c);
+        mix.lower.push_back({.label = c.caption, .colour = c.colour, .selected = i == 1});
+    }
+    mix.cells.resize(8);
+
+    control::DisplayFrame empty;
+    empty.title = "Audio 3";
+    empty.message = "No devices";
+    empty.cells.resize(8);
+    return {{"display-device", device}, {"display-touched", touched}, {"display-mix", mix}, {"display-empty", empty}};
+}
 } // namespace
+
+TEST_CASE("Snapshots: the controller display renderer at Push's size and twice it, in every theme", "[ui][snapshot][display]")
+{
+    // A Push 2 display (960 x 160, a cell an encoder), drawn as the driver will send it.
+    for (const auto& [name, frame] : displayFrames())
+        for (const auto* theme : {&Theme::dark(), &Theme::light(), &Theme::highContrast()})
+            for (const int scale : {1, 2})
+            {
+                const auto tag = juce::String(name) + "-" + themeTag(*theme) + "-" + juce::String(scale * 100);
+                CAPTURE(tag);
+                const auto image = control::DisplayRenderer::render(frame, 960 * scale, 160 * scale, 8, *theme);
+                const auto problem = compareWithReference(image.convertedToFormat(juce::Image::ARGB), tag);
+                INFO(problem);
+                CHECK(problem.isEmpty());
+            }
+}
 
 TEST_CASE("Snapshots: the key components match their reference images in every theme at 100% and 200%", "[ui][snapshot]")
 {
