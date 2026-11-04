@@ -295,6 +295,65 @@ Playing pads must feel as tight as a dedicated instrument. **Pad-to-sound latenc
 #### 5d: Drum, the step sequencers, and the Clip and Browse modes
 - The Drum layout and its zones, the melodic step sequencer, and the Clip and Browse modes, with previews on the M4 preview bus.
 
+##### As built (5d, 2026-11-04)
+- **Where things are:**
+  - `src/ui/clip/Steps` (a clip's notes as steps; a held step's bindings);
+  - `src/ui/clip/ClipBindings` (the Clip view's values, shared with Clip mode);
+  - `src/ui/clip/ClipActions` (Double Loop, Quantize and the set's Quantize and Fixed Length settings);
+  - `src/control/modes/StepSequencer` (`SequencerZones`, the steps and the loop selector), `ClipMode`, `BrowseMode`, `SelectedClip.h`;
+  - `src/control/surface/BrowseHost.h` (what Browse mode drives; the shell implements it).
+- **Steps (`ui::steps`):**
+  - A note shows on the step nearest its start, so a note nudged off the line, or drawn off it in the piano roll, still shows on its step. A step can be on, muted, tied (a longer note sounds through it) or off.
+  - Pressing an empty step adds a note at once, a step long at velocity 100. A step with notes loses them when it's let go, unless it was held for half a second or edited meanwhile, so holding a step to edit it never deletes it. With no clip, the first step makes one in the selected slot, a page long. Each is one undo step.
+  - **Held steps:** while steps are held, the encoders and the display are theirs: Velocity, Length (in steps) and Nudge (up to just under half a step either way, so a note stays on its step). The values go through `notes:<clip>/<step length>/<pitch>:<step>,…/<field>` addresses, so a turn is one undo step, as every encoder's is. Several held steps are edited together.
+- **Which clip:** the selected slot's, or (when it's empty) the clip the track is playing. That's the Clip view's clip too, so the screen and the controller edit the same one. The step sequencers, Clip mode and the Double Loop and Quantize buttons all use it.
+- **Zones (`SequencerZones`), from the grid's size:**
+  - **Drum:** the steps along the top half (32 on 8 × 8, 48 on 8 × 12, 128 on 16 × 16), with the pads below on the left (4 × 4 on 8 × 8) and the loop selector on the right. Layout switches to the pads filling the grid (64 on 8 × 8). A grid smaller than 6 × 6 (4 × 4) shows the pads, or the steps over a row of pages, and Layout switches between them.
+  - **Melodic:** a row for each note above, a column for each step, and the loop selector along the bottom (one row, or a row for every 8).
+  - A test checks that every candidate device's grid is covered exactly once.
+- **Drum layout:** used on any track whose chain has a Drum Rack.
+  - **Pads:** they play on the fast path. The last one played is the one whose steps are shown, and it lights white. Pads with something on them are in their chain's colour (or the track's).
+  - **Moving the pads:** the first pad on the grid is the rack's first pad on show, shared with the Device view. Octave up and down move the pads a page, and with Shift a row.
+- **Melodic sequencer:** Layout cycles through the tuning's layouts and then the sequencer, so Colundi goes Table, Sequencer, and 12-TET goes In Key, Chromatic, Table, Sequencer. The Scale menu has it too.
+  - **Rows:** each row is the layout's next note: a table entry (Colundi), a scale degree (In Key) or a semitone. Rows with anchors (or the root) are tinted, and unplayable rows are dark. Each row's first pad is labelled with its note.
+  - **Moving the rows:** Octave up and down move the rows a page of rows (a table) or an octave; the arrows move them one row.
+- **Step length:** 1/4, 1/8, 1/8T, 1/16 (the default), 1/16T or 1/32, chosen in the Scale menu and kept with the track's layout.
+- **Loop selector:** a pad per page. Pressing a page loops it, and holding one while pressing another loops from the first to the second (one undo step). Shift+page only shows that page. While the clip plays, the page in view follows the playhead until a page is chosen with Shift.
+- **Lights:** steps are lit in the track's colour, muted and tied steps dimmer. Empty steps inside the loop are dim, and steps past the loop end are dark. The playing step is green, and a held step is white.
+- **Clip mode:** an encoder mode, like Device and Mix.
+  - **Values:** the same bindings as the Clip view's panel (`clip:<id>/<value>` addresses), so a turn is the same undo step, with the same name, as a drag on the panel.
+  - **Pages:** Loop (on, start, position, length, end), Launch (mode, quantization, legato, follow actions A and B, chance, time), Signature, and Quantize (the grid, the amount, and Fixed Length). They are packed into pages as wide as the encoders: three pages on 8 encoders, two on 16, one on 32.
+  - **Upper buttons:** choose the page.
+  - **Lower buttons:** Double Loop (Push's: the notes copied after the loop and the loop doubled), Loop × 2, Loop ÷ 2, Quantize, and Duplicate (into the next empty slot below, which then gets selected).
+  - **Without encoders:** the columns are faders over a bottom row of the actions, and the scene buttons choose the page.
+- **Global buttons, in any mode:**
+  - **Double Loop and Quantize** act on the selected clip.
+  - **Fixed Length** turns fixed-length recording on and off, back to the length it had. Shift steps through 1, 2, 4, 8 and 16 bars. Each change is undoable.
+  - **Quantize settings:** the grid and amount Quantize uses are kept in the set (not undoable, as a view setting), and Clip mode's Quantize page edits them.
+- **Browse mode:** drives the window's browser (`BrowseHost`). The screen's browser follows it, selecting a row plays its preview on the preview bus as a click does, and Load inserts where the Device view is looking, by its rules. A surface without a browser has no Browse mode, and its button stays dark.
+  - **Display:** the sources (a quarter of the display) and the rows of the chosen source, as lists (`DisplayList`). Each list keeps its selection in the middle; about five rows fit on a Push.
+  - **Encoders:** the encoders over the sources choose a source, and the rest move along the rows: a row every 10 steps, a page with Shift. An absolute control spans the whole list.
+  - **Upper buttons:** the categories.
+  - **Lower buttons:** Load, Open/Close (a folder, or a device's presets), Back, Preview (on or off, the browser's own switch), and Hot-Swap (the next Load replaces the selected device).
+  - **Without encoders:** the rows go on the grid, a row of pads each. A press selects (and previews) a row, its last pad loads it, the arrows move and open, and the scene buttons choose categories. With encoders, the arrows stay the pad mode's, as in Device and Mix.
+- **Display renderer:** draws lists in place of the cells. Text displays show each list's selection.
+- **Tests:**
+  - **`tests/control/StepSequencerTests.cpp`:**
+    - steps' states, toggling, and the held-step bindings with their undo;
+    - the zones on every grid;
+    - the Drum layout: pads on the fast path, choosing the pad, steps making a clip, removing a step, holding a step, and the undo steps;
+    - the loop selector and Shift, and moving the pads;
+    - held steps taking the encoders and the display;
+    - the melodic sequencer's rows, moves and step lengths;
+    - the playhead while the clip plays.
+  - **`tests/control/ClipBrowseTests.cpp`:**
+    - Clip mode: its pages for 8, 16 and 32 encoders, a turn as one undo step named as the panel's, the actions, the global buttons, Fixed Length, and faders without encoders;
+    - Browse mode, through a real window: categories, scrolling, Load, Open, Back, Preview, hot-swap, and the grid without encoders.
+  - **Snapshots:** `virtual-push-drum`, `virtual-push-clip` and the renderer's `display-browse`. The earlier Virtual Push snapshots were redrawn for the buttons that now light: Layout (it reaches the sequencer), Clip, Fixed Length, Double Loop and Quantize.
+- **Checks:**
+  - All 496 fast tests pass on Windows; all 485 on Linux (warnings as errors), with its snapshot references written and looked at. Callgrind: the engine benchmark -0.88%, the UI benchmark -0.03%.
+  - The user's hands-on check is next.
+
 #### 5e: Generic MIDI controllers
 - The definition schema and loader, the encoder decoders, and the included definitions (all marked unverified).
 - Automatic detection, the Preferences → Controllers tab, how surfaces and MIDI Map work together, and the Surface Monitor.

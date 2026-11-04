@@ -326,9 +326,9 @@ void StepSequencer::encoderTargets(const Target& target, std::vector<juce::Strin
 {
     if (held.empty() || !target.clip.isValid())
         return;
-    const auto steps = heldSteps();
+    const auto on = heldSteps();
     for (const auto field : {steps::Field::velocity, steps::Field::length, steps::Field::nudge})
-        targets.push_back(steps::target(target.clip, steps, target.stepLength, field));
+        targets.push_back(steps::target(target.clip, on, target.stepLength, field));
 }
 
 void StepSequencer::display(const Target& target, DisplayFrame& frame) const

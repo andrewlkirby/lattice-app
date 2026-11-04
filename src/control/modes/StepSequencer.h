@@ -76,7 +76,7 @@ public:
         std::vector<bool> tinted, playable;
     };
 
-    explicit StepSequencer(ModeHost& host) : host(host) {}
+    explicit StepSequencer(ModeHost& h) : host(h) {}
 
     void setZones(const SequencerZones& zones) { area = zones; }
     const SequencerZones& zones() const noexcept { return area; }
