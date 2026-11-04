@@ -59,8 +59,22 @@ struct NoteLayout
     int root = 0;       // 12-TET: 0 = C
     int scale = 0;      // into scales()
     OctaveStep octaveStep = OctaveStep::row;
+    /** The pads are the melodic step sequencer (the layout's notes up its rows) instead of notes
+        to play. */
+    bool sequencer = false;
+    /** A Drum Rack's pads fill the grid (64 on 8x8) instead of sharing it with the steps. */
+    bool drumPads = false;
+    /** The step sequencers' step: an index into stepRates(). */
+    int stepRate = defaultStepRate;
+    /** The melodic sequencer's bottom row: how many entries, degrees or semitones above origin. */
+    int sequencerRow = 0;
 
     static constexpr int maxRowOffset = 32;
+    static constexpr int defaultStepRate = 3; // 1/16
+
+    /** The steps the sequencers offer: (name, length in quarter notes), longest first. */
+    static const std::vector<std::pair<juce::String, double>>& stepRates();
+    double stepLength() const noexcept;
 
     /** The note a pad plays (row 0 at the top, as in the grid), or -1 outside 0..127. */
     int noteAt(int row, int column, int rows) const noexcept;
@@ -78,6 +92,14 @@ struct NoteLayout
     NoteLayout scrolled(int byRows, int rows, int columns) const noexcept;
     /** The root changed, the bottom-left keeps its octave. */
     NoteLayout withRoot(int newRoot) const noexcept;
+
+    /** The melodic sequencer: the note of a row of steps (0: the bottom), one entry, degree or
+        semitone a row, or -1 outside 0..127. */
+    int sequencerNote(int fromBottom) const noexcept;
+    /** The sequencer's rows moved by `rows`, if any of `shown` rows would still play a note. */
+    NoteLayout sequencerMoved(int rows, int shown) const noexcept;
+    /** How far the octave buttons move the sequencer's rows: an octave, or (a table) the rows shown. */
+    int sequencerOctave(int shown) const noexcept;
 
     /** The rows' presets, for this kind and this many columns: (name, rowOffset). */
     static std::vector<std::pair<juce::String, int>> rowPresets(Kind kind, int columns);

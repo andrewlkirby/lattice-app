@@ -1,6 +1,9 @@
 #include "control/modes/NoteMode.h"
 
 #include "core/model/LiveSet.h"
+#include "devices/racks/Rack.h"
+#include "devices/racks/RackEditing.h"
+#include "ui/session/KeyboardFollow.h"
 
 #include <algorithm>
 
@@ -117,6 +120,202 @@ int NoteMode::noteAtPad(int row, int column) const
     return layout().noteAt(row, column, caps().rows);
 }
 
+// --- The step sequencers -----------------------------------------------------------------------------
+
+juce::ValueTree NoteMode::drumRack() const
+{
+    const int t = track();
+    if (t < 0)
+        return {};
+    for (const auto& device : LiveSet::chainOf(host.context().session.set().track(t)))
+        if (device[ids::deviceType].toString() == RackDevice::drumRackId)
+            return device;
+    return {};
+}
+
+NoteMode::Pads NoteMode::pads() const
+{
+    if (track() < 0)
+        return Pads::play;
+    if (drumRack().isValid())
+        return Pads::drum;
+    return layout().sequencer ? Pads::sequencer : Pads::play;
+}
+
+SequencerZones NoteMode::zones() const
+{
+    switch (pads())
+    {
+    case Pads::drum: return SequencerZones::drum(caps().rows, caps().columns, layout().drumPads);
+    case Pads::sequencer: return SequencerZones::melodic(caps().rows, caps().columns);
+    case Pads::play: break;
+    }
+    return {};
+}
+
+int NoteMode::drumStart() const
+{
+    const int start = ui::drumPadPageStart(host.context().session.set(), track());
+    return start >= 0 ? start : 36;
+}
+
+int NoteMode::drumNoteAtPad(int row, int column) const
+{
+    const auto area = zones().pads;
+    if (!area.contains(row, column))
+        return -1;
+    const int fromBottom = area.row + area.rows - 1 - row;
+    const int note = drumStart() + fromBottom * area.columns + (column - area.column);
+    return note >= 0 && note <= 127 ? note : -1;
+}
+
+int NoteMode::drumNote() const
+{
+    const int t = track();
+    if (t < 0)
+        return -1;
+    if (const auto it = drumNotes.find(host.context().session.set().trackId(t)); it != drumNotes.end())
+        return it->second;
+    // None played yet: the first pad on the grid with something on it.
+    const auto rack = drumRack();
+    const auto area = zones().pads;
+    const int start = drumStart();
+    for (int i = 0; i < std::max(16, area.count()); ++i)
+        if (start + i <= 127 && racks::padFor(rack, start + i).isValid())
+            return start + i;
+    return start;
+}
+
+juce::ValueTree NoteMode::sequencedClip() const
+{
+    const int t = track();
+    if (t < 0)
+        return {};
+    auto& c = host.context();
+    const auto& set = c.session.set();
+    const int scene = c.selection.get().scene;
+    if (scene >= 0 && scene < set.numScenes())
+        if (const auto clip = set.clip(t, scene); clip.isValid())
+            return clip;
+    // An empty slot: the clip the track plays, if it plays one.
+    if (const auto id = c.feed.trackPlay(t).playingClipId; id != 0)
+        if (const auto [pt, ps] = set.findClip(id); pt == t)
+            return set.clip(pt, ps);
+    return {};
+}
+
+StepSequencer::Target NoteMode::sequencerTarget() const
+{
+    StepSequencer::Target target;
+    const int t = track();
+    if (t < 0)
+        return target;
+    auto& c = host.context();
+    const auto l = layout();
+    target.track = t;
+    target.scene = juce::jlimit(0, std::max(0, c.session.set().numScenes() - 1), c.selection.get().scene);
+    target.clip = sequencedClip();
+    target.stepLength = l.stepLength();
+    target.colour = trackColour(t);
+    if (pads() == Pads::drum)
+    {
+        target.pitches = {drumNote()};
+        target.oneRow = true;
+        return target;
+    }
+    const auto rc = rowContext(t);
+    for (int k = 0; k < zones().steps.rows; ++k)
+    {
+        const int note = l.sequencerNote(k);
+        target.pitches.push_back(note);
+        const auto row = note >= 0 ? ui::tuningRow(rc, note) : ui::TuningRow{};
+        target.tinted.push_back(note >= 0 && (l.kind == NoteLayout::Kind::table ? row.anchor : l.isRoot(note)));
+        target.playable.push_back(note >= 0 && (!row.unplayable || row.foldsDown));
+    }
+    return target;
+}
+
+std::uint32_t NoteMode::aspects() const
+{
+    // Play and Record; the sequencers' playhead too.
+    return ui::EngineStateFeed::transportAspect | (pads() != Pads::play ? ui::EngineStateFeed::slotsAspect : 0u);
+}
+
+void NoteMode::selectionChanged()
+{
+    steps.reset();
+}
+
+void NoteMode::encoderTargets(std::vector<juce::String>& targets)
+{
+    if (!ownsEncoders())
+        return;
+    steps.setZones(zones());
+    steps.encoderTargets(sequencerTarget(), targets);
+}
+
+void NoteMode::display(DisplayFrame& frame)
+{
+    if (!ownsEncoders())
+        return;
+    steps.setZones(zones());
+    steps.display(sequencerTarget(), frame);
+}
+
+void NoteMode::moveDrum(int direction)
+{
+    auto rack = drumRack();
+    if (!rack.isValid())
+        return;
+    const auto area = zones().pads;
+    const int count = std::max(1, area.count());
+    const int by = host.shiftHeld() ? std::max(1, area.columns) : count;
+    const int start = juce::jlimit(0, std::max(0, 128 - count), drumStart() + direction * by);
+    rack.setProperty(ids::padStart, start, nullptr); // the view's state, as the Device view keeps it
+    host.requestRefresh();
+}
+
+void NoteMode::moveSequencer(int rows)
+{
+    setLayout(layout().sequencerMoved(rows, zones().steps.rows));
+    host.requestRefresh();
+}
+
+void NoteMode::pressLayout()
+{
+    const int t = track();
+    if (t < 0)
+        return;
+    auto l = layout();
+    steps.reset();
+    if (pads() == Pads::drum)
+    {
+        l.drumPads = !l.drumPads;
+        setLayout(l);
+        return;
+    }
+    // The tuning's layouts, then the sequencer (in the first of them).
+    const auto tuning = tuningOf(t);
+    const auto kinds = NoteLayout::kindsFor(*tuning);
+    if (l.sequencer)
+    {
+        l.sequencer = false;
+        l = l.withKind(kinds.front(), *tuning);
+    }
+    else
+    {
+        const auto at = static_cast<std::size_t>(std::find(kinds.begin(), kinds.end(), l.kind) - kinds.begin());
+        if (at + 1 < kinds.size())
+            l = l.withKind(kinds[at + 1], *tuning);
+        else
+        {
+            l = l.withKind(kinds.front(), *tuning);
+            l.sequencer = true;
+        }
+    }
+    setLayout(l);
+}
+
 // --- Input ------------------------------------------------------------------------------------------
 
 bool NoteMode::handle(const SurfaceInput& input)
@@ -132,8 +331,23 @@ bool NoteMode::handle(const SurfaceInput& input)
             pressMenu(input.row, input.column);
             return true;
         }
-        const int note = noteAtPad(input.row, input.column);
+        const auto p = pads();
         const int index = input.row * columns + input.column;
+        int note = -1;
+        if (p == Pads::play)
+            note = noteAtPad(input.row, input.column);
+        else if (p == Pads::drum && zones().pads.contains(input.row, input.column))
+        {
+            note = drumNoteAtPad(input.row, input.column);
+            if (note >= 0)
+                drumNotes[host.context().session.set().trackId(track())] = note; // its steps are shown
+        }
+        else
+        {
+            steps.setZones(zones());
+            steps.press(sequencerTarget(), input.row, input.column);
+            return true;
+        }
         if (note >= 0 && !padNotes.contains(index))
         {
             ++pressedNotes[static_cast<std::size_t>(note)];
@@ -149,6 +363,11 @@ bool NoteMode::handle(const SurfaceInput& input)
             auto& count = pressedNotes[static_cast<std::size_t>(it->second)];
             count = std::max(0, count - 1);
             padNotes.erase(it);
+        }
+        else if (!menu && pads() != Pads::play)
+        {
+            steps.setZones(zones());
+            steps.release(sequencerTarget(), input.row, input.column);
         }
         return true;
     }
@@ -185,6 +404,8 @@ bool NoteMode::handle(const SurfaceInput& input)
         case Role::navUp:
             if (menu)
                 menuScroll = std::max(0, menuScroll - 1);
+            else if (pads() == Pads::sequencer)
+                moveSequencer(1);
             else
                 moveGrid(1);
             host.requestRefresh();
@@ -195,6 +416,10 @@ bool NoteMode::handle(const SurfaceInput& input)
                 const auto settings = menuSettings();
                 menuScroll = std::min(menuScroll + 1, std::max(0, menuRowsNeeded(settings) - caps().rows));
             }
+            else if (pads() == Pads::sequencer)
+            {
+                moveSequencer(-1);
+            }
             else
             {
                 moveGrid(-1);
@@ -204,19 +429,7 @@ bool NoteMode::handle(const SurfaceInput& input)
         case Role::navLeft: stepTrack(-1); return true;
         case Role::navRight: stepTrack(1); return true;
         case Role::scale: setMenuShown(!menu); return true;
-        case Role::layout:
-        {
-            const int t = track();
-            if (t < 0)
-                return true;
-            const auto tuning = tuningOf(t);
-            const auto kinds = NoteLayout::kindsFor(*tuning);
-            const auto l = layout();
-            const auto at = std::find(kinds.begin(), kinds.end(), l.kind);
-            const auto next = kinds[static_cast<std::size_t>(((at - kinds.begin()) + 1) % static_cast<long>(kinds.size()))];
-            setLayout(l.withKind(next, *tuning));
-            return true;
-        }
+        case Role::layout: pressLayout(); return true;
         case Role::trackSelect:
             if (const int t = host.trackOfColumn(id.index); t >= 0)
                 selectTrack(t);
@@ -238,7 +451,17 @@ void NoteMode::moveGrid(int direction)
 {
     if (track() < 0)
         return;
+    if (pads() == Pads::drum)
+    {
+        moveDrum(direction);
+        return;
+    }
     auto l = layout();
+    if (l.sequencer)
+    {
+        moveSequencer(host.shiftHeld() ? direction : direction * l.sequencerOctave(zones().steps.rows));
+        return;
+    }
     if (host.shiftHeld())
     {
         // One note: a table entry or a semitone (In Key: the root, so the scale moves with it).
@@ -286,6 +509,7 @@ void NoteMode::enter()
     pressedNotes.fill(0);
     padNotes.clear();
     menu = false;
+    steps.reset();
 }
 
 void NoteMode::leave()
@@ -294,6 +518,7 @@ void NoteMode::leave()
     padNotes.clear();
     menu = false;
     stripLast = -1.0f;
+    steps.reset();
 }
 
 void NoteMode::setMenuShown(bool shown)
@@ -310,6 +535,21 @@ void NoteMode::padMap(PadNoteMap& map)
 {
     if (menu || track() < 0)
         return; // the menu's pads, or nothing to play: the message thread's
+    if (pads() == Pads::drum)
+    {
+        // The drum pads play; the steps and the loop selector are the message thread's.
+        for (int r = 0; r < map.rows; ++r)
+            for (int c = 0; c < map.columns; ++c)
+                if (const int note = drumNoteAtPad(r, c); note >= 0)
+                {
+                    auto& pad = map.pad(r, c);
+                    pad.kind = PadNoteMap::Pad::Kind::note;
+                    pad.note = static_cast<std::uint8_t>(note);
+                }
+        return;
+    }
+    if (pads() == Pads::sequencer)
+        return;
     const auto l = layout();
     const auto rc = rowContext(track());
     for (int r = 0; r < map.rows; ++r)
@@ -332,9 +572,19 @@ void NoteMode::render(LedFrame& frame)
     const auto lit = LedState::solid(colours.white);
     const auto available = LedState::solid(dimmed(colours.white, colours.dim));
 
+    const auto p = pads();
     if (menu)
     {
         renderMenu(frame);
+    }
+    else if (p == Pads::drum)
+    {
+        renderDrum(frame, t);
+    }
+    else if (p == Pads::sequencer)
+    {
+        steps.setZones(zones());
+        steps.render(sequencerTarget(), frame);
     }
     else if (t >= 0)
     {
@@ -366,8 +616,19 @@ void NoteMode::render(LedFrame& frame)
 
     // Buttons.
     const auto l = layout();
-    const bool canDown = t >= 0 && !menu && l.canShift(-1, rows, columns);
-    const bool canUp = t >= 0 && !menu && l.canShift(1, rows, columns);
+    bool canDown = t >= 0 && !menu && l.canShift(-1, rows, columns);
+    bool canUp = t >= 0 && !menu && l.canShift(1, rows, columns);
+    if (p == Pads::drum)
+    {
+        canDown = !menu && drumStart() > 0;
+        canUp = !menu && drumStart() + zones().pads.count() < 128;
+    }
+    else if (p == Pads::sequencer)
+    {
+        const int shownRows = zones().steps.rows;
+        canDown = !menu && !(l.sequencerMoved(-1, shownRows) == l);
+        canUp = !menu && !(l.sequencerMoved(1, shownRows) == l);
+    }
     setButton(frame, {Role::octaveUp, 0}, host.isHeld(Role::octaveUp) ? lit : canUp ? available : LedState::off());
     setButton(frame, {Role::octaveDown, 0}, host.isHeld(Role::octaveDown) ? lit : canDown ? available : LedState::off());
     setButton(frame, {Role::navUp, 0}, menu ? (menuScroll > 0 ? available : LedState::off()) : canUp ? available : LedState::off());
@@ -383,7 +644,7 @@ void NoteMode::render(LedFrame& frame)
     setButton(frame, {Role::navLeft, 0}, available);
     setButton(frame, {Role::navRight, 0}, available);
     setButton(frame, {Role::scale, 0}, menu ? lit : available);
-    setButton(frame, {Role::layout, 0}, t >= 0 && NoteLayout::kindsFor(*tuningOf(t)).size() > 1 ? available : LedState::off());
+    setButton(frame, {Role::layout, 0}, t >= 0 ? available : LedState::off());
 
     const Role trackRole = caps().has(ButtonId{Role::trackSelect, 0}) ? Role::trackSelect : Role::displayLower;
     for (int i = 0; i < caps().countOf(trackRole); ++i)
@@ -394,6 +655,34 @@ void NoteMode::render(LedFrame& frame)
         const auto colour = trackColour(tr);
         setButton(frame, {trackRole, i}, LedState::solid(tr == t ? colour : dimmed(colour, trackDim)));
     }
+}
+
+void NoteMode::renderDrum(LedFrame& frame, int trackIndex)
+{
+    const auto& colours = host.colours();
+    const int columns = caps().columns;
+    const auto z = zones();
+    const auto rack = drumRack();
+    const int selected = drumNote();
+    const auto own = trackColour(trackIndex);
+    for (int r = z.pads.row; r < z.pads.row + z.pads.rows; ++r)
+        for (int c = z.pads.column; c < z.pads.column + z.pads.columns; ++c)
+        {
+            const int note = drumNoteAtPad(r, c);
+            if (note < 0)
+                continue;
+            const auto pad = racks::padFor(rack, note);
+            LedState led = LedState::solid(dimmed(colours.white, colours.padDim * 0.5f));
+            if (pressedNotes[static_cast<std::size_t>(note)] > 0)
+                led = LedState::solid(colours.play);
+            else if (note == selected && !z.steps.empty())
+                led = LedState::solid(colours.white);
+            else if (pad.isValid())
+                led = LedState::solid(colourOf(pad, own));
+            frame.pad(r, c, columns) = led;
+        }
+    steps.setZones(z);
+    steps.render(sequencerTarget(), frame);
 }
 
 void NoteMode::describe(SurfaceText& text)
@@ -424,6 +713,46 @@ void NoteMode::describe(SurfaceText& text)
 
     const auto l = layout();
     const auto rc = rowContext(t);
+    const auto& set = host.context().session.set();
+    if (const auto p = pads(); p != Pads::play)
+    {
+        const auto z = zones();
+        const auto target = sequencerTarget();
+        steps.setZones(z);
+        const auto rate = NoteLayout::stepRates()[static_cast<std::size_t>(std::clamp(l.stepRate, 0, static_cast<int>(NoteLayout::stepRates().size()) - 1))].first;
+        const auto where = juce::String("page ") + juce::String(steps.page(target) + 1) + "/" + juce::String(steps.pages(target));
+        const auto clipText = target.clip.isValid() ? where : juce::String("no clip: a step makes one");
+        if (p == Pads::drum)
+        {
+            const auto rack = drumRack();
+            for (int r = 0; r < rows; ++r)
+                for (int c = 0; c < columns; ++c)
+                    if (const int note = drumNoteAtPad(r, c); note >= 0)
+                    {
+                        const auto pad = racks::padFor(rack, note);
+                        text.pads[static_cast<std::size_t>(r * columns + c)] = pad.isValid() && pad[ids::name].toString().isNotEmpty()
+                                                                                   ? pad[ids::name].toString()
+                                                                                   : juce::String(note);
+                    }
+            const auto pad = racks::padFor(rack, target.pitches.front());
+            const auto padName = pad.isValid() && pad[ids::name].toString().isNotEmpty() ? pad[ids::name].toString()
+                                                                                          : "pad " + juce::String(target.pitches.front());
+            text.status = set.track(t)[ids::name].toString() + dot + "Drum" + dot + padName + dot + rate + dot + clipText;
+            return;
+        }
+        // The melodic sequencer: each row's note on its first pad.
+        for (int k = 0; k < z.steps.rows && k < static_cast<int>(target.pitches.size()); ++k)
+            if (const int note = target.pitches[static_cast<std::size_t>(k)]; note >= 0)
+            {
+                const auto row = ui::tuningRow(rc, note);
+                const int r = z.steps.row + z.steps.rows - 1 - k;
+                text.pads[static_cast<std::size_t>(r * columns + z.steps.column)] =
+                    row.namedNotes ? row.label : row.entry >= 0 ? juce::String(row.entry) : juce::String();
+            }
+        text.status = set.track(t)[ids::name].toString() + dot + rc.tuning->name + dot + "Sequencer (" + NoteLayout::kindName(l.kind) +
+                      ")" + dot + rate + dot + clipText;
+        return;
+    }
     for (int r = 0; r < rows; ++r)
         for (int c = 0; c < columns; ++c)
             if (const int note = l.noteAt(r, c, rows); note >= 0)
@@ -449,7 +778,6 @@ void NoteMode::describe(SurfaceText& text)
         text.status = pressed.joinIntoString(dot);
         return;
     }
-    const auto& set = host.context().session.set();
     auto status = set.track(t)[ids::name].toString() + dot + rc.tuning->name + dot + NoteLayout::kindName(l.kind);
     if (l.kind == NoteLayout::Kind::table)
         status << dot << "from #" << (l.origin + rc.noteOffset) << ", rows +" << l.rowOffset;
@@ -474,6 +802,27 @@ std::vector<NoteMode::MenuSetting> NoteMode::menuSettings()
     const auto l = layout();
     const int columns = caps().columns, rows = caps().rows;
 
+    MenuSetting rates{"Steps", colours.record, {}};
+    for (int i = 0; i < static_cast<int>(NoteLayout::stepRates().size()); ++i)
+        rates.choices.push_back({NoteLayout::stepRates()[static_cast<std::size_t>(i)].first, l.stepRate == i, [this, i] {
+                                     auto next = layout();
+                                     next.stepRate = i;
+                                     setLayout(next);
+                                 }});
+    if (pads() == Pads::drum)
+    {
+        MenuSetting drumLayout{"Layout", colours.play, {}};
+        for (const bool padsOnly : {false, true})
+            drumLayout.choices.push_back({padsOnly ? "Pads" : "Pads and steps", l.drumPads == padsOnly, [this, padsOnly] {
+                                              auto next = layout();
+                                              next.drumPads = padsOnly;
+                                              setLayout(next);
+                                          }});
+        settings.push_back(std::move(drumLayout));
+        settings.push_back(std::move(rates));
+        return settings;
+    }
+
     MenuSetting tunings{"Tuning", colours.solo, {}};
     for (const auto& option : session.tunings().getAll())
     {
@@ -488,8 +837,19 @@ std::vector<NoteMode::MenuSetting> NoteMode::menuSettings()
 
     MenuSetting kinds{"Layout", colours.play, {}};
     for (const auto k : NoteLayout::kindsFor(*tuning))
-        kinds.choices.push_back({NoteLayout::kindName(k), l.kind == k, [this, k, tuning] { setLayout(layout().withKind(k, *tuning)); }});
+        kinds.choices.push_back({NoteLayout::kindName(k), !l.sequencer && l.kind == k, [this, k, tuning] {
+                                     auto next = layout().withKind(k, *tuning);
+                                     next.sequencer = false;
+                                     setLayout(next);
+                                 }});
+    kinds.choices.push_back({"Sequencer", l.sequencer, [this] {
+                                 auto next = layout();
+                                 next.sequencer = true;
+                                 setLayout(next);
+                             }});
     settings.push_back(std::move(kinds));
+    if (l.sequencer)
+        settings.push_back(std::move(rates));
 
     if (l.kind != NoteLayout::Kind::table)
     {

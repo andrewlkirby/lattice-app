@@ -284,7 +284,8 @@ TEST_CASE("Note mode, 12-TET: In Key lights the root in the track's colour and t
 
     // The octave buttons move an octave; with Shift, the In Key root moves a semitone.
     f.surface.click(Role::layout);
-    f.surface.click(Role::layout); // Table, then In Key again
+    f.surface.click(Role::layout);
+    f.surface.click(Role::layout); // Table, the sequencer, then In Key again
     f.controller->refresh();
     REQUIRE(f.mode().layout().kind == LayoutKind::inKey);
     f.surface.click(Role::octaveUp);

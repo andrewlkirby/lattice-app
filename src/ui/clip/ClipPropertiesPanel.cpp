@@ -3,20 +3,13 @@
 #include "core/model/UndoNames.h"
 #include "devices/framework/DeviceRegistry.h"
 
+#include "ui/clip/ClipBindings.h"
 #include "ui/clip/NoteGrid.h"
 #include "ui/session/SessionView.h"
 #include "ui/theme/LatticeLookAndFeel.h"
 
 namespace lattice::ui
 {
-namespace
-{
-const juce::StringArray launchModes{"Trigger", "Gate", "Toggle"};
-const juce::StringArray quantizations{"Global", "None", "8 Bars", "4 Bars", "2 Bars", "1 Bar", "1/2", "1/4", "1/8", "1/16"};
-const juce::StringArray followActions{"None", "Stop", "Play Again", "Previous", "Next", "First", "Last", "Any", "Other"};
-const juce::StringArray denominators{"1", "2", "4", "8", "16"};
-} // namespace
-
 /** The clip's name; a click renames it. */
 class ClipPropertiesPanel::NameButton final : public juce::Button
 {
@@ -194,33 +187,13 @@ void ClipPropertiesPanel::build()
     auto& set = session.set();
     auto* undo = &session.undoManager();
     auto c = clip;
-    const auto [num, den] = set.clipTimeSignature(c);
-    const BarsBeats bb{num, den};
-    const auto matchesClip = [c](std::initializer_list<juce::Identifier> props) {
-        std::vector<juce::Identifier> list(props);
-        return [c, list](const juce::ValueTree& tree, const juce::Identifier& p) {
-            return tree == c && std::find(list.begin(), list.end(), p) != list.end();
-        };
-    };
-    // In sixteenths (the range's minimum is a whole number of them, so the steps fall on them).
-    const auto timeSpec = [bb](const juce::String& id, const juce::String& name, bool isLength, float minimum) {
-        return ParameterSpec::continuous(id, name, minimum, 4096.0f, isLength ? 4.0f : 0.0f, ParamUnit::Beats)
-            .withCentre(32.0f)
-            .withInterval(0.25f)
-            .inGroup("Clip")
-            .withFormatter([bb, isLength](float v) { return isLength ? bb.length(v) : bb.position(v); })
-            .withParser([bb, isLength](const juce::String& text) -> std::optional<float> {
-                const auto q = isLength ? bb.parseLength(text) : bb.parsePosition(text);
-                return q ? std::optional<float>(static_cast<float>(*q)) : std::nullopt;
-            });
-    };
-    const auto choice = [&](const juce::String& id, const juce::String& name, const juce::StringArray& names, juce::Identifier prop,
-                            int offset) {
-        return box(std::make_unique<ValueBinding>(
-            ParameterSpec::choice(id, name, names, offset).inGroup("Launch"),
-            [c, prop, offset] { return static_cast<double>(static_cast<int>(c[prop]) + offset); },
-            [&set, c, prop, offset](double v) { set.setClipProperty(c, prop, juce::roundToInt(v) - offset); }, undo, c,
-            matchesClip({prop})));
+    const auto value = [&](const juce::String& id) { return clipValues::binding(set, undo, c, id); };
+    const auto toggle = [&](const juce::String& id, const juce::String& caption) {
+        auto* t = std::make_unique<Toggle>(value(id), Toggle::Role::accent, caption).release();
+        t->setMouseClickGrabsKeyboardFocus(false);
+        owned.emplace_back(t);
+        addAndMakeVisible(*t);
+        return t;
     };
 
     // --- Clip -----------------------------------------------------------------------------------
@@ -234,68 +207,24 @@ void ClipPropertiesPanel::build()
     addAndMakeVisible(*nameRaw);
     addAndMakeVisible(*colourRaw);
     row({}, {nameRaw, colourRaw});
-    auto* numerator = box(std::make_unique<ValueBinding>(
-        ParameterSpec::integer("clipTimeSigNum", "Signature Numerator", 1, 99, 4).inGroup("Clip"),
-        [&set, c] { return static_cast<double>(set.clipTimeSignature(c).first); },
-        [&set, c](double v) { set.setClipTimeSignature(c, juce::roundToInt(v), set.clipTimeSignature(c).second); }, undo, c,
-        matchesClip({ids::clipTimeSigNum, ids::clipTimeSigDen})));
-    auto* denominator = box(std::make_unique<ValueBinding>(
-        ParameterSpec::choice("clipTimeSigDen", "Signature Denominator", denominators, 2).inGroup("Clip"),
-        [&set, c] { return static_cast<double>(denominators.indexOf(juce::String(set.clipTimeSignature(c).second))); },
-        [&set, c](double v) {
-            set.setClipTimeSignature(c, set.clipTimeSignature(c).first, denominators[juce::jlimit(0, 4, juce::roundToInt(v))].getIntValue());
-        },
-        undo, c, matchesClip({ids::clipTimeSigNum, ids::clipTimeSigDen})));
-    row("Signature", {numerator, denominator});
+    row("Signature", {box(value("timeSigNum")), box(value("timeSigDen"))});
 
     // --- Launch ---------------------------------------------------------------------------------
     heading("Launch");
-    row("Mode", {choice("launchMode", "Launch Mode", launchModes, ids::launchMode, 0)});
-    row("Quantization", {choice("quantization", "Launch Quantization", quantizations, ids::quantization, 1)});
-    auto* legatoToggle = std::make_unique<Toggle>(ValueBinding::property(ParameterSpec::toggle("legato", "Legato", false).inGroup("Launch"), undo, c,
-                                                                         ids::legato, [&set, c](double v) { set.setClipProperty(c, ids::legato, v > 0.5); }),
-                                                  Toggle::Role::accent, "Legato")
-                              .release();
-    legatoToggle->setMouseClickGrabsKeyboardFocus(false);
-    owned.emplace_back(legatoToggle);
-    addAndMakeVisible(*legatoToggle);
-    row({}, {legatoToggle});
-    row("Follow", {choice("followA", "Follow Action A", followActions, ids::followA, 0),
-                   choice("followB", "Follow Action B", followActions, ids::followB, 0)});
-    row("Chance A", {box(ValueBinding::property(ParameterSpec::integer("followChanceA", "Follow Chance A", 0, 100, 100, ParamUnit::Percent).inGroup("Launch"),
-                                                undo, c, ids::followChanceA,
-                                                [&set, c](double v) { set.setClipProperty(c, ids::followChanceA, juce::roundToInt(v)); }))});
-    row("Follow Time", {box(ValueBinding::property(timeSpec("followTime", "Follow Time", true, 0.0f), undo, c, ids::followTime,
-                                                   [&set, c](double v) { set.setClipProperty(c, ids::followTime, v); }))});
+    row("Mode", {box(value("launchMode"))});
+    row("Quantization", {box(value("quantization"))});
+    row({}, {toggle("legato", "Legato")});
+    row("Follow", {box(value("followA")), box(value("followB"))});
+    row("Chance A", {box(value("followChanceA"))});
+    row("Follow Time", {box(value("followTime"))});
 
     // --- Loop -----------------------------------------------------------------------------------
     heading("Loop");
-    auto* loopToggle = std::make_unique<Toggle>(ValueBinding::property(ParameterSpec::toggle("looping", "Loop", true).inGroup("Loop"), undo, c, ids::looping,
-                                                                       [&set, c](double v) { set.setClipProperty(c, ids::looping, v > 0.5); }),
-                                                Toggle::Role::accent, "Loop")
-                            .release();
-    loopToggle->setMouseClickGrabsKeyboardFocus(false);
-    owned.emplace_back(loopToggle);
-    addAndMakeVisible(*loopToggle);
-    row({}, {loopToggle});
-    row("Start", {box(ValueBinding::property(timeSpec("startMarker", "Start", false, 0.0f), undo, c, ids::startMarker,
-                                             [&set, c](double v) { set.setClipProperty(c, ids::startMarker, v); }))});
-    row("End", {box(std::make_unique<ValueBinding>(
-                   timeSpec("loopEnd", "End", false, 0.25f), [c] { return static_cast<double>(c[ids::loopEnd]); },
-                   [&set, c](double v) { set.setClipLoop(c, c[ids::loopStart], v); }, undo, c, matchesClip({ids::loopEnd})))});
-    row("Position", {box(std::make_unique<ValueBinding>(
-                        timeSpec("loopStart", "Loop Position", false, 0.0f), [c] { return static_cast<double>(c[ids::loopStart]); },
-                        [&set, c](double v) {
-                            // Moves the loop, keeping its length.
-                            const double length = static_cast<double>(c[ids::loopEnd]) - static_cast<double>(c[ids::loopStart]);
-                            set.setClipLoop(c, v, v + length);
-                        },
-                        undo, c, matchesClip({ids::loopStart, ids::loopEnd})))});
-    row("Length", {box(std::make_unique<ValueBinding>(
-                      timeSpec("loopLength", "Loop Length", true, 0.25f),
-                      [c] { return static_cast<double>(c[ids::loopEnd]) - static_cast<double>(c[ids::loopStart]); },
-                      [&set, c](double v) { set.setClipLoop(c, c[ids::loopStart], static_cast<double>(c[ids::loopStart]) + v); }, undo, c,
-                      matchesClip({ids::loopStart, ids::loopEnd})))});
+    row({}, {toggle("looping", "Loop")});
+    row("Start", {box(value("startMarker"))});
+    row("End", {box(value("loopEnd"))});
+    row("Position", {box(value("loopStart"))});
+    row("Length", {box(value("loopLength"))});
     row({}, {action("Double", "Doubles the loop's length.", [this] { roll.doubleLoop(); }),
              action("Halve", "Halves the loop's length.", [this] { roll.halveLoop(); }),
              action("Dupl.", "Duplicates the loop: copies its notes after it and doubles its length.", [this] { roll.duplicateLoop(); })});

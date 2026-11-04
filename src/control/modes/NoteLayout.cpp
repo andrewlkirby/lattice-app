@@ -81,6 +81,36 @@ int NoteLayout::noteAt(int row, int column, int rows) const noexcept
     return n >= 0 && n <= 127 ? n : -1;
 }
 
+int NoteLayout::sequencerNote(int fromBottom) const noexcept
+{
+    auto rows = *this;
+    rows.rowOffset = 1;
+    rows.columnStep = 1;
+    const int n = rawNoteAt(rows, fromBottom + sequencerRow, 0);
+    return n >= 0 && n <= 127 ? n : -1;
+}
+
+NoteLayout NoteLayout::sequencerMoved(int byRows, int shown) const noexcept
+{
+    auto next = *this;
+    next.sequencerRow += byRows;
+    for (int k = 0; k < std::max(1, shown); ++k)
+        if (next.sequencerNote(k) >= 0)
+            return next;
+    return *this;
+}
+
+int NoteLayout::sequencerOctave(int shown) const noexcept
+{
+    switch (kind)
+    {
+    case Kind::table: return std::max(1, shown);
+    case Kind::inKey: return static_cast<int>(scaleOf(scale).steps.size());
+    case Kind::chromatic: return 12;
+    }
+    return 12;
+}
+
 bool NoteLayout::isRoot(int note) const noexcept
 {
     return pitchClass(note) == pitchClass(root);
@@ -234,7 +264,21 @@ juce::String NoteLayout::toString() const
     const char* kindText = kind == Kind::table ? "table" : kind == Kind::inKey ? "inKey" : "chromatic";
     return juce::String("kind=") + kindText + ";origin=" + juce::String(origin) + ";step=" + juce::String(columnStep) +
            ";row=" + juce::String(rowOffset) + ";root=" + juce::String(root) + ";scale=" + scaleOf(scale).name +
-           ";octave=" + (octaveStep == OctaveStep::page ? "page" : "row");
+           ";octave=" + (octaveStep == OctaveStep::page ? "page" : "row") + ";sequencer=" + (sequencer ? "1" : "0") +
+           ";drumPads=" + (drumPads ? "1" : "0") + ";seqRow=" + juce::String(sequencerRow) + ";rate=" + stepRates()[static_cast<std::size_t>(std::clamp(stepRate, 0, static_cast<int>(stepRates().size()) - 1))].first;
+}
+
+const std::vector<std::pair<juce::String, double>>& NoteLayout::stepRates()
+{
+    static const std::vector<std::pair<juce::String, double>> rates{
+        {"1/4", 1.0}, {"1/8", 0.5}, {"1/8T", 1.0 / 3.0}, {"1/16", 0.25}, {"1/16T", 1.0 / 6.0}, {"1/32", 0.125}};
+    return rates;
+}
+
+double NoteLayout::stepLength() const noexcept
+{
+    const auto& rates = stepRates();
+    return rates[static_cast<std::size_t>(std::clamp(stepRate, 0, static_cast<int>(rates.size()) - 1))].second;
 }
 
 NoteLayout NoteLayout::fromString(const juce::String& text, const NoteLayout& fallback)
@@ -263,6 +307,16 @@ NoteLayout NoteLayout::fromString(const juce::String& text, const NoteLayout& fa
                     l.scale = static_cast<int>(i);
         }
         else if (key == "octave") l.octaveStep = value == "page" ? OctaveStep::page : OctaveStep::row;
+        else if (key == "sequencer") l.sequencer = value == "1";
+        else if (key == "seqRow" && number) l.sequencerRow = std::clamp(value.getIntValue(), -1024, 1024);
+        else if (key == "drumPads") l.drumPads = value == "1";
+        else if (key == "rate")
+        {
+            const auto& rates = stepRates();
+            for (std::size_t i = 0; i < rates.size(); ++i)
+                if (value == rates[i].first)
+                    l.stepRate = static_cast<int>(i);
+        }
     }
     return l;
 }

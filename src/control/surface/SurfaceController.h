@@ -105,8 +105,9 @@ private:
     Mode& current() noexcept { return *modes[static_cast<std::size_t>(active)]; }
     /** The encoder mode, or null. */
     Mode* knobs() noexcept { return knob < modes.size() ? modes[knob].get() : nullptr; }
-    /** The mode the encoders and the display belong to: the encoder mode, or the grid's. */
-    Mode& encoderOwner() noexcept { return knobs() != nullptr ? *knobs() : current(); }
+    /** The mode the encoders and the display belong to: the encoder mode, or the grid's (with no
+        encoder mode, or while it takes them: held steps). */
+    Mode& encoderOwner() noexcept { return knobs() != nullptr && !current().ownsEncoders() ? *knobs() : current(); }
     void handleEncoder(const SurfaceInput& input);
     void listenToFeed();
     void publishPadMap();
@@ -140,6 +141,7 @@ private:
     std::shared_ptr<const PadNoteMap> published;
     SurfaceText shownText;
     bool shownAnyText = false;
+    std::uint32_t listened = 0; // the feed's aspects listened to
     std::size_t active = 0;
     std::size_t knob = static_cast<std::size_t>(-1); // the encoder mode (none: -1)
     std::vector<ButtonId> held;

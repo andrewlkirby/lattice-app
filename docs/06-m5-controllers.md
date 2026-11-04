@@ -289,6 +289,7 @@ Playing pads must feel as tight as a dedicated instrument. **Pad-to-sound latenc
     - the earlier Virtual Push snapshots, redrawn with the display.
 - **Checks:**
   - All 483 fast tests pass on Windows; all 472 on Linux (warnings as errors), with its snapshot references written and looked at. Callgrind: the engine benchmark -0.88%, the UI benchmark -0.02%.
+  - The user's hands-on check passed (2026-11-04): Device mode, Mix mode, and pad faders with no encoders. From the check: Find now knows the Controllers tab's settings (it had missed them), with a test that every labelled Preferences row has a Find entry.
   - Idle with Virtual Push shown, measured on a busy machine: 0.42% above a bare window with it shown, 0.48% without it in the same session. The display adds nothing measurable, but the busy machine puts both over the 0.3% budget. A quiet-machine run waits for the user's go-ahead.
 
 #### 5d: Drum, the step sequencers, and the Clip and Browse modes

@@ -308,6 +308,9 @@ void SurfaceController::renderGlobals(LedFrame& frame) const
 void SurfaceController::refresh()
 {
     cancelPendingUpdate();
+    // What the modes show can change what they need from the feed (Note mode's sequencer).
+    if ((current().aspects() | (knobs() != nullptr ? knobs()->aspects() : 0u)) != listened)
+        listenToFeed();
     publishPadMap();
 
     std::vector<juce::String> targets;
@@ -338,7 +341,7 @@ void SurfaceController::refresh()
     auto frame = LedFrame::blank(capabilities());
     renderGlobals(frame);
     current().render(frame);
-    if (auto* k = knobs())
+    if (auto* k = knobs(); k != nullptr && &encoderOwner() == k)
         k->render(frame);
     auto changes = frame.changesFrom(shownAny ? shown : LedFrame{});
     if (changes.empty() && shownAny)
@@ -364,7 +367,8 @@ void SurfaceController::publishPadMap()
 void SurfaceController::listenToFeed()
 {
     ctx.feed.removeListener(this);
-    ctx.feed.addListener(this, current().aspects() | (knobs() != nullptr ? knobs()->aspects() : 0u));
+    listened = current().aspects() | (knobs() != nullptr ? knobs()->aspects() : 0u);
+    ctx.feed.addListener(this, listened);
 }
 
 void SurfaceController::engineStateChanged(std::uint32_t)

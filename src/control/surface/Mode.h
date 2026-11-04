@@ -118,6 +118,9 @@ public:
     virtual void encoderTargets(std::vector<juce::String>&) {}
     /** What the display shows (only asked of a device that has one). */
     virtual void display(DisplayFrame&) {}
+    /** A pad mode that takes the encoders and the display for now (held steps), from the
+        encoder mode: the controller then asks it for their targets and the display. */
+    virtual bool ownsEncoders() const { return false; }
 
 protected:
     ModeHost& host;

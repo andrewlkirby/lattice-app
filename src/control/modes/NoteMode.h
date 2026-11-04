@@ -1,6 +1,7 @@
 #pragma once
 
 #include "control/modes/NoteLayout.h"
+#include "control/modes/StepSequencer.h"
 #include "control/surface/Mode.h"
 #include "ui/clip/TuningRows.h"
 
@@ -28,7 +29,19 @@ namespace lattice::control
       Virtual Push and in the status line; the up/down arrows scroll it.
     - The strip's Scroll setting moves the grid a row for each eighth of the strip.
     The layout is kept on the track's node (not undoable), per tuning: changing the track's tuning
-    gives that tuning's default. */
+    gives that tuning's default.
+
+    The step sequencers (docs/06-m5-controllers.md, 5d) are Note mode's too:
+    - On a track whose chain has a Drum Rack the grid is the Drum layout (SequencerZones::drum):
+      its pads (from the rack's first pad on show, shared with the Device view; octave up/down
+      move them a page, with Shift a row), the steps of the pad last played, and the loop
+      selector. Layout switches to the pads alone (64 on 8x8) and back.
+    - Elsewhere Layout cycles the tuning's layouts and then the melodic sequencer: the layout's
+      notes up the rows (a table entry, a degree or a semitone a row; octave up/down move them
+      an octave, the up/down arrows a row), the steps across, the loop selector below.
+    - Both edit the selected slot's clip (or the clip the track plays, if the slot is empty);
+      the first step makes a clip in the slot. The step's length is in the Scale menu.
+    - While steps are held the encoders and the display are theirs: velocity, length, nudge. */
 class NoteMode final : public Mode
 {
 public:
@@ -39,9 +52,36 @@ public:
     void render(LedFrame& frame) override;
     void describe(SurfaceText& text) override;
     void padMap(PadNoteMap& map) override;
-    std::uint32_t aspects() const override { return ui::EngineStateFeed::transportAspect; } // Play and Record
+    std::uint32_t aspects() const override;
     void enter() override;
     void leave() override;
+    void selectionChanged() override;
+    bool ownsEncoders() const override { return steps.anyHeld() && caps().encoders > 0; }
+    void encoderTargets(std::vector<juce::String>& targets) override;
+    void display(DisplayFrame& frame) override;
+
+    /** What the pads are now. */
+    enum class Pads
+    {
+        play,      // notes to play (the layout)
+        sequencer, // the melodic step sequencer
+        drum       // a Drum Rack's layout
+    };
+    Pads pads() const;
+    /** The track's Drum Rack (the first in its chain), or an invalid tree. */
+    juce::ValueTree drumRack() const;
+    /** The drum's first pad on the grid (the rack's first pad on show). */
+    int drumStart() const;
+    /** The drum pad the steps are for (its note): the last one played. */
+    int drumNote() const;
+    /** The note a drum pad plays, or -1 (outside the pads, or past 127). */
+    int drumNoteAtPad(int row, int column) const;
+    /** Where the sequencer's parts are now (empty for the play layout). */
+    SequencerZones zones() const;
+    /** The clip the sequencer edits: the selected slot's, or the one the track plays. */
+    juce::ValueTree sequencedClip() const;
+    StepSequencer::Target sequencerTarget() const;
+    StepSequencer& sequencer() noexcept { return steps; }
 
     /** The track it plays: the selected MIDI track, or -1 (a group, a return, nothing). */
     int track() const;
@@ -84,6 +124,10 @@ private:
     void stepTrack(int direction);
     void moveGrid(int direction);
     void renderMenu(LedFrame& frame);
+    void renderDrum(LedFrame& frame, int trackIndex);
+    void moveDrum(int direction);
+    void moveSequencer(int rows);
+    void pressLayout();
 
     mutable TuningPtr shownTuning; // keeps the table a row context points into alive
     std::array<int, 128> pressedNotes{}; // pads holding each note
@@ -92,6 +136,8 @@ private:
     int menuScroll = 0; // grid rows scrolled
     juce::String touched; // the last menu choice touched, for the status line
     float stripLast = -1.0f;
+    StepSequencer steps{host};
+    std::map<std::int64_t, int> drumNotes; // track ID -> the drum pad last played
 };
 
 } // namespace lattice::control

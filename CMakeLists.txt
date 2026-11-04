@@ -307,6 +307,7 @@ add_library(lattice_ui STATIC
     src/control/display/DisplayRenderer.cpp
     src/control/modes/DeviceMode.cpp
     src/control/modes/MixMode.cpp
+    src/control/modes/StepSequencer.cpp
     src/control/modes/NoteLayout.cpp
     src/control/modes/NoteMode.cpp
     src/control/modes/SessionMode.cpp
@@ -323,6 +324,8 @@ add_library(lattice_ui STATIC
     src/ui/clip/ClipPropertiesPanel.cpp
     src/ui/clip/ClipView.cpp
     src/ui/clip/NoteEdits.cpp
+    src/ui/clip/Steps.cpp
+    src/ui/clip/ClipBindings.cpp
     src/ui/clip/NoteGrid.cpp
     src/ui/clip/PianoRoll.cpp
     src/ui/clip/PianoRollLayout.cpp

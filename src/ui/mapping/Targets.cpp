@@ -1,5 +1,7 @@
 #include "ui/mapping/Targets.h"
 
+#include "ui/clip/ClipBindings.h"
+#include "ui/clip/Steps.h"
 #include "ui/session/MixerStrip.h"
 
 namespace lattice::ui
@@ -22,6 +24,10 @@ std::unique_ptr<ValueBinding> bindingForTarget(LiveSet& set, DeviceSpecs& specs,
     const auto afterColon = target.fromFirstOccurrenceOf(":", false, false);
     const auto id = afterColon.upToFirstOccurrenceOf("/", false, false).getLargeIntValue();
     const auto what = target.fromLastOccurrenceOf("/", false, false);
+    if (target.startsWith("clip:"))
+        return clipValues::bindingFor(set, undo, afterColon);
+    if (target.startsWith("notes:"))
+        return steps::bindingFor(set, undo, afterColon);
     if (target.startsWith("device:"))
     {
         const auto device = findDeviceById(set.state(), id);
