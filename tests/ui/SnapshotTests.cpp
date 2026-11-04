@@ -233,6 +233,41 @@ const std::vector<Subject>& subjects()
              auto* push = f.shell->virtualPushView();
              return std::pair<juce::Component*, juce::Rectangle<int>>{push, push->getLocalBounds()};
          }},
+        {"virtual-push-drum",
+         [](Fixture& f) {
+             // The Drum layout on the Drum Rack's track: the kick's steps across the top (a
+             // one-bar loop, so the second half dark), the pads (named ones in their colour, the
+             // kick white), and the loop selector's first page.
+             f.shell->setVirtualPushDocked(true);
+             f.shell->setVirtualPushVisible(true);
+             auto& set = f.session.set();
+             auto beat = set.clip(2, 0);
+             if (LiveSet::notesOf(beat).empty())
+                 for (const int step : {0, 4, 6, 8, 12})
+                     set.addNote(beat, {36, step * 0.25, 0.25, 100, false}, false);
+             f.shell->selection().set({Kind::slot, 2, 0});
+             auto* controller = f.shell->virtualPushController();
+             controller->handle(control::SurfaceInput::encoderRelease(1));
+             controller->setMode(control::ModeKind::note);
+             f.settle();
+             controller->refresh();
+             auto* push = f.shell->virtualPushView();
+             return std::pair<juce::Component*, juce::Rectangle<int>>{push, push->getLocalBounds()};
+         }},
+        {"virtual-push-clip",
+         [](Fixture& f) {
+             // Clip mode on the Colundi clip: its Loop page, the pages above, the actions below.
+             f.shell->setVirtualPushDocked(true);
+             f.shell->setVirtualPushVisible(true);
+             f.shell->selection().set({Kind::slot, 1, 1});
+             auto* controller = f.shell->virtualPushController();
+             controller->setMode(control::ModeKind::session);
+             controller->setMode(control::ModeKind::clip);
+             f.settle();
+             controller->refresh();
+             auto* push = f.shell->virtualPushView();
+             return std::pair<juce::Component*, juce::Rectangle<int>>{push, push->getLocalBounds()};
+         }},
     };
     return all;
 }
@@ -294,7 +329,22 @@ std::vector<std::pair<const char*, control::DisplayFrame>> displayFrames()
     empty.title = "Audio 3";
     empty.message = "No devices";
     empty.cells.resize(8);
-    return {{"display-device", device}, {"display-touched", touched}, {"display-mix", mix}, {"display-empty", empty}};
+
+    // Browse: the sources and a long list of rows, each with its selection kept in view.
+    control::DisplayFrame browse;
+    browse.title = "Browse";
+    for (const char* c : {"Instruments", "Drums", "Audio Effects", "MIDI Effects", "Samples", "Presets", "Tunings"})
+        browse.upper.push_back({.label = c, .selected = juce::String(c) == "Samples"});
+    browse.lists.push_back({"Sources", {"Favourites", "Instruments", "Drums", "Audio Effects", "MIDI Effects", "Samples", "Presets", "Tunings",
+                                        "User Library"},
+                            5, 2, 0});
+    control::DisplayList rows{"Samples", {}, 30, 6, 0x30c060};
+    for (int i = 0; i < 60; ++i)
+        rows.items.push_back((i % 7 == 0 ? juce::String::fromUTF8("\xe2\x96\xb8 Folder ") : juce::String("  Kick ")) + juce::String(i + 1));
+    browse.lists.push_back(rows);
+    for (const char* b : {"Load", "Open", "Back", "Preview", "Hot-Swap"})
+        browse.lower.push_back({.label = b, .selected = juce::String(b) == "Preview"});
+    return {{"display-device", device}, {"display-touched", touched}, {"display-mix", mix}, {"display-empty", empty}, {"display-browse", browse}};
 }
 } // namespace
 

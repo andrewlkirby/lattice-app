@@ -50,6 +50,8 @@ inline const juce::Identifier metronomeOn{"metronomeOn"};
 inline const juce::Identifier metronomeVolumeDb{"metronomeVolumeDb"};
 inline const juce::Identifier selectNextSceneOnLaunch{"selectNextSceneOnLaunch"};
 inline const juce::Identifier fixedRecordBars{"fixedRecordBars"};
+inline const juce::Identifier quantizeGrid{"quantizeGrid"};     // the controllers' Quantize: a grid (clipActions::grids), not undoable
+inline const juce::Identifier quantizeAmount{"quantizeAmount"}; // and its amount, 0..100 %
 inline const juce::Identifier reducedLatencyWhenMonitoring{"reducedLatencyWhenMonitoring"};
 
 // Shared

@@ -340,17 +340,7 @@ void StepSequencer::display(const Target& target, DisplayFrame& frame) const
     const int cells = std::max(0, host.capabilities().encoders);
     for (int i = 0; i < cells; ++i)
     {
-        DisplayCell cell;
-        if (auto* b = bank.binding(i))
-        {
-            const auto& spec = b->spec();
-            cell.name = spec.name;
-            cell.value = b->text();
-            cell.position = b->normalised();
-            cell.bipolar = spec.minValue < 0.0f && spec.maxValue > 0.0f;
-            cell.detail = b->textFor(spec.minValue) + " - " + b->textFor(spec.maxValue);
-        }
-        frame.cells.push_back(std::move(cell));
+        frame.cells.push_back(bank.binding(i) != nullptr ? cellFor(*bank.binding(i)) : DisplayCell{});
     }
     frame.detail = bank.touchedEncoder();
 }

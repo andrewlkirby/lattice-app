@@ -16,7 +16,6 @@ namespace
 {
 const juce::String back = juce::String::fromUTF8("\xe2\x80\xb9 "); // "< "
 const juce::String crumb = juce::String::fromUTF8(" \xe2\x80\xba ");  // " > "
-const juce::String dash = juce::String::fromUTF8(" \xe2\x80\x93 ");  // " - "
 
 bool isRack(const juce::ValueTree& device)
 {
@@ -364,14 +363,13 @@ void DeviceMode::display(DisplayFrame& f)
         DisplayCell cell;
         if (auto* b = i < static_cast<int>(shown.parameters.size()) ? bank.binding(i) : nullptr)
         {
-            const auto& spec = b->spec();
+            cell = cellFor(*b);
             const int index = shown.parameters[static_cast<std::size_t>(i)];
-            cell.name = rack ? racks::macroName(d, index) : spec.name;
-            cell.value = b->text();
-            cell.position = b->normalised();
-            cell.bipolar = spec.kind == ParamKind::Float && spec.minValue < 0.0f && spec.maxValue > 0.0f;
-            cell.colour = rack ? rgbOf(racks::macroColour(d, index)) : 0u;
-            cell.detail = b->textFor(spec.minValue) + dash + b->textFor(spec.maxValue);
+            if (rack)
+            {
+                cell.name = racks::macroName(d, index);
+                cell.colour = rgbOf(racks::macroColour(d, index));
+            }
         }
         f.cells.push_back(std::move(cell));
     }

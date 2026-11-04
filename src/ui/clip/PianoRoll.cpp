@@ -1,5 +1,6 @@
 #include "ui/clip/PianoRoll.h"
 
+#include "ui/clip/ClipActions.h"
 #include "ui/theme/LatticeLookAndFeel.h"
 #include "ui/widgets/Accessible.h"
 #include "ui/widgets/Toggle.h"
@@ -422,20 +423,12 @@ void PianoRoll::stretch(double factor)
 
 void PianoRoll::doubleLoop()
 {
-    if (!hasClip())
-        return;
-    const double start = clip()[ids::loopStart], end = clip()[ids::loopEnd];
-    session.beginEdit("Double loop", clip());
-    session.set().setClipLoop(clip(), start, start + (end - start) * 2.0);
+    clipActions::doubleLoop(session, clip());
 }
 
 void PianoRoll::halveLoop()
 {
-    if (!hasClip())
-        return;
-    const double start = clip()[ids::loopStart], end = clip()[ids::loopEnd];
-    session.beginEdit("Halve loop", clip());
-    session.set().setClipLoop(clip(), start, start + juce::jmax(LiveSet::minLoopLength, (end - start) * 0.5));
+    clipActions::halveLoop(session, clip());
 }
 
 void PianoRoll::duplicateLoop()

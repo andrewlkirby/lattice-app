@@ -11,7 +11,8 @@ namespace lattice::ui
 /** A binding for a value named by its address (ValueBinding::target): "device:<id>/<parameter>",
     "node:<id>/<property>" (a track's or return's volume, pan, mute, solo, arm, pre-fader),
     "master/<property>", "send:<track id>/<return id>", "clip:<id>/<value>" (clipValues),
-    "notes:<clip id>/..." (the notes on held steps: steps::target). MIDI Map and the controllers' encoders
+    "notes:<clip id>/..." (the notes on held steps: steps::target), "set/<property>" (the
+    controllers' Quantize and Fixed Length: clipActions::setBinding). MIDI Map and the controllers' encoders
     (docs/06-m5-controllers.md, 5c) both edit through these, so a value moved from either is the
     same undo step a mouse drag makes. Null if the address names nothing in the set. */
 std::unique_ptr<ValueBinding> bindingForTarget(LiveSet& set, DeviceSpecs& specs, juce::UndoManager* undo,

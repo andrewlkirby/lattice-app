@@ -11,6 +11,8 @@
 namespace lattice::control
 {
 
+class BrowseHost;
+
 /** What the modes act on and read: the same commands, session, selection and live state as the
     window (docs/06-m5-controllers.md, "SurfaceController and ModeStack"). */
 struct SurfaceContext
@@ -21,6 +23,8 @@ struct SurfaceContext
     ui::EngineStateFeed& feed;
     /** The device descriptions the window uses (null: the controller keeps its own). */
     DeviceSpecs* specs = nullptr;
+    /** The window's browser, for Browse mode (null: no Browse mode). */
+    BrowseHost* browser = nullptr;
 };
 
 /** The colours the LEDs use for states (0xRRGGBB): the theme's, so a pad and the Session view

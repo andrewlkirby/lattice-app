@@ -1,9 +1,13 @@
 #include "control/surface/SurfaceController.h"
 
+#include "control/modes/BrowseMode.h"
+#include "control/modes/ClipMode.h"
 #include "control/modes/DeviceMode.h"
 #include "control/modes/MixMode.h"
 #include "control/modes/NoteMode.h"
+#include "control/modes/SelectedClip.h"
 #include "control/modes/SessionMode.h"
+#include "ui/clip/ClipActions.h"
 
 #include <algorithm>
 
@@ -28,7 +32,7 @@ std::optional<ModeKind> modeOfButton(Role role)
 
 bool isEncoderMode(ModeKind kind)
 {
-    return kind == ModeKind::device || kind == ModeKind::mix;
+    return kind == ModeKind::device || kind == ModeKind::mix || kind == ModeKind::clip || kind == ModeKind::browse;
 }
 } // namespace
 
@@ -51,6 +55,15 @@ SurfaceController::SurfaceController(SurfaceContext context, SurfaceDriver& d) :
     auto mm = std::make_unique<MixMode>(*this);
     mix = mm.get();
     modes[static_cast<std::size_t>(ModeKind::mix)] = std::move(mm);
+    auto cm = std::make_unique<ClipMode>(*this);
+    clipModePtr = cm.get();
+    modes[static_cast<std::size_t>(ModeKind::clip)] = std::move(cm);
+    if (ctx.browser != nullptr)
+    {
+        auto bm = std::make_unique<BrowseMode>(*this, *ctx.browser);
+        browseModePtr = bm.get();
+        modes[static_cast<std::size_t>(ModeKind::browse)] = std::move(bm);
+    }
     active = static_cast<std::size_t>(ModeKind::session);
     // A device with encoders starts with them on its devices, as a Push does.
     if (driver.capabilities().encoders > 0)
@@ -257,6 +270,32 @@ bool SurfaceController::handleGlobal(const SurfaceInput& input)
     case Role::undo: commands.perform(shift ? "edit.redo" : "edit.undo"); return true;
     case Role::stopAll: commands.perform("transport.stopAllClips"); return true;
     case Role::newClip: commands.perform(shift ? "create.scene" : "create.midiClip"); return true;
+    case Role::doubleLoop: ui::clipActions::duplicateLoop(ctx.session, selectedClip(ctx, selectedTrack(ctx))); return true;
+    case Role::quantize: ui::clipActions::quantize(ctx.session, selectedClip(ctx, selectedTrack(ctx))); return true;
+    case Role::fixedLength:
+    {
+        // On and off (back to the length it had); with Shift, the next length.
+        auto& set = ctx.session.set();
+        const auto& lengths = ui::clipActions::fixedLengths();
+        int bars = set.fixedRecordBars();
+        if (shift)
+        {
+            const auto at = std::find(lengths.begin(), lengths.end(), bars);
+            bars = at == lengths.end() || at + 1 == lengths.end() ? lengths[1] : *(at + 1);
+        }
+        else if (bars != 0)
+        {
+            fixedBefore = bars;
+            bars = 0;
+        }
+        else
+        {
+            bars = fixedBefore;
+        }
+        ctx.session.beginEdit(bars == 0 ? "Fixed length off" : "Fixed length " + juce::String(bars) + (bars == 1 ? " bar" : " bars"));
+        set.setFixedRecordBars(bars);
+        return true;
+    }
     case Role::stopClip:
         // Shift+Stop Clip stops every clip (as on Push 2); held alone it's Session mode's modifier.
         if (shift)
@@ -298,6 +337,10 @@ void SurfaceController::renderGlobals(LedFrame& frame) const
     set(Role::undo, isHeld(Role::undo) ? lit : ctx.session.undoManager().canUndo() ? available : LedState::off());
     set(Role::stopAll, isHeld(Role::stopAll) ? lit : available);
     set(Role::newClip, isHeld(Role::newClip) ? lit : available);
+    set(Role::fixedLength, ctx.session.set().fixedRecordBars() != 0 ? lit : available);
+    const bool hasClip = selectedClip(ctx, selectedTrack(ctx)).isValid();
+    set(Role::doubleLoop, isHeld(Role::doubleLoop) ? lit : hasClip ? available : LedState::off());
+    set(Role::quantize, isHeld(Role::quantize) ? lit : hasClip ? available : LedState::off());
     for (const auto role : {Role::modeSession, Role::modeNote, Role::modeDevice, Role::modeMix, Role::modeBrowse, Role::modeClip})
     {
         const auto mode = *modeOfButton(role);

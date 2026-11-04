@@ -103,7 +103,8 @@ void SnapshotBuilder::valueTreePropertyChanged(juce::ValueTree& tree, const juce
     if ((tree.hasType(ids::device) && (property == ids::name || property == ids::folded || property == ids::showAll ||
                                        property == ids::padStart || property == ids::padPage)) ||
         (tree.hasType(ids::rackChain) && property == ids::name) ||
-        (tree.hasType(ids::track) && property == ids::noteLayout))
+        (tree.hasType(ids::track) && property == ids::noteLayout) ||
+        (tree.hasType(ids::liveSet) && (property == ids::quantizeGrid || property == ids::quantizeAmount)))
         return;
     if (tree.hasType(ids::device) && property == ids::enabled)
     {

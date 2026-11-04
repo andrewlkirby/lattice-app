@@ -16,6 +16,8 @@ class SessionMode;
 class NoteMode;
 class DeviceMode;
 class MixMode;
+class ClipMode;
+class BrowseMode;
 
 /** Runs one connected device (docs/06-m5-controllers.md, "SurfaceController and ModeStack"): its
     modes, the global buttons (transport, undo, Shift, the mode buttons), its LEDs and display.
@@ -50,15 +52,19 @@ public:
     std::optional<ModeKind> encoderModeKind() const noexcept;
     /** Whether a mode is running, on the grid or the encoders. */
     bool isShown(ModeKind kind) const noexcept;
-    /** Modes come phase by phase (5a: Session, 5b: Note, 5c: Device, Mix); false for one that
-        doesn't exist yet. */
+    /** Modes come phase by phase (5a: Session, 5b: Note, 5c: Device, Mix, 5d: Clip, Browse); false
+        for one that doesn't exist yet (Browse, without a browser to drive). */
     bool isAvailable(ModeKind kind) const noexcept;
-    /** Device or Mix go on the encoders (or the grid, without encoders); the others on the grid. */
+    /** Device, Mix, Clip and Browse go on the encoders (or the grid, without encoders); Session and
+        Note on the grid. */
     void setMode(ModeKind kind);
     SessionMode& sessionMode() noexcept { return *session; }
     NoteMode& noteMode() noexcept { return *note; }
     DeviceMode& deviceMode() noexcept { return *device; }
     MixMode& mixMode() noexcept { return *mix; }
+    ClipMode& clipMode() noexcept { return *clipModePtr; }
+    /** Null without a browser to drive. */
+    BrowseMode* browseMode() noexcept { return browseModePtr; }
     EncoderBank& encoderBank() noexcept { return *bank; }
     /** What the display shows now (empty for a device without one). */
     const DisplayFrame& shownDisplay() const noexcept { return shownFrame; }
@@ -130,6 +136,9 @@ private:
     NoteMode* note = nullptr;
     DeviceMode* device = nullptr;
     MixMode* mix = nullptr;
+    ClipMode* clipModePtr = nullptr;
+    BrowseMode* browseModePtr = nullptr;
+    int fixedBefore = 1; // the length Fixed Length goes back to
     std::unique_ptr<DeviceSpecs> ownSpecs;
     DeviceSpecs* deviceSpecs = nullptr;
     std::unique_ptr<EncoderBank> bank;

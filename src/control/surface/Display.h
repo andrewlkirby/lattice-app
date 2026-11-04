@@ -38,6 +38,19 @@ struct DisplayButton
     bool operator==(const DisplayButton&) const = default;
 };
 
+/** A list across some of the display's columns, in place of their cells (Browse: the sources,
+    the items). Only a window of a long list is given, with its selection in it. */
+struct DisplayList
+{
+    juce::String title{};
+    std::vector<juce::String> items{};
+    int selected = -1;        // into items (-1: none)
+    int columns = 1;          // the cells across it takes
+    std::uint32_t colour = 0; // the selection's (0xRRGGBB); 0: the display's accent
+
+    bool operator==(const DisplayList&) const = default;
+};
+
 struct DisplayFrame
 {
     juce::String title{};               // shown where the upper labels go when there are none
@@ -46,6 +59,7 @@ struct DisplayFrame
     std::vector<DisplayButton> lower{}; // one per lower display button
     int detail = -1;                    // the touched encoder, shown large (-1: none)
     juce::String message{};             // in the middle when no cell has anything ("No devices")
+    std::vector<DisplayList> lists{};   // left to right, in place of the cells (Browse)
 
     bool operator==(const DisplayFrame&) const = default;
 };

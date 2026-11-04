@@ -1,5 +1,6 @@
 #include "control/modes/NoteMode.h"
 
+#include "control/modes/SelectedClip.h"
 #include "core/model/LiveSet.h"
 #include "devices/racks/Rack.h"
 #include "devices/racks/RackEditing.h"
@@ -188,20 +189,7 @@ int NoteMode::drumNote() const
 
 juce::ValueTree NoteMode::sequencedClip() const
 {
-    const int t = track();
-    if (t < 0)
-        return {};
-    auto& c = host.context();
-    const auto& set = c.session.set();
-    const int scene = c.selection.get().scene;
-    if (scene >= 0 && scene < set.numScenes())
-        if (const auto clip = set.clip(t, scene); clip.isValid())
-            return clip;
-    // An empty slot: the clip the track plays, if it plays one.
-    if (const auto id = c.feed.trackPlay(t).playingClipId; id != 0)
-        if (const auto [pt, ps] = set.findClip(id); pt == t)
-            return set.clip(pt, ps);
-    return {};
+    return selectedClip(host.context(), track());
 }
 
 StepSequencer::Target NoteMode::sequencerTarget() const

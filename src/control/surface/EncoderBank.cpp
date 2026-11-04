@@ -7,6 +7,18 @@
 namespace lattice::control
 {
 
+DisplayCell cellFor(const ui::ValueBinding& b)
+{
+    const auto& spec = b.spec();
+    DisplayCell cell;
+    cell.name = spec.name;
+    cell.value = b.text();
+    cell.position = b.normalised();
+    cell.bipolar = spec.kind == ParamKind::Float && spec.minValue < 0.0f && spec.maxValue > 0.0f;
+    cell.detail = b.textFor(spec.minValue) + juce::String::fromUTF8(" \xe2\x80\x93 ") + b.textFor(spec.maxValue);
+    return cell;
+}
+
 EncoderBank::EncoderBank(LiveSet& set, DeviceSpecs& s, juce::UndoManager* u) : liveSet(set), specs(s), undo(u) {}
 
 EncoderBank::~EncoderBank()

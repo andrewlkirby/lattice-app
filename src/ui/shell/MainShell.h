@@ -113,6 +113,8 @@ public:
     /** After the note keys or a range step changed (the app re-reads the track's tuning). */
     std::function<void()> onKeyboardSettingsChanged;
     BrowserView& browserView() noexcept { return *browser; }
+    /** The browser as the controllers' Browse mode drives it. */
+    control::BrowseHost& browseHost() noexcept;
     library::Library& library() noexcept { return *libraryService; }
     /** Inserts what the browser names (a drag description) where the Device view is looking; a
         tuning goes to the selected track. False if nothing was inserted (or a question was asked). */
@@ -262,6 +264,8 @@ private:
     std::unique_ptr<presets::PresetLibrary> presetLibrary;
     std::unique_ptr<library::Library> libraryService; // after the presets and the job pool it uses
     std::unique_ptr<BrowserView> browser;
+    class ShellBrowseHost;
+    std::unique_ptr<ShellBrowseHost> browseAccess; // the browser and the Device view, for Browse mode
     std::unique_ptr<DeviceContext> deviceShared;
     std::unique_ptr<DeviceView> devices;
     std::unique_ptr<TuningView> tunings_;

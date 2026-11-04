@@ -152,6 +152,28 @@ void cell(juce::Graphics& g, const DisplayCell& d, juce::Rectangle<float> r, boo
         arc(g, area.getCentre(), radius - width * 0.5f, width, d.position, d.bipolar, c.track, accent);
     }
 }
+void list(juce::Graphics& g, const DisplayList& d, juce::Rectangle<float> r, float line, const DisplayRenderer::Colours& c)
+{
+    auto area = r.reduced(r.getWidth() * 0.03f, 0.0f);
+    label(g, d.title, area.removeFromTop(line), line * 0.62f, c.dim, juce::Justification::centredLeft);
+    const int fits = std::max(1, static_cast<int>(area.getHeight() / line));
+    const int count = static_cast<int>(d.items.size());
+    // The selection kept in the middle, the ends of the list at its edges.
+    const int first = juce::jlimit(0, std::max(0, count - fits), d.selected - fits / 2);
+    const auto accent = rgbColour(d.colour, c.accent);
+    for (int i = first; i < count && i < first + fits; ++i)
+    {
+        const auto row = area.removeFromTop(line);
+        auto ink = c.text;
+        if (i == d.selected)
+        {
+            g.setColour(accent);
+            g.fillRoundedRectangle(row.reduced(0.0f, line * 0.06f), line * 0.12f);
+            ink = accent.getPerceivedBrightness() > 0.6f ? juce::Colours::black : juce::Colours::white;
+        }
+        label(g, d.items[static_cast<std::size_t>(i)], row.reduced(line * 0.25f, 0.0f), line * 0.62f, ink, juce::Justification::centredLeft);
+    }
+}
 } // namespace
 
 DisplayRenderer::Colours DisplayRenderer::coloursFor(const ui::Theme& theme)
@@ -204,6 +226,23 @@ void DisplayRenderer::draw(juce::Graphics& g, const DisplayFrame& frame, juce::R
     strip(g, frame.upper, frame.title, l.upper, l.across, c);
     strip(g, frame.lower, {}, l.lower, l.across, c);
 
+    if (!frame.lists.empty())
+    {
+        // The lists side by side across the middle, a column (a cell's width) at a time.
+        const auto middle = bounds.withTop(l.upper.getBottom()).withBottom(l.lower.getY());
+        const float column = middle.getWidth() / static_cast<float>(l.across);
+        const float line = l.upper.getHeight() * 0.75f; // five rows or so on a Push
+        float x = middle.getX();
+        for (const auto& d : frame.lists)
+        {
+            const float w = column * static_cast<float>(std::max(1, d.columns));
+            list(g, d, juce::Rectangle<float>(x, middle.getY(), std::min(w, middle.getRight() - x), middle.getHeight()), line, c);
+            x += w;
+            if (x >= middle.getRight())
+                break;
+        }
+        return;
+    }
     const bool anything = std::any_of(frame.cells.begin(), frame.cells.end(), [](const DisplayCell& d) { return d.name.isNotEmpty(); });
     if (!anything)
     {

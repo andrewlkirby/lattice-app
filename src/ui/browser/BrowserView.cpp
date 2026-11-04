@@ -913,13 +913,19 @@ void BrowserView::rowsChanged()
     list->rowsChanged();
     if (browser.selectedRow() >= 0)
         list->scrollTo(browser.selectedRow());
+    if (onBrowserChanged)
+        onBrowserChanged();
 }
 
 void BrowserView::selectionChanged()
 {
     list->repaint();
+    if (browser.selectedRow() >= 0)
+        list->scrollTo(browser.selectedRow()); // a controller may have moved it
     accessible::selectionChanged(*list);
     previewSelected();
+    if (onBrowserChanged)
+        onBrowserChanged();
 }
 
 void BrowserView::engineStateChanged(std::uint32_t aspects)

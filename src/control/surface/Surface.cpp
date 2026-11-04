@@ -167,6 +167,9 @@ std::vector<juce::String> displayText(const DisplayFrame& frame, int lines, int 
         out.push_back(fit(heading));
         if (frame.message.isNotEmpty())
             out.push_back(fit(frame.message));
+        for (const auto& list : frame.lists)
+            if (list.selected >= 0 && list.selected < static_cast<int>(list.items.size()))
+                out.push_back(pair(list.title, list.items[static_cast<std::size_t>(list.selected)]));
         for (const auto& d : frame.cells)
             if (d.name.isNotEmpty())
                 out.push_back(pair(d.caption.isNotEmpty() ? d.caption : d.name, d.value));

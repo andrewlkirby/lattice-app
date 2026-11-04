@@ -1,6 +1,7 @@
 #include "control/modes/NoteLayout.h"
 
 #include "tuning/TuningTable.h"
+#include "ui/clip/ClipActions.h"
 
 #include <algorithm>
 
@@ -270,9 +271,7 @@ juce::String NoteLayout::toString() const
 
 const std::vector<std::pair<juce::String, double>>& NoteLayout::stepRates()
 {
-    static const std::vector<std::pair<juce::String, double>> rates{
-        {"1/4", 1.0}, {"1/8", 0.5}, {"1/8T", 1.0 / 3.0}, {"1/16", 0.25}, {"1/16T", 1.0 / 6.0}, {"1/32", 0.125}};
-    return rates;
+    return ui::clipActions::grids(); // the same as Quantize's
 }
 
 double NoteLayout::stepLength() const noexcept

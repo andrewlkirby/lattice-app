@@ -1,5 +1,6 @@
 #include "ui/mapping/Targets.h"
 
+#include "ui/clip/ClipActions.h"
 #include "ui/clip/ClipBindings.h"
 #include "ui/clip/Steps.h"
 #include "ui/session/MixerStrip.h"
@@ -28,6 +29,8 @@ std::unique_ptr<ValueBinding> bindingForTarget(LiveSet& set, DeviceSpecs& specs,
         return clipValues::bindingFor(set, undo, afterColon);
     if (target.startsWith("notes:"))
         return steps::bindingFor(set, undo, afterColon);
+    if (target.startsWith("set/"))
+        return clipActions::setBinding(set, undo, target.fromFirstOccurrenceOf("/", false, false));
     if (target.startsWith("device:"))
     {
         const auto device = findDeviceById(set.state(), id);

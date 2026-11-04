@@ -72,6 +72,9 @@ public:
     /** Asks for a folder and adds it to the places. */
     void addPlace();
 
+    /** Called after the rows, the selection or the source changed (a controller's Browse mode). */
+    std::function<void()> onBrowserChanged;
+
     /** The drag description of an item (ui::drag), or empty for one that can't be dragged. */
     static juce::String descriptionFor(const library::Item& item);
     /** A collection's colour. */

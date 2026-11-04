@@ -1,5 +1,6 @@
 #include "ui/shell/MainShell.h"
 
+#include "control/surface/BrowseHost.h"
 #include "core/model/UndoNames.h"
 
 #include "platform/Platform.h"
@@ -54,6 +55,33 @@ public:
         focused->moveKeyboardFocusToSibling(false);
         return true;
     }
+};
+
+/** Browse mode's view of the window (control::BrowseHost): the browser's list and previews, and
+    the Device view's inserting point and hot-swap. */
+class MainShell::ShellBrowseHost final : public control::BrowseHost
+{
+public:
+    explicit ShellBrowseHost(MainShell& s) : shell(s) {}
+
+    BrowserModel& browser() override { return shell.browser->model(); }
+    bool load() override { return shell.browser->insertSelected(); }
+    bool previewOn() const override { return shell.browser->isPreviewOn(); }
+    void setPreviewOn(bool on) override
+    {
+        shell.browser->setPreviewOn(on);
+        changed();
+    }
+    juce::ValueTree hotSwapTarget() const override { return shell.devices->hotSwapTarget(); }
+    void setHotSwap(bool on) override
+    {
+        shell.devices->setHotSwapTarget(on ? shell.devices->selectedDevice() : juce::ValueTree());
+        changed();
+    }
+    void notify() { changed(); }
+
+private:
+    MainShell& shell;
 };
 
 MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile& settingsFile, TuningRegistry& tunings,
@@ -325,6 +353,8 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
         return device != nullptr ? device->getCurrentSampleRate() : 48000.0;
     };
     browser = std::make_unique<BrowserView>(*libraryService, jobPool, engine, stateFeed, *presetLibrary, &settings, std::move(browsing));
+    browseAccess = std::make_unique<ShellBrowseHost>(*this);
+    browser->onBrowserChanged = [this] { browseAccess->notify(); };
     arrangementPlaceholder = std::make_unique<Placeholder>("Arrangement", "After the MVP.");
     addChildComponent(*browser);
     addChildComponent(*detail);
@@ -378,6 +408,7 @@ MainShell::~MainShell()
 {
     session.onSetReplaced = nullptr;
     virtualSurface.reset();
+    browser->onBrowserChanged = nullptr;
     virtualPushWindow.reset();
     virtualPush.reset();
     preferencesWindow.reset();
@@ -1091,6 +1122,11 @@ bool MainShell::setTrackTuningFrom(int track, const juce::String& idOrPath)
     return true;
 }
 
+control::BrowseHost& MainShell::browseHost() noexcept
+{
+    return *browseAccess;
+}
+
 bool MainShell::insertFromBrowser(const juce::String& description)
 {
     if (drag::is(description, "tuning"))
@@ -1385,7 +1421,8 @@ void MainShell::setVirtualPushVisible(bool visible)
         return;
     }
     virtualPush = std::make_unique<control::VirtualPush>(stateFeed, virtualPushSettings());
-    virtualSurface = std::make_unique<control::SurfaceController>(control::SurfaceContext{session, registry, selected, stateFeed, &deviceSpecs}, *virtualPush);
+    virtualSurface = std::make_unique<control::SurfaceController>(
+        control::SurfaceContext{session, registry, selected, stateFeed, &deviceSpecs, browseAccess.get()}, *virtualPush);
     virtualSurface->setColours(surfaceColours());
     virtualSurface->setExpression(expressionSettings());
     placeVirtualPush();

@@ -17,11 +17,11 @@ inline float positionOfRow(int row, int rows) noexcept
 }
 
 /** Lights one column for a value at `position` (0..1); unlit pads show the colour dimmed, so the
-    column reads as a fader. */
+    column reads as a fader. rows: how many of the grid's rows from the top it uses (-1: all). */
 inline void renderColumn(LedFrame& frame, const SurfaceCapabilities& caps, int column, float position, bool bipolar,
-                         std::uint32_t colour, float dim)
+                         std::uint32_t colour, float dim, int rows = -1)
 {
-    const int rows = caps.rows;
+    rows = rows < 0 ? caps.rows : rows;
     const float half = rows <= 1 ? 0.5f : 0.5f / static_cast<float>(rows - 1);
     for (int r = 0; r < rows; ++r)
     {

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "control/surface/Display.h"
 #include "devices/framework/DeviceSpecs.h"
 #include "ui/widgets/ValueBinding.h"
 
@@ -88,5 +89,8 @@ private:
 
     JUCE_DECLARE_NON_COPYABLE(EncoderBank)
 };
+
+/** A display cell showing what a binding controls: its name, value, knob and range. */
+DisplayCell cellFor(const ui::ValueBinding& binding);
 
 } // namespace lattice::control
