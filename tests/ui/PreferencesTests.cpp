@@ -4,6 +4,7 @@
 
 #include "support/TestDevices.h"
 #include "tuning/Tet12.h"
+#include "ui/find/FindIndex.h"
 #include "ui/prefs/AppSettings.h"
 #include "ui/shell/MainShell.h"
 
@@ -182,6 +183,27 @@ TEST_CASE("Preferences: every tab opens; the tabs apply what's chosen", "[ui][pr
         REQUIRE(v->pageComponent() != nullptr);
         CHECK(v->pageComponent()->getTitle() == PreferencesView::pageName(page));
         CHECK(f.props->getIntValue(PreferencesView::lastPageKey) == p);
+    }
+
+    SECTION("Find knows every labelled setting, on its tab")
+    {
+        for (int p = 0; p < PreferencesView::numPages; ++p)
+        {
+            const auto page = static_cast<PreferencesView::Page>(p);
+            v->show(page);
+            for (auto* c : v->pageComponent()->getChildren())
+            {
+                // A row's control is titled with its label; buttons say what they do on their face.
+                if (c->getTitle().isEmpty() || dynamic_cast<juce::Button*>(c) != nullptr)
+                    continue;
+                // Typing the entry's name finds it ("Note Keys": "Note keys (lowest first)").
+                bool found = false;
+                for (const auto& s : FindIndex::settings())
+                    found = found || (s.page == p && FindIndex::matches(FindIndex::wordsOf(s.name), c->getTitle()));
+                INFO(PreferencesView::pageName(page) << ": " << c->getTitle());
+                CHECK(found);
+            }
+        }
     }
 
     SECTION("Tuning: new tracks' tuning")
