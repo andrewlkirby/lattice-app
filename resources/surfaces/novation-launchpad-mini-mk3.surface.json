@@ -1,0 +1,30 @@
+{
+  "lattice": "surface",
+  "version": 1,
+  "name": "Novation Launchpad Mini MK3",
+  "manufacturer": "Novation",
+  "verified": false,
+  "source": "Launchpad Mini [MK3] Programmer's Reference Manual (Novation).",
+  "notes": "Unverified: written from the manual, not yet tried on a device. Its pads have no velocity. Drums is Note, Keys is Layout, and User is Shift.",
+  "ports": { "input": ["LPMiniMK3 MIDI"], "output": ["LPMiniMK3 MIDI"] },
+  "init": ["F0 00 20 29 02 0D 0E 01 F7"],
+  "exit": ["F0 00 20 29 02 0D 0E 00 F7"],
+  "grid": {
+    "rows": 8, "columns": 8, "message": "note",
+    "first": 81, "rowStep": -10, "columnStep": 1,
+    "velocity": false,
+    "led": { "kind": "palette", "palette": "novation", "blinkChannel": 2, "pulseChannel": 3 }
+  },
+  "leds": { "rgb": { "kind": "palette", "palette": "novation", "blinkChannel": 2, "pulseChannel": 3 } },
+  "buttons": [
+    { "role": "nav.up", "cc": 91, "led": "rgb" },
+    { "role": "nav.down", "cc": 92, "led": "rgb" },
+    { "role": "nav.left", "cc": 93, "led": "rgb" },
+    { "role": "nav.right", "cc": 94, "led": "rgb" },
+    { "role": "mode.session", "cc": 95, "led": "rgb" },
+    { "role": "mode.note", "cc": 96, "led": "rgb" },
+    { "role": "layout", "cc": 97, "led": "rgb" },
+    { "role": "shift", "cc": 98, "led": "rgb" },
+    { "role": "scene", "cc": [89, 79, 69, 59, 49, 39, 29, 19], "led": "rgb" }
+  ]
+}

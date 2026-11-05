@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lattice.invalid/schemas/surface-1.json",
+  "title": "Lattice surface definition",
+  "description": "A MIDI controller for Lattice's modes (docs/06-m5-controllers.md, \"Generic MIDI controllers\"). Channels count from 1. A definition is \"verified\" only once it has been tried on the device.",
+  "type": "object",
+  "required": ["lattice", "version", "name"],
+  "properties": {
+    "lattice": { "const": "surface" },
+    "version": { "const": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "manufacturer": { "type": "string" },
+    "verified": { "type": "boolean", "default": false },
+    "template": { "type": "boolean", "default": false, "description": "Never matched to a device by its ports; chosen by hand." },
+    "source": { "type": "string", "description": "Where the numbers came from." },
+    "notes": { "type": "string" },
+    "ports": {
+      "type": "object",
+      "properties": {
+        "input": { "$ref": "#/$defs/patterns" },
+        "output": { "$ref": "#/$defs/patterns", "description": "Defaults to the input patterns." }
+      }
+    },
+    "identity": { "$ref": "#/$defs/hex", "description": "The identity reply's bytes after F0 7E <id> 06 02." },
+    "init": { "$ref": "#/$defs/messages" },
+    "exit": { "$ref": "#/$defs/messages" },
+    "grid": {
+      "type": "object",
+      "required": ["rows", "columns"],
+      "properties": {
+        "rows": { "type": "integer", "minimum": 1, "maximum": 16 },
+        "columns": { "type": "integer", "minimum": 1, "maximum": 16 },
+        "message": { "enum": ["note", "cc"], "default": "note" },
+        "channel": { "$ref": "#/$defs/channel" },
+        "first": { "$ref": "#/$defs/number", "description": "The top-left pad's number." },
+        "rowStep": { "type": "integer", "minimum": -127, "maximum": 127, "description": "Added for each row down." },
+        "columnStep": { "type": "integer", "minimum": -127, "maximum": 127, "default": 1 },
+        "table": { "type": "array", "items": { "type": "array", "items": { "$ref": "#/$defs/number" } }, "description": "Each row's numbers, from the top: instead of first and the steps." },
+        "velocity": { "type": "boolean", "default": true },
+        "aftertouch": { "enum": ["none", "channel", "polyphonic"], "default": "none" },
+        "led": { "$ref": "#/$defs/led" }
+      },
+      "oneOf": [{ "required": ["table"] }, { "required": ["first", "rowStep"] }]
+    },
+    "leds": {
+      "type": "object",
+      "description": "The lights buttons use when they say only \"single\" or \"rgb\".",
+      "properties": { "single": { "$ref": "#/$defs/led" }, "rgb": { "$ref": "#/$defs/led" } }
+    },
+    "buttons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["role"],
+        "properties": {
+          "role": {
+            "enum": ["play", "record", "shift", "mode.session", "mode.note", "mode.device", "mode.mix", "mode.browse", "mode.clip",
+                     "nav.up", "nav.down", "nav.left", "nav.right", "scene", "trackSelect", "displayUpper", "displayLower",
+                     "octave.up", "octave.down", "layout", "scale", "fixedLength", "duplicate", "delete", "undo", "quantize",
+                     "doubleLoop", "new", "metronome", "tapTempo", "stopClip", "mute", "solo", "stopAll"]
+          },
+          "index": { "type": "integer", "minimum": 0, "description": "For a numbered role (scene, trackSelect, displayUpper, displayLower)." },
+          "note": { "oneOf": [{ "$ref": "#/$defs/number" }, { "type": "array", "items": { "$ref": "#/$defs/number" } }] },
+          "cc": { "oneOf": [{ "$ref": "#/$defs/number" }, { "type": "array", "items": { "$ref": "#/$defs/number" } }] },
+          "channel": { "$ref": "#/$defs/channel" },
+          "led": { "oneOf": [{ "enum": ["none", "single", "rgb"] }, { "$ref": "#/$defs/led" }] }
+        },
+        "oneOf": [{ "required": ["note"] }, { "required": ["cc"] }]
+      }
+    },
+    "encoders": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "cc": { "$ref": "#/$defs/number" },
+          "nrpn": { "type": "integer", "minimum": 0, "maximum": 16383 },
+          "channel": { "$ref": "#/$defs/channel" },
+          "count": { "type": "integer", "minimum": 1, "maximum": 64, "description": "A row of them on numbers one after another." },
+          "encoding": { "enum": ["absolute", "twosComplement", "binaryOffset", "signMagnitude", "cc14", "nrpn14"], "default": "absolute" },
+          "lsb": { "$ref": "#/$defs/number", "description": "cc14: the low part's CC (default cc + 32)." },
+          "touch": { "type": "object", "properties": { "note": { "$ref": "#/$defs/number" }, "cc": { "$ref": "#/$defs/number" }, "channel": { "$ref": "#/$defs/channel" } } }
+        }
+      }
+    },
+    "encoderResolution": { "type": "integer", "minimum": 8, "maximum": 10000 },
+    "display": {
+      "type": "object",
+      "required": ["lines", "characters", "line"],
+      "properties": {
+        "lines": { "type": "integer", "minimum": 1, "maximum": 8 },
+        "characters": { "type": "integer", "minimum": 1, "maximum": 128 },
+        "line": { "type": "string", "description": "A sysex template with {line} and {text}." }
+      }
+    }
+  },
+  "$defs": {
+    "number": { "type": "integer", "minimum": 0, "maximum": 127 },
+    "channel": { "type": "integer", "minimum": 1, "maximum": 16 },
+    "hex": { "type": "string", "pattern": "^\\s*([0-9A-Fa-f]{1,2}\\s*)+$" },
+    "patterns": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }], "description": "Regular expressions matched against port names." },
+    "messages": { "oneOf": [{ "$ref": "#/$defs/hex" }, { "type": "array", "items": { "$ref": "#/$defs/hex" } }] },
+    "led": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["none", "single", "palette", "sysex"] },
+        "channel": { "$ref": "#/$defs/channel" },
+        "on": { "$ref": "#/$defs/number" },
+        "off": { "$ref": "#/$defs/number" },
+        "blink": { "$ref": "#/$defs/number" },
+        "palette": { "oneOf": [{ "enum": ["novation", "akai"] }, { "type": "array", "items": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" } }] },
+        "blinkChannel": { "$ref": "#/$defs/channel" },
+        "pulseChannel": { "$ref": "#/$defs/channel" },
+        "template": { "type": "string", "description": "Hex bytes with {id} {r7} {g7} {b7} {r8hi} {r8lo} {g8hi} {g8lo} {b8hi} {b8lo}." }
+      }
+    }
+  }
+}

@@ -14,6 +14,7 @@ add_executable(lattice_tests
     control/StepSequencerTests.cpp
     control/ClipBrowseTests.cpp
     control/FastPathTests.cpp
+    control/GenericMidiTests.cpp
     control/NoteModeTests.cpp
     control/SessionModeTests.cpp
     control/VirtualPushTests.cpp

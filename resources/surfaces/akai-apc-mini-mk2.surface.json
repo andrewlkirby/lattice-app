@@ -1,0 +1,23 @@
+{
+  "lattice": "surface",
+  "version": 1,
+  "name": "Akai APC mini mk2",
+  "manufacturer": "Akai Professional",
+  "verified": false,
+  "source": "APC mini mk2 Communication Protocol (Akai Professional): pad notes, the LED channels for brightness and animation, the colour table, faders.",
+  "notes": "Unverified: written from the protocol document, not yet tried on a device. The pads have no velocity. The faders are the encoders (the master fader is left out). It has no mode buttons, so it stays in Session mode.",
+  "ports": { "input": ["APC mini mk2"], "output": ["APC mini mk2"] },
+  "grid": {
+    "rows": 8, "columns": 8, "message": "note",
+    "first": 56, "rowStep": -8, "columnStep": 1,
+    "velocity": false,
+    "led": { "kind": "palette", "palette": "akai", "channel": 7, "blinkChannel": 15, "pulseChannel": 10 }
+  },
+  "leds": { "single": { "kind": "single", "on": 1, "off": 0, "blink": 2 } },
+  "buttons": [
+    { "role": "trackSelect", "note": [100, 101, 102, 103, 104, 105, 106, 107], "led": "single" },
+    { "role": "scene", "note": [112, 113, 114, 115, 116, 117, 118, 119], "led": "single" },
+    { "role": "shift", "note": 122 }
+  ],
+  "encoders": [ { "cc": 48, "count": 8, "encoding": "absolute" } ]
+}

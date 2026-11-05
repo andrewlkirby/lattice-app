@@ -366,6 +366,37 @@ Playing pads must feel as tight as a dedicated instrument. **Pad-to-sound latenc
 - Automatic detection, the Preferences → Controllers tab, how surfaces and MIDI Map work together, and the Surface Monitor.
 - The learn wizard.
 
+##### As built (5e, part 1: definitions and the driver, 2026-11-04)
+- **Where things are:**
+  - `src/control/generic/SurfaceDefinition` (the file format and its reader);
+  - `Encoding` (the encoders' encodings, and detecting one for the wizard);
+  - `GenericMidiDriver` (a definition as a `SurfaceDriver`);
+  - `resources/surfaces/` (the included definitions, compiled in, and `surface.schema.json`).
+- **The file:** `"lattice": "surface", "version": 1`, then:
+  - **Identity:** ports (regular expressions), an optional identity reply, and init and exit messages.
+  - **Grid:** the top-left pad's number and the steps across and down, or a table; velocity and aftertouch.
+  - **Buttons:** roles with a note or CC each. A numbered role can take a list of numbers.
+  - **Encoders:** CCs (a row with `count`) or NRPNs, with their encoding, and an optional touch note.
+  - **Lights:** on/off values, a palette (by name, or a list of colours) with the device's blink and pulse channels, or an RGB sysex template.
+  - **Text display:** a sysex template per line.
+  - Channels count from 1 in the file.
+  - A mistake comes back with its place, e.g. "buttons[1].role: no role 'jump'". Two controls may not send the same message. A numbered role's buttons must run 0, 1, 2… with no gaps.
+  - `"template": true` marks a starting point that is never matched by its ports (Keyboard + 8 knobs).
+- **The driver:**
+  - **Input:** messages arrive on the device's MIDI thread. Pads play on the fast path there, then everything goes on to the controller, in order. A message the definition doesn't know is passed on (part 2 gives it to MIDI Map and the tracks).
+  - **Encoders:** relative ones turn, absolute ones (7-bit, 14-bit pairs and NRPNs) set a position. Channel pressure goes to the pads held on that channel.
+  - **Lights:** only what changed is sent. A palette light picks the nearest colour, and blinking or pulsing uses the device's own channels; a sysex light is steady.
+  - **Connecting and letting go:** `connect()` sends init and then every light; `disconnect()` turns every light off and sends exit.
+- **Included, all unverified:** Launchpad X, Mini MK3 and Pro MK3; APC mini mk2 and APC40 MKII; the APC64 (its grid only: Akai's full protocol isn't published, so the rest is to come from a device); Maschine MK3 in MIDI mode (set up in NI's Controller Editor); and the Keyboard + 8 knobs template. The palettes are the first 64 entries of the 128-colour table Novation and Akai share, approximate until checked on a device.
+- **Tests (`tests/control/GenericMidiTests.cpp`):**
+  - every included definition reads, and none is marked verified;
+  - mistakes named by place;
+  - the encodings and their detection;
+  - input from pads, buttons, pressure, and relative, 14-bit and NRPN encoders;
+  - lights as palette entries, on/off values and sysex, only what changed, and init and exit;
+  - every included definition running every mode, with a pad launching a clip on the fast path;
+  - the schema lists every role and encoding the reader knows.
+
 #### 5f: Push 2/3 driver
 - MIDI, the LED palette sysex, and the display over libusb (fetched by CMake with a pinned hash, like the other dependencies).
 - Detecting a missing WinUSB driver, and the udev rule for Linux.

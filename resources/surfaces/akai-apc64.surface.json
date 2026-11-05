@@ -1,0 +1,16 @@
+{
+  "lattice": "surface",
+  "version": 1,
+  "name": "Akai APC64",
+  "manufacturer": "Akai Professional",
+  "verified": false,
+  "source": "Partial: the pad grid as Akai's other APCs number it. Akai's full APC64 protocol isn't published; the rest is to come from the device's own messages (the learn wizard).",
+  "notes": "Unverified and incomplete: only the grid, numbered as the APC mini mk2's. Its buttons, touch strips and display are to be added from a device.",
+  "ports": { "input": ["APC64"], "output": ["APC64"] },
+  "grid": {
+    "rows": 8, "columns": 8, "message": "note",
+    "first": 56, "rowStep": -8, "columnStep": 1,
+    "velocity": true, "aftertouch": "polyphonic",
+    "led": { "kind": "palette", "palette": "akai", "channel": 7, "blinkChannel": 15, "pulseChannel": 10 }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "lattice": "surface",
+  "version": 1,
+  "name": "Keyboard + 8 knobs",
+  "verified": false,
+  "template": true,
+  "source": "A template: CCs 21 to 28, a common default for a keyboard's eight knobs.",
+  "notes": "A starting point for a keyboard with knobs: the knobs drive Device and Mix modes; its keys play the selected track as any MIDI keyboard does. Choose its ports, then change the CCs to your keyboard's (or use the learn wizard).",
+  "encoders": [ { "cc": 21, "count": 8, "encoding": "absolute" } ]
+}

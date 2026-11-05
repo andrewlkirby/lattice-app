@@ -173,13 +173,14 @@ target_compile_definitions(lattice_juce
 set_target_properties(lattice_juce PROPERTIES FOLDER "Dependencies")
 
 # --- Embedded resources ----------------------------------------------------------------------------
-# The Colundi table and the factory presets are compiled in, so the app works without the files on
+# The Colundi table, the factory presets and the surface definitions are compiled in, so the app works without the files on
 # disk. The presets are generated (tests/support/FactoryPresets.h).
 file(GLOB LATTICE_FACTORY_PRESETS CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/resources/presets/*.lpreset)
+file(GLOB LATTICE_SURFACE_DEFINITIONS CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/resources/surfaces/*.surface.json)
 juce_add_binary_data(lattice_binary_data
     HEADER_NAME LatticeBinaryData.h
     NAMESPACE LatticeResources
-    SOURCES resources/tunings/colundi_scale.txt ${LATTICE_FACTORY_PRESETS})
+    SOURCES resources/tunings/colundi_scale.txt ${LATTICE_FACTORY_PRESETS} ${LATTICE_SURFACE_DEFINITIONS})
 # Plain data needs no link-time optimisation (and MSVC's LTCG has crashed generating it).
 set_target_properties(lattice_binary_data PROPERTIES FOLDER "Dependencies" POSITION_INDEPENDENT_CODE ON
                                                      INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
@@ -305,6 +306,9 @@ endif()
 # --- UI (M4, docs/05-m4-ui.md): a library, so the tests can drive the views headless ---------------
 add_library(lattice_ui STATIC
     src/control/display/DisplayRenderer.cpp
+    src/control/generic/Encoding.cpp
+    src/control/generic/GenericMidiDriver.cpp
+    src/control/generic/SurfaceDefinition.cpp
     src/control/modes/DeviceMode.cpp
     src/control/modes/MixMode.cpp
     src/control/modes/StepSequencer.cpp
@@ -388,7 +392,7 @@ add_library(lattice_ui STATIC
     src/ui/widgets/Toggle.cpp
     src/ui/widgets/ValueBinding.cpp)
 target_include_directories(lattice_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(lattice_ui PUBLIC lattice_core)
+target_link_libraries(lattice_ui PUBLIC lattice_core PRIVATE lattice_binary_data) # the surface definitions
 lattice_set_warnings(lattice_ui)
 
 # --- The window's content (M4): a library, so the tests can drive the whole app headless ----------
