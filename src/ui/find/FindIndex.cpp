@@ -39,6 +39,8 @@ const std::vector<FindIndex::Setting>& FindIndex::settings()
         {"Virtual Push Encoders", "Controllers", 2}, {"Pad Velocity", "Controllers", 2},
         {"Velocity Curve", "Controllers", 2},  {"Pad Pressure", "Controllers", 2},
         {"Pressure Threshold", "Controllers", 2}, {"Touch Strip", "Controllers", 2},
+        {"Control Surfaces", "Controllers", 2}, {"Surface Monitor", "Controllers", 2},
+        {"Launchpad", "Controllers", 2},       {"APC", "Controllers", 2},
         {"Theme", "Look & Feel", 3},           {"Zoom", "Look & Feel", 3},
         {"Colours", "Look & Feel", 3},         {"Places", "Library", 4},
         {"Library Folders", "Library", 4},     {"Rescan Library", "Library", 4},

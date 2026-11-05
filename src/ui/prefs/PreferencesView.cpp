@@ -2,6 +2,7 @@
 
 #include "control/virtual/VirtualPush.h"
 #include "engine/WorkerPool.h"
+#include "ui/controllers/SurfaceManager.h"
 #include "ui/prefs/AppSettings.h"
 #include "ui/theme/LatticeLookAndFeel.h"
 
@@ -339,6 +340,14 @@ private:
             };
             r->track.onClick = apply;
             r->remote.onClick = apply;
+            if (context.engine.isSurfaceInput(d.identifier))
+            {
+                // A control surface's port: the surface decides what goes where.
+                r->track.setEnabled(false);
+                r->remote.setEnabled(false);
+                r->track.setTooltip("A control surface uses this input (Controllers page): its notes reach the tracks only if it passes them on.");
+                r->remote.setTooltip("A control surface uses this input: MIDI Map hears what the surface doesn't use.");
+            }
             list.addAndMakeVisible(*r);
             inputRows.push_back(std::move(r));
         }
@@ -364,6 +373,255 @@ private:
     juce::Component list;
     std::vector<std::unique_ptr<InputRow>> inputRows;
     juce::MidiDeviceListConnection connection;
+};
+
+// --- Control surfaces (part of the Controllers page) ---------------------------------------------
+
+/** What a surface port sends, as it arrives: its bytes and what the surface makes of them. */
+class SurfaceMonitorWindow final : public juce::DocumentWindow
+{
+public:
+    SurfaceMonitorWindow(SurfaceManager& m, juce::Colour background, std::function<void()> closed)
+        : juce::DocumentWindow("Surface Monitor", background, juce::DocumentWindow::closeButton), manager(m), onClosed(std::move(closed))
+    {
+        log.setMultiLine(true);
+        log.setReadOnly(true);
+        log.setTitle("Surface Monitor");
+        log.setSize(560, 360);
+        setContentNonOwned(&log, true);
+        setResizable(true, false);
+        setUsingNativeTitleBar(true);
+        centreWithSize(getWidth(), getHeight());
+        manager.setMonitor([this](const SurfaceManager::Seen& s) { add(s); });
+        add("Press pads, buttons and knobs on a surface: each message shows here with what it is.");
+    }
+    ~SurfaceMonitorWindow() override { manager.setMonitor(nullptr); }
+    void closeButtonPressed() override
+    {
+        if (onClosed)
+            juce::MessageManager::callAsync(onClosed); // not from inside this window's own callback
+    }
+
+private:
+    void add(const SurfaceManager::Seen& s)
+    {
+        const auto& entries = manager.entries();
+        const auto name = s.entry >= 0 && s.entry < static_cast<int>(entries.size()) ? entries[static_cast<std::size_t>(s.entry)].definition : juce::String();
+        juce::String bytes;
+        for (int i = 0; i < s.message.getRawDataSize() && i < 12; ++i)
+            bytes << juce::String::toHexString(s.message.getRawData()[i]).toUpperCase().paddedLeft('0', 2) << " ";
+        add(name + "   " + bytes.trimEnd() + "   " + (s.meaning.isNotEmpty() ? s.meaning : juce::String("not the surface's: MIDI Map (and the tracks, if passed on)")));
+    }
+    void add(const juce::String& line)
+    {
+        lines.add(line);
+        while (lines.size() > 300)
+            lines.remove(0);
+        log.setText(lines.joinIntoString("\n"), false);
+        log.moveCaretToEnd();
+    }
+
+    SurfaceManager& manager;
+    std::function<void()> onClosed;
+    juce::TextEditor log;
+    juce::StringArray lines;
+};
+
+/** The control surfaces: one row each (its definition, ports and state), and adding one. */
+class SurfacesPanel final : public juce::Component
+{
+public:
+    explicit SurfacesPanel(SurfaceManager& m) : manager(m)
+    {
+        setTitle("Control surfaces");
+        add.setTitle("Add a control surface");
+        add.onClick = [this] { chooseDefinition(); };
+        folder.setTitle("Open the surface definitions folder");
+        folder.onClick = [this] {
+            const auto f = manager.userFolder();
+            f.createDirectory();
+            f.startAsProcess();
+        };
+        reload.setTitle("Read the definitions again");
+        reload.onClick = [this] {
+            manager.reloadDefinitions();
+            rebuild();
+        };
+        for (auto* b : {&add, &folder, &reload})
+            addAndMakeVisible(*b);
+        manager.onChanged = [this] { rebuild(); };
+        rebuild();
+    }
+    ~SurfacesPanel() override { manager.onChanged = nullptr; }
+
+    /** Tests: each surface's line. */
+    int numRows() const noexcept { return static_cast<int>(rows.size()); }
+    juce::String rowText(int i) const { return rows[static_cast<std::size_t>(i)]->text; }
+    const juce::String& footerText() const noexcept { return footer; }
+
+    void paint(juce::Graphics& g) override
+    {
+        const auto& t = themeOf(*this);
+        g.setFont(t.font(t.fontSmall));
+        g.setColour(t.textDim);
+        g.drawFittedText(footer, footerArea, juce::Justification::topLeft, 6);
+    }
+    void resized() override
+    {
+        const auto& t = themeOf(*this);
+        const int h = juce::roundToInt(t.controlHeight);
+        auto r = getLocalBounds();
+        auto top = r.removeFromTop(h);
+        add.setBounds(top.removeFromLeft(h * 6));
+        top.removeFromLeft(juce::roundToInt(t.spacing));
+        folder.setBounds(top.removeFromLeft(h * 7));
+        top.removeFromLeft(juce::roundToInt(t.spacing));
+        reload.setBounds(top.removeFromLeft(h * 6));
+        r.removeFromTop(juce::roundToInt(t.spacing));
+        for (auto& row : rows)
+            row->setBounds(r.removeFromTop(juce::roundToInt(static_cast<float>(h) * 1.2f)));
+        footerArea = r.reduced(0, juce::roundToInt(t.spacing));
+    }
+
+private:
+    struct Row final : juce::Component
+    {
+        juce::String text;
+        juce::ToggleButton notes{"Notes to tracks"};
+        juce::TextButton monitor{"Monitor"}, remove{"Remove"};
+        Row()
+        {
+            notes.setTooltip("What the surface doesn't use of its notes also plays the armed tracks (a keyboard's keys).");
+            for (auto* c : std::initializer_list<juce::Component*>{&notes, &monitor, &remove})
+                addAndMakeVisible(*c);
+        }
+        void paint(juce::Graphics& g) override
+        {
+            const auto& t = themeOf(*this);
+            g.setColour(t.text);
+            g.setFont(t.font(t.fontNormal));
+            g.drawFittedText(text, getLocalBounds().withRight(getWidth() - controlsWidth()), juce::Justification::centredLeft, 2);
+        }
+        int controlsWidth() const { return juce::roundToInt(themeOf(*this).controlHeight * 17.0f); }
+        void resized() override
+        {
+            const int h = juce::roundToInt(themeOf(*this).controlHeight);
+            auto r = getLocalBounds().removeFromRight(controlsWidth()).withSizeKeepingCentre(controlsWidth(), h);
+            remove.setBounds(r.removeFromRight(h * 4));
+            r.removeFromRight(h / 4);
+            monitor.setBounds(r.removeFromRight(h * 4));
+            r.removeFromRight(h / 4);
+            notes.setBounds(r);
+        }
+    };
+
+    void rebuild()
+    {
+        rows.clear();
+        const auto& entries = manager.entries();
+        for (int i = 0; i < static_cast<int>(entries.size()); ++i)
+        {
+            const auto& e = entries[static_cast<std::size_t>(i)];
+            auto row = std::make_unique<Row>();
+            const auto* d = manager.definition(e.definition);
+            row->text = e.definition + (d == nullptr ? " (no such definition)" : !d->verified ? " (unverified)" : "") + "   " +
+                        (manager.isConnected(i) ? juce::String("connected") : juce::String("not connected")) + "   " + e.input +
+                        (e.output.isNotEmpty() && e.output != e.input ? " / " + e.output : juce::String());
+            row->setTitle(row->text);
+            row->notes.setToggleState(e.notesToTracks, juce::dontSendNotification);
+            row->notes.onClick = [this, i, b = &row->notes] { manager.setNotesToTracks(i, b->getToggleState()); };
+            row->monitor.onClick = [this] { showMonitor(); };
+            // Not from inside the row's own button: removing rebuilds the rows.
+            row->remove.onClick = [safe = juce::Component::SafePointer<SurfacesPanel>(this), i] {
+                juce::MessageManager::callAsync([safe, i] {
+                    if (safe != nullptr)
+                        safe->manager.remove(i);
+                });
+            };
+            addAndMakeVisible(*row);
+            rows.push_back(std::move(row));
+        }
+        footer = entries.empty() ? "No control surfaces yet. A controller Lattice has a definition for is offered when it's connected; "
+                                   "Add puts any definition on any ports (Keyboard + 8 knobs: a keyboard's knobs)."
+                                 : "A surface's port plays the modes; what the surface doesn't use goes to MIDI Map (Ctrl+M). "
+                                   "Definitions marked unverified haven't been tried on their device yet: Monitor shows what it sends.";
+        for (const auto& p : manager.problems())
+            footer << "\n" << p;
+        resized();
+        repaint();
+    }
+
+    void chooseDefinition()
+    {
+        juce::PopupMenu menu;
+        const auto& all = manager.definitions();
+        for (int i = 0; i < static_cast<int>(all.size()); ++i)
+        {
+            const auto& d = all[static_cast<std::size_t>(i)];
+            const bool found = manager.portsFor(d).input.isNotEmpty();
+            menu.addItem(i + 1, d.name + (found ? "  (connected now)" : juce::String()) + (d.verified ? juce::String() : "  (unverified)"));
+        }
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&add), [safe = juce::Component::SafePointer<SurfacesPanel>(this)](int chosen) {
+            if (safe == nullptr || chosen <= 0 || chosen > static_cast<int>(safe->manager.definitions().size()))
+                return;
+            const auto d = safe->manager.definitions()[static_cast<std::size_t>(chosen - 1)];
+            const auto found = safe->manager.portsFor(d);
+            if (found.input.isNotEmpty())
+                safe->manager.add({d.name, found.input, found.output, d.grid.pads.empty()});
+            else
+                safe->choosePorts(d);
+        });
+    }
+
+    /** No port matches the definition (a template, or a device named otherwise): choose them. */
+    void choosePorts(const control::generic::SurfaceDefinition& d)
+    {
+        const auto inputs = juce::MidiInput::getAvailableDevices();
+        if (inputs.isEmpty())
+        {
+            footer = "No MIDI inputs are connected, so there's nothing to put " + d.name + " on.";
+            repaint();
+            return;
+        }
+        juce::PopupMenu in;
+        for (int i = 0; i < inputs.size(); ++i)
+            in.addItem(i + 1, inputs[i].name);
+        const auto name = d.name;
+        const bool keys = d.grid.pads.empty();
+        in.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&add), [safe = juce::Component::SafePointer<SurfacesPanel>(this), name, keys, inputs](int chosenIn) {
+            if (safe == nullptr || chosenIn <= 0)
+                return;
+            const auto input = inputs[chosenIn - 1].name;
+            const auto outputs = juce::MidiOutput::getAvailableDevices();
+            juce::PopupMenu out;
+            out.addItem(1, "No output (no lights)");
+            for (int i = 0; i < outputs.size(); ++i)
+                out.addItem(i + 2, outputs[i].name, true, outputs[i].name == input);
+            out.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&safe->add), [safe, name, keys, input, outputs](int chosenOut) {
+                if (safe == nullptr || chosenOut <= 0)
+                    return;
+                safe->manager.add({name, input, chosenOut >= 2 ? outputs[chosenOut - 2].name : juce::String(), keys});
+            });
+        });
+    }
+
+    void showMonitor()
+    {
+        if (monitorWindow == nullptr)
+            monitorWindow = std::make_unique<SurfaceMonitorWindow>(manager, themeOf(*this).surface, [safe = juce::Component::SafePointer<SurfacesPanel>(this)] {
+                if (safe != nullptr)
+                    safe->monitorWindow.reset();
+            });
+        monitorWindow->setVisible(true);
+        monitorWindow->toFront(true);
+    }
+
+    SurfaceManager& manager;
+    juce::TextButton add{"Add..."}, folder{"Definitions Folder"}, reload{"Read Again"};
+    std::vector<std::unique_ptr<Row>> rows;
+    juce::String footer;
+    juce::Rectangle<int> footerArea;
+    std::unique_ptr<SurfaceMonitorWindow> monitorWindow;
 };
 
 // --- Controllers ---------------------------------------------------------------------------------
@@ -443,10 +701,17 @@ public:
              "selected device's parameters, the buttons above choosing the device and those below its pages. Mix mode: the volume, "
              "pan or sends of the tracks in view.",
              3);
-        note("Ableton Push 2 and 3 and other controllers come later in M5. Until then, any MIDI controller can play tracks "
-             "(MIDI tab: Track) and control anything with MIDI Map (Ctrl+M; MIDI tab: Remote).",
-             3);
+        if (context.surfaces != nullptr)
+        {
+            surfaces = std::make_unique<SurfacesPanel>(*context.surfaces);
+            row("Control surfaces", *surfaces, 0.0f, true);
+        }
+        else
+            note("Control surfaces start with the app's window.", 1);
     }
+
+    /** Tests: the surfaces list (null without a surface manager). */
+    SurfacesPanel* surfacesPanel() noexcept { return surfaces.get(); }
 
 private:
     void save(const char* key, int value)
@@ -458,6 +723,7 @@ private:
 
     Context& context;
     juce::ComboBox rows, columns, encoders, velocity, curve, pressure, threshold, strip;
+    std::unique_ptr<SurfacesPanel> surfaces;
 };
 
 // --- Look & Feel ---------------------------------------------------------------------------------

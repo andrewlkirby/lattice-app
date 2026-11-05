@@ -186,6 +186,37 @@ bool GenericMidiDriver::receive(const juce::MidiMessage& m, double seconds)
     return false;
 }
 
+juce::String GenericMidiDriver::describe(const juce::MidiMessage& m) const
+{
+    const int channel = m.getChannel() - 1;
+    if (channel < 0 || channel > 15)
+        return {};
+    Target t;
+    if (m.isNoteOnOrOff() || m.isAftertouch())
+        t = target(MidiAddress::Type::note, channel, m.getNoteNumber());
+    else if (m.isController())
+    {
+        t = target(MidiAddress::Type::cc, channel, m.getControllerNumber());
+        if (t.part == Part::none)
+            for (std::size_t i = 0; i < def.encoders.size(); ++i)
+                if (def.encoders[i].encoding == Encoding::nrpn14 && def.encoders[i].address.channel == channel &&
+                    juce::Array<int>{99, 98, 6, 38}.contains(m.getControllerNumber()))
+                    return "encoder " + juce::String(static_cast<int>(i) + 1) + " (NRPN, if it's its parameter)";
+    }
+    else if (m.isChannelPressure() && def.grid.aftertouch == Aftertouch::channel)
+        return "pressure on the pads held";
+    switch (t.part)
+    {
+    case Part::pad: return "pad row " + juce::String(t.index / caps.columns + 1) + ", column " + juce::String(t.index % caps.columns + 1);
+    case Part::button: return "button " + buttonName(def.buttons[t.index].id);
+    case Part::encoder:
+    case Part::encoderLsb: return "encoder " + juce::String(t.index + 1);
+    case Part::touch: return "encoder " + juce::String(t.index + 1) + " touch";
+    case Part::none: break;
+    }
+    return {};
+}
+
 // --- Output -----------------------------------------------------------------------------------------
 
 const LedOutput& GenericMidiDriver::buttonLed(const SurfaceDefinition::Button& b) const noexcept

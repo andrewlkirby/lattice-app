@@ -7,6 +7,7 @@
 #include "ui/commands/SessionCommands.h"
 #include "control/surface/SurfaceController.h"
 #include "control/virtual/VirtualPush.h"
+#include "ui/controllers/SurfaceManager.h"
 #include "ui/session/SessionSelectionModel.h"
 #include "ui/session/SessionView.h"
 #include "ui/feed/EngineStateFeed.h"
@@ -153,11 +154,18 @@ public:
     control::SurfaceController* virtualPushController() noexcept { return virtualSurface.get(); }
     /** Its settings changed (the Preferences' Controllers tab): it's made again at the new size. */
     void applyVirtualPushSettings();
+
+    /** Control surfaces on MIDI ports (docs/06-m5-controllers.md, 5e): the app starts them with
+        the system's ports; tests with their own (or not at all, so the machine's devices stay
+        out of them). Recognised devices are offered from then on. */
+    void startControlSurfaces(std::unique_ptr<MidiPorts> ports);
+    SurfaceManager* surfaceManager() noexcept { return surfaces.get(); }
     /** How the pads play, and Virtual Push's own settings, as the Preferences have them. */
     control::Expression expressionSettings() const;
     control::VirtualPush::Settings virtualPushSettings() const;
     /** The LEDs' state colours, from the theme. */
     control::SurfaceColours surfaceColours() const;
+    void offerSurface(const SurfaceManager::Offer& offer);
 
     bool isBrowserVisible() const noexcept { return showBrowser; }
     bool isDetailVisible() const noexcept { return showDetail; }
@@ -295,6 +303,8 @@ private:
     std::unique_ptr<DetailView> detail; // after what it shows, so it goes first
     std::unique_ptr<control::VirtualPush> virtualPush;
     std::unique_ptr<control::SurfaceController> virtualSurface; // after the device it drives, so it goes first
+    std::unique_ptr<MidiPorts> midiPorts;
+    std::unique_ptr<SurfaceManager> surfaces; // after the ports it uses
     std::unique_ptr<juce::DocumentWindow> virtualPushWindow;
     bool pushDocked = true;
     juce::Rectangle<int> pushDivider;

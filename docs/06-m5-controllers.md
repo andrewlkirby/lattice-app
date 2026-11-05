@@ -397,6 +397,30 @@ Playing pads must feel as tight as a dedicated instrument. **Pad-to-sound latenc
   - every included definition running every mode, with a pad launching a clip on the fast path;
   - the schema lists every role and encoding the reader knows.
 
+##### As built (5e, part 2: surfaces in the app, 2026-11-04)
+- **Where things are:** `src/ui/controllers/SurfaceManager` (with `MidiPorts`, the system's ports or a test's), `AudioEngine::setSurfaceSink`, and the Controllers page's surfaces list and Surface Monitor (`PreferencesView.cpp`).
+- **Surface ports:**
+  - **Routing:** the engine gives a surface port's messages to its surface first, on the MIDI thread. What the surface doesn't use goes to MIDI Map. Notes reach the armed tracks only with Notes to tracks, which is on by default for a definition without a grid (a keyboard's keys).
+  - **The MIDI page:** a surface port's Track and Remote switches are disabled there, with a tooltip saying why.
+  - **Sharing the input:** the surface uses the input through the engine's callback, as one input can only be opened once on Windows. If the surface opened the input, it closes it again when it goes; an input that was already open for the tracks stays open.
+- **The manager:**
+  - **Saved:** each surface's definition, input and output by port name (identifiers can change between sessions), and Notes to tracks, kept in the settings (`surfaces`).
+  - **Connecting:** a surface connects when its port appears, and lets go when it's unplugged or removed. Removing sends the exit messages and turns the lights off.
+  - **Output port:** the output named most like the input.
+- **Recognised devices:** a device matching a definition, with no surface on it, is offered once a session ("Use It", "Never for…", "Not Now"). The offer says when a definition is unverified. "Never" is kept in `surfaces.declined`. Templates are never offered.
+- **Definitions:** the included ones, plus the user's folder (`Surfaces`, beside Themes), where a file of the same name wins. A user's file that doesn't read is listed on the Controllers page, with why. Read Again rereads them.
+- **The Controllers page:**
+  - **The list:** each surface's line shows its definition (marked unverified if it is), connected or not, and its ports, with Notes to tracks, Monitor and Remove.
+  - **Add:** lists every definition and marks the ones connected now. A definition with no matching port asks for the input and output.
+  - **Surface Monitor:** shows each message's bytes and what the surface makes of it ("pad row 1, column 2", "button scene[3]"), or that it went to MIDI Map.
+- **Startup:** the app's window starts the surfaces with the system's ports. Tests use fake ports, or none, so the machine's devices stay out of them. When the audio device opens, the surfaces' inputs are kept open.
+- **Tests (`tests/control/SurfaceManagerTests.cpp`):**
+  - **Engine routing:** a surface's own messages stop at the surface; MIDI Map gets the rest; the tracks get only what's passed on.
+  - **The manager:** offered once; added, a pad launches a clip; kept in the settings; unplugged and plugged back; removed, its input closed.
+  - **Edge cases:** declined for good; an input already open stays open; templates are never offered.
+  - **User definitions:** they load, and a broken one is reported with why. The monitor says what each message is.
+  - **Preferences:** the surface is listed and follows its connection.
+
 #### 5f: Push 2/3 driver
 - MIDI, the LED palette sysex, and the display over libusb (fetched by CMake with a pinned hash, like the other dependencies).
 - Detecting a missing WinUSB driver, and the udev rule for Linux.

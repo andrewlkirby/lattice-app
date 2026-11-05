@@ -66,6 +66,23 @@ public:
     };
     /** Message thread: what the remote inputs sent since the last call, oldest first. */
     std::vector<RemoteMidi> takeRemoteMidi();
+
+    /** A control surface on an input (docs/06-m5-controllers.md, 5e: "surface ports"): it gets
+        the input's messages first, on the input's MIDI thread, and says which were its own. The
+        rest go on to MIDI Map (always: it maps what the surface doesn't use) and, with
+        `notesToTracks`, to the armed tracks (a keyboard's keys); otherwise a surface port's notes
+        never reach the tracks. */
+    class SurfaceSink
+    {
+    public:
+        virtual ~SurfaceSink() = default;
+        virtual bool receive(const juce::MidiMessage& message, double seconds) = 0;
+    };
+    /** Message thread. nullptr lets the input go; returns once no MIDI thread is in the old sink. */
+    void setSurfaceSink(const juce::String& inputIdentifier, SurfaceSink* sink, bool notesToTracks);
+    bool isSurfaceInput(const juce::String& inputIdentifier) const;
+    /** What a MIDI input callback does with a message (an input's identifier; tests call it). */
+    void receiveMidi(const juce::String& inputIdentifier, const juce::MidiMessage& message);
     AudioCallbackStats& callbackStats() noexcept { return stats; }
     /** Input latency probe: MIDI arrival to the end of the callback that plays it. */
     LatencyStats& inputLatency() noexcept { return latency; }
@@ -196,12 +213,18 @@ private:
     PreviewPlayer previewPlayer;
     AudioCallbackStats stats;
     LatencyStats latency;
-    std::mutex remoteLock; // MIDI threads and the message thread; never the audio thread
+    mutable std::mutex remoteLock; // MIDI threads and the message thread; never the audio thread
     std::mutex activityLock; // the same threads
     std::vector<juce::AsyncUpdater*> activityListeners;
     std::atomic<OutputTap*> outputTap{nullptr};
     std::atomic<int> outputTapUsers{0}; // callbacks between taking the tap and finishing with it
     juce::StringArray remoteInputs, nonTrackInputs;
+    struct Surface
+    {
+        SurfaceSink* sink = nullptr;
+        bool notesToTracks = false;
+    };
+    std::map<juce::String, Surface> surfaces; // under remoteLock
     std::vector<RemoteMidi> remoteInbox;
     MidiInputQueue midiQueue;
     MpscQueue<EngineCommand> commands{commandQueueSize};

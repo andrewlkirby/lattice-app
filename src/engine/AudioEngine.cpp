@@ -422,20 +422,58 @@ std::vector<AudioEngine::RemoteMidi> AudioEngine::takeRemoteMidi()
     return std::exchange(remoteInbox, {});
 }
 
+void AudioEngine::setSurfaceSink(const juce::String& inputIdentifier, SurfaceSink* sink, bool notesToTracks)
+{
+    // Taking the lock waits out a MIDI thread inside the old sink.
+    const std::scoped_lock lock(remoteLock);
+    if (sink == nullptr)
+        surfaces.erase(inputIdentifier);
+    else
+        surfaces[inputIdentifier] = {sink, notesToTracks};
+}
+
+bool AudioEngine::isSurfaceInput(const juce::String& inputIdentifier) const
+{
+    const std::scoped_lock lock(remoteLock);
+    return surfaces.contains(inputIdentifier);
+}
+
 void AudioEngine::handleIncomingMidiMessage(juce::MidiInput* input, const juce::MidiMessage& message)
+{
+    if (input != nullptr)
+        receiveMidi(input->getIdentifier(), message);
+    else
+    {
+        midiQueue.push(message, computerKeyboardSource);
+        noteActivity();
+    }
+}
+
+void AudioEngine::receiveMidi(const juce::String& id, const juce::MidiMessage& message)
 {
     // A MIDI thread, not the audio thread: a short lock is fine here.
     bool forTracks = true;
-    if (input != nullptr)
     {
         const std::scoped_lock lock(remoteLock);
-        const auto id = input->getIdentifier();
-        if (remoteInputs.contains(id) && remoteInbox.size() < 4096) // a stalled UI can't grow it without end
-            remoteInbox.push_back({id, message});
+        bool remote = remoteInputs.contains(id);
         forTracks = !nonTrackInputs.contains(id);
+        if (const auto it = surfaces.find(id); it != surfaces.end())
+        {
+            // The surface first; what isn't its own goes to MIDI Map, and notes to the tracks only
+            // if the surface passes them on.
+            if (it->second.sink->receive(message, -1.0))
+            {
+                noteActivity();
+                return;
+            }
+            remote = true;
+            forTracks = it->second.notesToTracks;
+        }
+        if (remote && remoteInbox.size() < 4096) // a stalled UI can't grow it without end
+            remoteInbox.push_back({id, message});
     }
     if (forTracks)
-        midiQueue.push(message, input != nullptr ? midiSourceFor(input->getIdentifier()) : computerKeyboardSource);
+        midiQueue.push(message, midiSourceFor(id));
     noteActivity();
 }
 

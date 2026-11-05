@@ -407,6 +407,8 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
 MainShell::~MainShell()
 {
     session.onSetReplaced = nullptr;
+    surfaces.reset();
+    midiPorts.reset();
     virtualSurface.reset();
     browser->onBrowserChanged = nullptr;
     virtualPushWindow.reset();
@@ -832,6 +834,7 @@ PreferencesView::Context MainShell::preferencesContext()
         });
     };
     c.themesFolder = platform::userDataFolder().getChildFile("Themes");
+    c.surfaces = surfaces.get();
     c.midiChanged = [this] { applyMidiInputs(); };
     return c;
 }
@@ -1050,6 +1053,8 @@ void MainShell::selectionChanged(const SessionSelection& now)
 void MainShell::audioDeviceOpened(const juce::String& error)
 {
     audioError = error;
+    if (surfaces != nullptr)
+        surfaces->refreshPorts(); // the device opens the saved inputs: the surfaces' stay open
     if (error.isNotEmpty() && deviceShared->confirm)
         deviceShared->confirm("No audio device", error + "\n\nChoose one in Preferences, on the Audio page.", {}, nullptr);
 }
@@ -1063,6 +1068,8 @@ void MainShell::setTheme(const Theme& t)
     sendLookAndFeelChange();
     if (virtualSurface != nullptr)
         virtualSurface->setColours(surfaceColours());
+    if (surfaces != nullptr)
+        surfaces->setColours(surfaceColours());
     if (virtualPushWindow != nullptr)
         virtualPushWindow->setBackgroundColour(t.surface);
     resized(); // sizes come from the theme too
@@ -1488,8 +1495,50 @@ control::VirtualPush::Settings MainShell::virtualPushSettings() const
     return s;
 }
 
+void MainShell::startControlSurfaces(std::unique_ptr<MidiPorts> ports)
+{
+    surfaces.reset();
+    midiPorts = std::move(ports);
+    surfaces = std::make_unique<SurfaceManager>(
+        engine, settings, *midiPorts,
+        [this] { return control::SurfaceContext{session, registry, selected, stateFeed, &deviceSpecs, browseAccess.get()}; },
+        platform::userDataFolder().getChildFile("Surfaces"));
+    surfaces->setColours(surfaceColours());
+    surfaces->setExpression(expressionSettings());
+    surfaces->onOffer = [this](const SurfaceManager::Offer& o) { offerSurface(o); };
+    surfaces->refreshPorts();
+}
+
+void MainShell::offerSurface(const SurfaceManager::Offer& offer)
+{
+    const auto* d = surfaces != nullptr ? surfaces->definition(offer.definition) : nullptr;
+    if (d == nullptr)
+        return;
+    juce::String text = offer.input + " is connected. Use it as a control surface (" + d->name + ")?";
+    if (!d->verified)
+        text << "\n\nIts definition hasn't been tried on the device yet: some buttons or lights may be wrong. "
+                "Preferences > Controllers shows what it sends (Monitor).";
+    const auto options = juce::MessageBoxOptions()
+                             .withIconType(juce::MessageBoxIconType::QuestionIcon)
+                             .withTitle("Control surface")
+                             .withMessage(text)
+                             .withButton("Use It")
+                             .withButton("Never for " + d->name)
+                             .withButton("Not Now");
+    juce::AlertWindow::showAsync(options, [safe = juce::Component::SafePointer<MainShell>(this), offer, grid = !d->grid.pads.empty()](int result) {
+        if (safe == nullptr || safe->surfaces == nullptr)
+            return;
+        if (result == 1)
+            safe->surfaces->add({offer.definition, offer.input, offer.output, !grid});
+        else if (result == 2)
+            safe->surfaces->decline(offer);
+    });
+}
+
 void MainShell::applyVirtualPushSettings()
 {
+    if (surfaces != nullptr)
+        surfaces->setExpression(expressionSettings());
     if (virtualPush == nullptr)
         return;
     if (virtualPush->settings() == virtualPushSettings())

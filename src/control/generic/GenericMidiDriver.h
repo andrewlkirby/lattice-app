@@ -52,6 +52,10 @@ public:
     /** Message thread: hands what has arrived to the controller now (otherwise it goes soon). */
     void deliverPending();
 
+    /** What a message is on this device, for the Surface Monitor ("pad row 1, column 2",
+        "button scene[3]", "encoder 4"); empty if it isn't the surface's. Any thread. */
+    juce::String describe(const juce::MidiMessage& message) const;
+
 private:
     enum class Part : std::uint8_t
     {
@@ -68,6 +72,10 @@ private:
         std::uint16_t index = 0;
     };
     Target& target(MidiAddress::Type type, int channel, int number) noexcept
+    {
+        return targets[static_cast<std::size_t>((static_cast<int>(type) * 16 + channel) * 128 + number)];
+    }
+    const Target& target(MidiAddress::Type type, int channel, int number) const noexcept
     {
         return targets[static_cast<std::size_t>((static_cast<int>(type) * 16 + channel) * 128 + number)];
     }

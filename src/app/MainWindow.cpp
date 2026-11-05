@@ -19,6 +19,7 @@ MainComponent::MainComponent(AudioEngine& e, juce::PropertiesFile& settingsFile,
     keyboard.onStateChanged = [this] { settings.setValue(ui::prefs::computerKeyboardKey, keyboard.isEnabled()); };
 
     mainShell = std::make_unique<ui::MainShell>(session, engine, settings, tunings, ui::ShellActions{});
+    mainShell->startControlSurfaces(ui::MidiPorts::system(engine));
     mainShell->setComputerKeyboard(&keyboard); // its control bar shows the range (and keeps onStateChanged)
     mainShell->onKeyboardSettingsChanged = [this] { followSelectedTrack(true); };
     mainShell->mappings().isKeyboardKey = [this](const juce::KeyPress& key) {
