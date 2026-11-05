@@ -137,6 +137,15 @@ protected:
         if (const int i = buttonIndex(id); i >= 0)
             frame.buttons[static_cast<std::size_t>(i)] = state;
     }
+    /** Names what a button does now (a scene button choosing a page, say) for Virtual Push. */
+    void labelButton(SurfaceText& text, ButtonId id, const juce::String& label) const
+    {
+        if (const int i = buttonIndex(id); i >= 0)
+        {
+            text.buttons.resize(caps().buttons.size());
+            text.buttons[static_cast<std::size_t>(i)] = label;
+        }
+    }
 };
 
 } // namespace lattice::control

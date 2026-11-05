@@ -276,6 +276,10 @@ void BrowseMode::describe(SurfaceText& text)
         if (columns > 1)
             text.pads[static_cast<std::size_t>(g * columns + columns - 1)] = "Load";
     }
+    // The categories on the scene buttons.
+    const auto names = ui::BrowserModel::categories();
+    for (int i = 0; i < caps().countOf(Role::scene) && i < names.size(); ++i)
+        labelButton(text, {Role::scene, i}, names[i]);
 }
 
 void BrowseMode::render(LedFrame& frame)

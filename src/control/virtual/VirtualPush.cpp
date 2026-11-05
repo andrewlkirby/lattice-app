@@ -423,6 +423,12 @@ void VirtualPush::paint(juce::Graphics& g)
         g.setColour(ink.withMultipliedAlpha(led.isOff() ? 0.6f : 1.0f));
         if (isArrow(b.id.role))
             arrow(g, b.bounds, b.id.role);
+        else if (i < words.buttons.size() && words.buttons[i].isNotEmpty())
+        {
+            // What the mode makes it (a page, a category): smaller, as these are pad-sized.
+            g.setFont(t.font(std::min(t.fontSmall, b.bounds.getHeight() * 0.3f)));
+            g.drawFittedText(words.buttons[i], b.bounds.reduced(2.0f).toNearestInt(), juce::Justification::centred, 2, 0.6f);
+        }
         else if (b.id.role != Role::scene && b.id.role != Role::trackSelect && b.id.role != Role::displayUpper &&
                  b.id.role != Role::displayLower) // the display labels those
         {

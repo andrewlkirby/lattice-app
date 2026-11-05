@@ -353,6 +353,13 @@ Playing pads must feel as tight as a dedicated instrument. **Pad-to-sound latenc
 - **Checks:**
   - All 496 fast tests pass on Windows; all 485 on Linux (warnings as errors), with its snapshot references written and looked at. Callgrind: the engine benchmark -0.88%, the UI benchmark -0.03%.
   - The user's hands-on check is next.
+- **During the hands-on check:**
+  - **Steps with only a track selected:** clicking a track's header selects no slot. The first step made a clip in the first slot, but the sequencer looked in the selected slot (none), so each step made the clip again and only the last note stayed. Steps now go into the track's first empty slot, which gets selected, and a clip already on the track is never replaced. A test clicks the way the user did.
+  - **A walkthrough** (`tests/control/WalkthroughTests.cpp`, hidden: run `"[.walkthrough]"`): it clicks Virtual Push in a real window at 8 × 12, with and without encoders, as a person would. It loads the Synth Kit from Browse mode, then goes through the steps, the playhead, the loop selector, Octave, Layout, a held step, a Colundi preset's sequencer, the Scale menu and Clip mode. With `LATTICE_WALKTHROUGH_DIR` set, it saves an image at each step to look at.
+  - **Labels without encoders,** found by looking at those images:
+    - Clip mode's fader columns had no names, so each top pad now shows its value's name and value.
+    - The scene buttons' jobs had no names, so a mode can now label a button (`SurfaceText::buttons`) and Virtual Push draws it: Clip mode's pages, Browse mode's categories and Mix mode's choices.
+  - **Empty steps** were hard to tell from unlit pads, so they're now as bright as notes outside the key.
 
 #### 5e: Generic MIDI controllers
 - The definition schema and loader, the encoder decoders, and the included definitions (all marked unverified).

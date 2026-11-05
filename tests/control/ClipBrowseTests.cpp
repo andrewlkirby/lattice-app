@@ -209,6 +209,9 @@ TEST_CASE("Clip mode without encoders: the columns are faders, the bottom row th
     f.refresh();
     CHECK(f.surface.label(7, 0) == "Double Loop");
     CHECK(!f.surface.pad(7, 0).isOff());
+    // With no display, each fader's top pad names it and shows its value.
+    CHECK(f.surface.label(0, 3).startsWith("Loop Length"));
+    CHECK(f.surface.label(0, 3).containsChar('\n'));
 }
 
 // --- Browse mode ------------------------------------------------------------------------------------
@@ -380,6 +383,11 @@ TEST_CASE("Browse mode without encoders: the rows on the grid, a press previews,
     REQUIRE(synth >= 0);
     REQUIRE(synth < 8);
     CHECK(f.surface.label(synth, 0) == "Synth");
+    // The scene buttons name their categories.
+    const auto& caps = f.surface.capabilities();
+    REQUIRE(f.surface.text.buttons.size() == caps.buttons.size());
+    CHECK(f.surface.text.buttons[static_cast<std::size_t>(caps.indexOf({Role::scene, 0}))] == "Instruments");
+    CHECK(f.surface.text.buttons[static_cast<std::size_t>(caps.indexOf({Role::scene, 1}))] == "Drums");
     f.surface.tap(synth, 0);
     CHECK(f.model().selectedRow() == synth);
     f.controller->refresh();

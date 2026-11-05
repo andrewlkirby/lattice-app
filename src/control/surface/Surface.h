@@ -238,11 +238,13 @@ struct LedFrame
     bool operator==(const LedFrame&) const = default;
 };
 
-/** Words a device can show beside its lights: a label on each pad (Virtual Push draws them;
-    hardware ignores them) and a status line (the pressed notes, the Scale menu's choices). */
+/** Words a device can show beside its lights: a label on each pad and on the buttons whose job
+    a mode chooses (Virtual Push draws them; hardware ignores them), and a status line (the
+    pressed notes, the Scale menu's choices). */
 struct SurfaceText
 {
-    std::vector<juce::String> pads; // row by row, like LedFrame::pads; empty: no labels
+    std::vector<juce::String> pads;    // row by row, like LedFrame::pads; empty: no labels
+    std::vector<juce::String> buttons; // the capabilities' buttons, like LedFrame::buttons; empty: none
     juce::String status;
 
     bool operator==(const SurfaceText&) const = default;

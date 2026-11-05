@@ -235,11 +235,20 @@ void ClipMode::describe(SurfaceText& text)
         text.status << dot << all[static_cast<std::size_t>(page())].name << " (" << (page() + 1) << "/" << static_cast<int>(all.size()) << ")";
     if (padsOwned())
     {
-        // The bottom row's actions.
+        // Each fader's name and value on its top pad, the bottom row's actions, the pages on the
+        // scene buttons: without a display, the grid says what it is.
         text.pads.assign(static_cast<std::size_t>(caps().numPads()), {});
+        for (int column = 0; column < caps().columns; ++column)
+            if (const auto* b = host.encoders().binding(column))
+            {
+                const auto cell = cellFor(*b);
+                text.pads[static_cast<std::size_t>(column)] = cell.name + "\n" + cell.value;
+            }
         if (caps().rows > 1)
             for (int i = 0; i < caps().columns && i < static_cast<int>(actions().size()); ++i)
                 text.pads[static_cast<std::size_t>((caps().rows - 1) * caps().columns + i)] = actions()[static_cast<std::size_t>(i)].second;
+        for (int i = 0; i < caps().countOf(Role::scene) && i < static_cast<int>(all.size()); ++i)
+            labelButton(text, {Role::scene, i}, all[static_cast<std::size_t>(i)].name);
     }
 }
 

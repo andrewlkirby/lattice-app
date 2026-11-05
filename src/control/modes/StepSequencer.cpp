@@ -261,7 +261,9 @@ void StepSequencer::render(const Target& target, LedFrame& frame) const
     const int playing = playingStep(target);
     const int shown = page(target);
     const int perPage = stepsPerPage(target);
-    const auto offStep = LedState::solid(dimmed(colours.white, colours.padDim * 0.5f));
+    // Empty steps in the loop as bright as notes outside the key: plainly there, and brighter than
+    // the drum pads with nothing on them beside them.
+    const auto offStep = LedState::solid(dimmed(colours.white, colours.padDim));
 
     // The steps, a row's states at a time.
     if (!target.pitches.empty() && !area.steps.empty())

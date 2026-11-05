@@ -17,6 +17,7 @@ add_executable(lattice_tests
     control/NoteModeTests.cpp
     control/SessionModeTests.cpp
     control/VirtualPushTests.cpp
+    control/WalkthroughTests.cpp
     core/AudioCallbackStatsTests.cpp
     core/GroupTrackTests.cpp
     core/JobPoolTests.cpp

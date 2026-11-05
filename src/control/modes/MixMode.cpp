@@ -242,9 +242,13 @@ void MixMode::display(DisplayFrame& f)
 
 void MixMode::describe(SurfaceText& text)
 {
-    for (const auto& c : choices())
+    const auto all = choices();
+    for (const auto& c : all)
         if (isChosen(c))
             text.status = "Mix: " + c.label;
+    if (padsOwned()) // the choices on the scene buttons
+        for (int i = 0; i < caps().countOf(Role::scene) && i < static_cast<int>(all.size()); ++i)
+            labelButton(text, {Role::scene, i}, all[static_cast<std::size_t>(i)].label);
 }
 
 void MixMode::render(LedFrame& frame)
