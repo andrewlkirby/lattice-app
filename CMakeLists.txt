@@ -402,6 +402,7 @@ add_library(lattice_ui STATIC
     src/ui/widgets/Knob.cpp
     src/ui/widgets/Meter.cpp
     src/ui/widgets/NumberBox.cpp
+    src/ui/widgets/Painting.cpp
     src/ui/widgets/Toggle.cpp
     src/ui/widgets/ValueBinding.cpp)
 target_include_directories(lattice_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)

@@ -89,6 +89,7 @@ public:
     /** A ring round the arm button while the track is auto-armed. */
     void paintOverChildren(juce::Graphics&) override;
     void resized() override;
+    void parentHierarchyChanged() override;
 
 private:
     SessionController& session;

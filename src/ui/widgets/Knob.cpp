@@ -4,6 +4,7 @@
 #include <tuple>
 
 #include "ui/theme/LatticeLookAndFeel.h"
+#include "ui/widgets/Painting.h"
 
 #include <cmath>
 
@@ -27,10 +28,17 @@ Knob::Knob(std::unique_ptr<ValueBinding> b) : BoundControl(std::move(b))
 {
     bipolar = isSymmetricAroundZero(binding().spec());
     labelText = binding().spec().name;
-    // A knob draws arcs and text: kept as an image, so a view painted again (scrolling, another
-    // control moving) copies the knobs that didn't change instead of drawing them again. Its own
-    // repaint (a new value, focus, a theme) draws it afresh.
-    setBufferedToImage(true);
+    // A knob draws arcs and text: kept as an image where that pays (painting::cachedImagesPay),
+    // so a view painted again (scrolling, another control moving) copies the knobs that didn't
+    // change instead of drawing them again. Its own repaint (a new value, focus, a theme) draws it
+    // afresh.
+    painting::bufferWhereItPays(*this);
+}
+
+void Knob::parentHierarchyChanged()
+{
+    BoundControl::parentHierarchyChanged();
+    painting::bufferWhereItPays(*this);
 }
 
 void Knob::setBipolar(bool shouldBeBipolar)

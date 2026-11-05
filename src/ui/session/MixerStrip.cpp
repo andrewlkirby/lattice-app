@@ -1,6 +1,7 @@
 #include "ui/session/MixerStrip.h"
 
 #include "ui/theme/LatticeLookAndFeel.h"
+#include "ui/widgets/Painting.h"
 
 #include <cmath>
 
@@ -238,6 +239,14 @@ int MixerStrip::heightFor(const juce::Component& themed, int numReturns, bool wi
     const float sendsHeight = ioHeight + (withSends ? static_cast<float>(numReturns) * (knob * 0.75f) : 0.0f);
     const float main = knob * 0.8f + t.controlHeight * 7.0f + t.controlHeight + t.spacing * 4.0f;
     return juce::roundToInt(sendsHeight + main + t.padding * 2.0f);
+}
+
+void MixerStrip::parentHierarchyChanged()
+{
+    // Kept as an image where that pays (painting::cachedImagesPay): scrolling the grid while it
+    // plays repaints every strip each frame, and only their meters change (a meter's repaint
+    // redraws just its part of the image).
+    painting::bufferWhereItPays(*this);
 }
 
 void MixerStrip::resized()

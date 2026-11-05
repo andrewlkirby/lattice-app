@@ -4,6 +4,7 @@
 #include "control/surface/Mode.h"
 #include "control/surface/Presets.h"
 #include "ui/theme/LatticeLookAndFeel.h"
+#include "ui/widgets/Painting.h"
 
 #include <algorithm>
 #include <array>
@@ -290,6 +291,7 @@ void VirtualPush::showLeds(const LedFrame& f, const LedFrame::Changes& changed)
         for (const int b : changed.buttons)
             repaint(areaOf({-1, b}));
     }
+    ui::painting::paintAtNextRefresh(*this);
     updateAnimator();
 }
 
@@ -298,6 +300,7 @@ void VirtualPush::showText(const SurfaceText& t)
     words = t;
     changedSince();
     repaint(); // the labels can change on every pad at once (a new layout)
+    ui::painting::paintAtNextRefresh(*this);
 }
 
 void VirtualPush::showDisplay(const DisplayFrame& f)
@@ -305,6 +308,7 @@ void VirtualPush::showDisplay(const DisplayFrame& f)
     screen = f;
     changedSince();
     repaint(places.display.getSmallestIntegerContainer().expanded(1));
+    ui::painting::paintAtNextRefresh(*this);
 }
 
 void VirtualPush::updateAnimator()
