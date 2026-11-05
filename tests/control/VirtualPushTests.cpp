@@ -324,3 +324,4 @@ TEST_CASE("Virtual Push: while nothing moves it doesn't animate, and LED frames 
         f.render(64);
     CHECK(f.shell->virtualPushController()->framesSent() == sent);
 }
+

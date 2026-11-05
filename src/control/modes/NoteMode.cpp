@@ -201,7 +201,16 @@ StepSequencer::Target NoteMode::sequencerTarget() const
     auto& c = host.context();
     const auto l = layout();
     target.track = t;
-    target.scene = juce::jlimit(0, std::max(0, c.session.set().numScenes() - 1), c.selection.get().scene);
+    // The selected slot; with none (a track selected), the track's first empty one.
+    const auto& set = c.session.set();
+    target.scene = c.selection.get().scene;
+    if (target.scene < 0 || target.scene >= set.numScenes())
+    {
+        target.scene = -1;
+        for (int s = 0; s < set.numScenes() && target.scene < 0; ++s)
+            if (!set.clip(t, s).isValid())
+                target.scene = s;
+    }
     target.clip = sequencedClip();
     target.stepLength = l.stepLength();
     target.colour = trackColour(t);

@@ -48,7 +48,8 @@ struct SequencerZones
 
     - A step pressed with no note on it gets one at once (a step long, defaultVelocity); one with
       notes loses them when it's let go, unless it was held a while or edited meanwhile. With no
-      clip, the first step makes one in the slot, a page long. Each is one undo step.
+      clip, the first step makes one, a page long, in the selected slot (or, with only the track
+      selected, its first empty one), and selects it. Each is one undo step.
     - While steps are held the encoders edit their notes (velocity, length, nudge): Note mode
       hands it the encoders and the display.
     - The loop selector shows the clip in pages (a page: what the steps area shows). Pressing a
@@ -63,7 +64,7 @@ public:
     struct Target
     {
         int track = -1;
-        int scene = -1;           // the slot a clip is made in, if there's none
+        int scene = -1;           // the slot a clip is made in, if there's none (-1: no room)
         juce::ValueTree clip;     // the clip it edits (invalid: none yet)
         double stepLength = 0.25; // quarter notes
         /** The pitch of each row of steps, from the bottom; for a drum, one pitch whose steps run

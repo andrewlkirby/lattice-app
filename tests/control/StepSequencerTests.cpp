@@ -268,6 +268,27 @@ TEST_CASE("Drum layout: the pads play and choose the steps' pad; steps add and r
     CHECK(!f.clip().isValid());
 }
 
+TEST_CASE("Drum layout: with only the track selected, steps go into its first empty slot, which gets selected", "[control][steps]")
+{
+    // Clicking the track's header selects the track, not a slot: the first step's clip must be
+    // the one the next steps edit, and a clip already on the track must stay.
+    Fixture f;
+    auto& set = f.session.set();
+    set.createClip(0, 0, 4.0);
+    set.addNote(f.clip(0, 0), {36, 0.0, 0.25, 100, false}, false);
+    f.selection.set({Kind::track, 0, -1});
+    f.refresh();
+    f.tapPad(0, 0);
+    f.tapPad(0, 4);
+    f.tapPad(1, 0);
+    CHECK(f.notes(0, 0).size() == 1); // untouched
+    REQUIRE(f.clip(0, 1).isValid());
+    CHECK(f.notes(0, 1).size() == 3);
+    CHECK(f.selection.get() == ui::SessionSelection{Kind::slot, 0, 1});
+    CHECK(f.mode().sequencer().heldSteps().empty());
+    CHECK(f.surface.pad(0, 4) == LedState::solid(trackRgb));
+}
+
 TEST_CASE("Drum layout: the loop selector loops pages, Shift only shows one; the pads move a page or a row", "[control][steps]")
 {
     Fixture f;

@@ -129,7 +129,12 @@ juce::ValueTree StepSequencer::ensureClip(const Target& target)
     auto& set = host.context().session.set();
     if (target.track < 0 || target.scene < 0 || target.track >= set.numTracks() || target.scene >= set.numScenes())
         return {};
-    return set.createClip(target.track, target.scene, pageLength(target));
+    const auto clip = set.createClip(target.track, target.scene, pageLength(target));
+    // Selected, so the steps (and the Clip view) go on editing it.
+    auto& selection = host.context().selection;
+    if (clip.isValid() && selection.get().scene != target.scene)
+        selection.set({ui::SessionSelection::Kind::slot, target.track, target.scene});
+    return clip;
 }
 
 bool StepSequencer::press(const Target& target, int row, int column)
