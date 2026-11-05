@@ -1,4 +1,4 @@
-﻿# Sub-plan M5: Controllers (Virtual Push, Push 2/3, Generic MIDI Controllers)
+# Sub-plan M5: Controllers (Virtual Push, Push 2/3, Generic MIDI Controllers)
 
 Parent: `00-preliminary-plan.md`, milestone M5 (component #8).
 Depends on:
