@@ -87,7 +87,7 @@ std::vector<std::uint8_t> sysex(std::initializer_list<int> b)
 TEST_CASE("Surface definitions: the included ones read, unverified, each control on its own message", "[control][generic]")
 {
     const auto all = SurfaceDefinition::included();
-    REQUIRE(all.size() == 8);
+    REQUIRE(all.size() == 10); // with Push 2 and 3 (native drivers)
     for (const auto& d : all)
     {
         INFO(d.name);
@@ -305,6 +305,8 @@ TEST_CASE("Generic driver: every included definition runs every mode; a pad laun
     for (const auto& def : SurfaceDefinition::included())
     {
         INFO(def.name);
+        if (def.driver.isNotEmpty())
+            continue; // a native driver's (PushTests)
         TuningRegistry tunings;
         AudioEngine engine;
         SessionController session{engine, tunings, testRegistry()};

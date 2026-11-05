@@ -115,6 +115,8 @@ private:
         encoder mode, or while it takes them: held steps). */
     Mode& encoderOwner() noexcept { return knobs() != nullptr && !current().ownsEncoders() ? *knobs() : current(); }
     void handleEncoder(const SurfaceInput& input);
+    /** The tempo encoder (docs/06-m5-controllers.md, "Global controls"). */
+    void turnTempo(int steps);
     void listenToFeed();
     void publishPadMap();
 
@@ -139,6 +141,7 @@ private:
     ClipMode* clipModePtr = nullptr;
     BrowseMode* browseModePtr = nullptr;
     int fixedBefore = 1; // the length Fixed Length goes back to
+    double lastTempoTurn = -1.0e9; // ms (getMillisecondCounterHiRes)
     std::unique_ptr<DeviceSpecs> ownSpecs;
     DeviceSpecs* deviceSpecs = nullptr;
     std::unique_ptr<EncoderBank> bank;

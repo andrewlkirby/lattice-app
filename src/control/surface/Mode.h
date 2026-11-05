@@ -13,6 +13,17 @@ namespace lattice::control
 
 class BrowseHost;
 
+/** The beat LED animations follow: the transport's while it plays, otherwise the set's tempo on
+    the clock, so a stopped set still blinks in time. Every device and Virtual Push use it, so
+    they move together. Message thread. */
+inline double animationBeat(const ui::EngineStateFeed& feed)
+{
+    const auto& transport = feed.transport();
+    if (transport.playing)
+        return transport.beat;
+    return juce::Time::getMillisecondCounterHiRes() * 0.001 * transport.tempo / 60.0;
+}
+
 /** What the modes act on and read: the same commands, session, selection and live state as the
     window (docs/06-m5-controllers.md, "SurfaceController and ModeStack"). */
 struct SurfaceContext

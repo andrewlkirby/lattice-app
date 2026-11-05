@@ -34,14 +34,9 @@ GenericMidiDriver::GenericMidiDriver(SurfaceDefinition definition, MidiSender& o
     shown = LedFrame::blank(caps);
 }
 
-GenericMidiDriver::~GenericMidiDriver()
-{
-    cancelPendingUpdate();
-}
-
 // --- Input ------------------------------------------------------------------------------------------
 
-void GenericMidiDriver::input(SurfaceInput in, double seconds)
+void MidiSurfaceDriver::input(SurfaceInput in, double seconds)
 {
     if (pads != nullptr)
         pads->handle(in, seconds);
@@ -50,18 +45,6 @@ void GenericMidiDriver::input(SurfaceInput in, double seconds)
         pending.push_back(in);
     }
     triggerAsyncUpdate();
-}
-
-void GenericMidiDriver::deliverPending()
-{
-    std::vector<SurfaceInput> now;
-    {
-        const std::scoped_lock lock(pendingLock);
-        now.swap(pending);
-    }
-    for (const auto& in : now)
-        if (onInput)
-            onInput(in);
 }
 
 bool GenericMidiDriver::encoderValue(int index, int value)

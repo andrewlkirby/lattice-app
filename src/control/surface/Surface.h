@@ -154,8 +154,9 @@ struct SurfaceInput
         encoderSet,  // encoder, value 0..1: an absolute control's position
         encoderTouch,
         encoderRelease,
-        strip,       // value 0..1 (the bottom: 0)
-        stripRelease // let go of the strip
+        strip,        // value 0..1 (the bottom: 0)
+        stripRelease, // let go of the strip
+        tempoTurn     // the tempo encoder, delta: steps (positive clockwise)
     };
     Kind kind = Kind::padDown;
     int row = 0, column = 0;
@@ -178,6 +179,7 @@ struct SurfaceInput
     static SurfaceInput encoderTouch(int index) { return {Kind::encoderTouch, 0, 0, 0.0f, {}, index}; }
     static SurfaceInput encoderRelease(int index) { return {Kind::encoderRelease, 0, 0, 0.0f, {}, index}; }
     static SurfaceInput stripRelease() { return {Kind::stripRelease}; }
+    static SurfaceInput tempoTurn(int steps) { return {Kind::tempoTurn, 0, 0, 0.0f, {}, 0, steps}; }
 };
 
 // --- LEDs -------------------------------------------------------------------------------------------

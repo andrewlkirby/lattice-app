@@ -18,6 +18,7 @@ add_executable(lattice_tests
     control/SurfaceManagerTests.cpp
     control/SurfaceLearnerTests.cpp
     control/NoteModeTests.cpp
+    control/PushTests.cpp
     control/SessionModeTests.cpp
     control/VirtualPushTests.cpp
     control/WalkthroughTests.cpp

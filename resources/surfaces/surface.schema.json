@@ -14,6 +14,7 @@
     "template": { "type": "boolean", "default": false, "description": "Never matched to a device by its ports; chosen by hand." },
     "source": { "type": "string", "description": "Where the numbers came from." },
     "notes": { "type": "string" },
+    "driver": { "enum": ["push2", "push3"], "description": "A native driver for the device: the file gives its ports, the driver the rest." },
     "ports": {
       "type": "object",
       "properties": {

@@ -567,6 +567,12 @@ juce::Result SurfaceDefinition::parse(const juce::String& json, SurfaceDefinitio
         d.isTemplate = has(root, "template") && boolean(field(root, "template"), "template");
         d.source = has(root, "source") ? text(field(root, "source"), "source") : juce::String();
         d.notes = has(root, "notes") ? text(field(root, "notes"), "notes") : juce::String();
+        if (has(root, "driver"))
+        {
+            d.driver = text(field(root, "driver"), "driver");
+            if (!nativeDrivers().contains(d.driver))
+                fail("driver", "no driver '" + d.driver + "' (there are: " + nativeDrivers().joinIntoString(", ") + ")");
+        }
 
         const auto& ports = field(root, "ports");
         d.inputPorts = texts(field(ports, "input"), "ports.input");
@@ -618,7 +624,7 @@ juce::Result SurfaceDefinition::parse(const juce::String& json, SurfaceDefinitio
             d.display.characters = integer(field(disp, "characters"), "display.characters", 1, 128);
             d.display.line = byteTemplate(text(field(disp, "line"), "display.line"), "display.line");
         }
-        if (d.grid.pads.empty() && d.buttons.empty() && d.encoders.empty())
+        if (d.driver.isEmpty() && d.grid.pads.empty() && d.buttons.empty() && d.encoders.empty())
             fail("the file", "no grid, buttons or encoders");
         checkClashes(d);
         out = std::move(d);
@@ -740,6 +746,8 @@ juce::String SurfaceDefinition::toJson() const
         root->setProperty("source", source);
     if (notes.isNotEmpty())
         root->setProperty("notes", notes);
+    if (driver.isNotEmpty())
+        root->setProperty("driver", driver);
     if (!inputPorts.isEmpty() || !outputPorts.isEmpty())
     {
         auto* p = new juce::DynamicObject();

@@ -1,6 +1,7 @@
 #include "control/virtual/VirtualPush.h"
 
 #include "control/display/DisplayRenderer.h"
+#include "control/surface/Mode.h"
 #include "control/surface/Presets.h"
 #include "ui/theme/LatticeLookAndFeel.h"
 
@@ -309,11 +310,7 @@ void VirtualPush::updateAnimator()
 
 double VirtualPush::beatNow() const
 {
-    const auto& transport = feed.transport();
-    if (transport.playing)
-        return transport.beat;
-    // Stopped: blink at the set's tempo all the same.
-    return juce::Time::getMillisecondCounterHiRes() * 0.001 * transport.tempo / 60.0;
+    return animationBeat(feed);
 }
 
 juce::Colour VirtualPush::ledColour(const LedState& led, juce::Colour off, double beat) const

@@ -452,6 +452,68 @@ Playing pads must feel as tight as a dedicated instrument. **Pad-to-sound latenc
 - Detecting a missing WinUSB driver, and the udev rule for Linux.
 - It's tested against reference bytes built from Ableton's spec. Hardware checks wait for a unit.
 
+##### As built (5f, 2026-11-04)
+- **Where things are:** `src/control/push/`:
+  - `PushProtocol` (every number, from the manual);
+  - `PushPalette`;
+  - `PushDisplay` (the USB thread) and `PushUsb.cpp` (libusb);
+  - `PushDriver`.
+  - The included `ableton-push-2.surface.json` and `ableton-push-3.surface.json`;
+  - `resources/linux/udev/50-lattice-ableton-push.rules`;
+  - `cmake/Libusb.cmake`.
+- **Source:** Ableton's *Push 2 MIDI and Display Interface Manual*, revision 1.1 (firmware 1.0.60), and its `Push2-map.json`, from github.com/Ableton/push-interface. Every number in `PushProtocol.h` is checked against it, and each example the manual gives is a test, byte for byte.
+- **A native driver behind a definition file:**
+  - A definition can name a driver (`"driver": "push2"`). The file gives only the ports; the driver does the rest.
+  - So Push is recognised, offered, saved, monitored and removed like any other surface, through the same SurfaceManager.
+  - `MidiSurfaceDriver` is the base for both drivers: receive, describe, connect, disconnect, and a status line.
+  - A native definition's notes don't go to the tracks by default (`playsKeys()`).
+- **Ports:**
+  - Push's Live port: "Ableton Push 2" or "Ableton Push 2 *nn*" (Windows), "… Live Port" (macOS), "…:0" (Linux, per the manual).
+  - The User port (MIDIIN2 on Windows) is left for other programs.
+  - On connecting: Live mode, polyphonic pressure, the strip's default settings (pitch bend, a point, back to the middle), LED brightness 127 (Push limits it to 8 on USB power alone) and display brightness 255.
+- **Input:**
+  - Pads: notes 36–99, with polyphonic pressure (and channel pressure, should Push be set to it).
+  - The eight encoders: two's complement, with touch.
+  - The tempo encoder: a BPM a step, a hundredth with Shift. A turn is one undo step (a new `SurfaceInput::tempoTurn`, which also wires up the plan's "Global controls" tempo encoder).
+  - The strip: pitch bend scaled to 0–1, with the middle exactly at 0.5.
+  - Every button with a role. What has no role passes on to MIDI Map: Select, Page, User, the master and swing encoders, and the pedals.
+- **Lights:**
+  - **Lattice's own colours:** each colour wanted is loaded into a palette entry (sysex 0x03) and the LED is set to that entry. Pads show the set's clip colours and the theme's exactly, not the nearest from a fixed palette.
+  - **Entries:** an entry a light shows is never reloaded. A freed entry is reused least recently used first. With all 127 entries lit, a new colour gets the nearest there is.
+  - **White LEDs** ask for a white level. Every entry carries the white level of its colour's brightness, scaled as the device's own (full white is 128).
+  - **Animations:** a pulse is the dimmed colour on channel 0, then the colour on channel 9 (pulsing, a quarter note). A blink is off, then the colour on channel 13 (blinking, an eighth). These match Virtual Push's animations.
+  - **The clock:** Push needs MIDI clock to keep animations on the beat. While anything animates, a start puts the device's phase at a whole beat, then clocks follow `animationBeat()`: the transport's beat, or the set's tempo while stopped. Virtual Push now uses the same function. A jump (the transport starting) sends a new start. Nothing animated: no clock, and the timer stops.
+  - **The budget:** changes go out at once, up to 2048 bytes of MIDI a frame. The rest goes on the next 60 Hz frames, carrying on where the last stopped, so every light gets its turn.
+- **The display:**
+  - **Drawing:** `DisplayRenderer` draws each frame at 960×160 in the app's theme, which follows theme changes.
+  - **Encoding:** `encodeFrame` gives the manual's format: BGR565 little-endian, 2048-byte lines (1920 bytes of pixels, 128 of filler), and the whole buffer XORed with E7 F3 E7 FF.
+  - **Sending:** `DisplaySender` sends from its own thread: the 16-byte header, then 16 KB bulk writes. A new frame goes at once (at most 60 a second). The same frame goes again each second, since the display goes black after 2 s without one. A failed write drops the link and reopens it (Push unplugged and plugged back).
+  - **libusb:** 1.0.30, the release tarball pinned by SHA-256 and built from its sources by `cmake/Libusb.cmake`: WinUSB on Windows, netlink on Linux (no libudev needed), IOKit on macOS (not built here yet). `LATTICE_PUSH_USB=OFF` builds without it, and the display then says so.
+  - **What goes wrong, in words:** the driver's status is shown on the Controllers page, refreshed each second:
+    - no WinUSB driver (Windows: Live or Ableton's driver installs it, or Zadig);
+    - no udev rule (Linux: the rule file and the commands to install it);
+    - another program using the display;
+    - no Push on USB.
+- **Push 3:**
+  - It runs on the same driver, unverified. Its USB product ID (0x1969) is from community captures.
+  - A community document (github.com/danielknng/push3-protocol-docs) disagrees with Ableton's Push 2 numbers in places: the rows of buttons above and below the display swapped, scene 1 at CC 36, and New at CC 92. That document also contradicts the manual on pixel order, so Push 2's map is kept until a unit shows which is right.
+  - MPE, the jog wheel and the new buttons wait for a unit.
+- **Corrected:** the `push2()` preset had seven white buttons marked RGB. They now follow `Push2-map.json`, and a test keeps the preset and the driver's table the same.
+- **Tests (`tests/control/PushTests.cpp`):**
+  - **The manual's numbers:** pads, encoders, strip and buttons, and every sysex example byte for byte, including the identity reply.
+  - **The display's bytes:**
+    - single pixels and the filler checked by hand from the manual;
+    - a test pattern's whole frame checked against `tests/data/push2/make_reference.py`, a separate implementation written from the manual's text (its FNV-1a hash; the script prints the SHA-256 too).
+  - **The palette:** loading, reuse, never reloading a lit entry, nearest when full, white levels.
+  - **The driver:**
+    - its input, and what passes on;
+    - lights with animations, only changes, and the budget over several frames;
+    - the clock: start, catch-up, nothing while still, restart on a jump;
+    - the display thread on a fake link: header and 16 KB writes, resend, reconnect, and a missing driver's status;
+    - every mode on Push 2 and 3, a pad launching a clip, and the tempo encoder with its undo.
+  - **In the app:** Push's Live port offered and not the User port; added, it runs on the Push driver, shows the display's status and plays.
+- **Checks:** all 526 fast tests pass on Windows; all 515 on Linux (warnings as errors, with libusb built from source). Push's display was looked at in images in Device and Mix modes. The hands-on check waits for a Push.
+
 #### 5g: Several devices, MPE, and the quality pass
 - Several surfaces at once, with shared or independent selection.
 - MPE: Virtual Push's touch slide and timbre first, then Push 3 when a unit is available.

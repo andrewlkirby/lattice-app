@@ -1,5 +1,8 @@
 #include "ui/controllers/SurfaceManager.h"
 
+#include "control/push/PushDriver.h"
+#include "control/push/PushProtocol.h"
+
 #include <mutex>
 #include <regex>
 
@@ -8,6 +11,8 @@ namespace lattice::ui
 
 using control::generic::GenericMidiDriver;
 using control::generic::MidiSender;
+using control::generic::MidiSurfaceDriver;
+using control::push::PushDriver;
 using control::generic::SurfaceDefinition;
 
 // --- The system's ports -----------------------------------------------------------------------------
@@ -144,7 +149,7 @@ struct SurfaceManager::Live final : AudioEngine::SurfaceSink
     juce::String inputId;
     bool openedInput = false; // opened for the surface (not already open for the tracks or MIDI Map)
     std::unique_ptr<MidiSender> out;
-    std::unique_ptr<GenericMidiDriver> driver;
+    std::unique_ptr<MidiSurfaceDriver> driver;
     std::unique_ptr<control::SurfaceController> controller;
     std::shared_ptr<MonitorQueue> monitor;
 
@@ -388,9 +393,15 @@ control::SurfaceController* SurfaceManager::controller(int index) const
     return isConnected(index) ? live[static_cast<std::size_t>(index)]->controller.get() : nullptr;
 }
 
-GenericMidiDriver* SurfaceManager::driver(int index) const
+MidiSurfaceDriver* SurfaceManager::driver(int index) const
 {
     return isConnected(index) ? live[static_cast<std::size_t>(index)]->driver.get() : nullptr;
+}
+
+juce::String SurfaceManager::status(int index) const
+{
+    const auto* d = driver(index);
+    return d != nullptr ? d->status() : juce::String();
 }
 
 void SurfaceManager::connect(int index)
@@ -411,7 +422,21 @@ void SurfaceManager::connect(int index)
         l->out = ports.openOutput(outputId);
     if (l->out == nullptr)
         l->out = std::make_unique<Live::Nowhere>();
-    l->driver = std::make_unique<GenericMidiDriver>(*d, *l->out);
+    if (d->driver.isEmpty())
+        l->driver = std::make_unique<GenericMidiDriver>(*d, *l->out);
+    else
+    {
+        const bool push3 = d->driver == "push3";
+        const int product = push3 ? control::push::push3ProductId : control::push::push2ProductId;
+        control::push::LinkOpener opener;
+        if (displayOpener)
+            opener = [open = displayOpener, product] { return open(product); };
+        auto push = std::make_unique<PushDriver>(push3 ? PushDriver::Model::push3 : PushDriver::Model::push2, *l->out, std::move(opener),
+                                                 [this] { return control::animationBeat(context().feed); });
+        if (theme)
+            push->setTheme(*theme);
+        l->driver = std::move(push);
+    }
     l->driver->connect();
     l->controller = std::make_unique<control::SurfaceController>(context(), *l->driver);
     if (colours)
@@ -529,6 +554,15 @@ void SurfaceManager::setColours(const control::SurfaceColours& c)
     for (const auto& l : live)
         if (l != nullptr)
             l->controller->setColours(c);
+}
+
+void SurfaceManager::setTheme(const Theme& t)
+{
+    theme = t;
+    for (const auto& l : live)
+        if (l != nullptr)
+            if (auto* push = dynamic_cast<PushDriver*>(l->driver.get()))
+                push->setTheme(t);
 }
 
 void SurfaceManager::setExpression(const control::Expression& e)

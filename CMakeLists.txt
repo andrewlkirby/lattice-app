@@ -30,6 +30,7 @@ option(LATTICE_RTSAN "Build with Clang's real-time sanitizer (-fsanitize=realtim
 option(LATTICE_TSAN "Build with ThreadSanitizer (-fsanitize=thread) to find data races" OFF)
 option(LATTICE_BUILD_APP "Build the Lattice GUI app" ON)
 option(LATTICE_BUILD_TESTS "Build the unit tests" ON)
+option(LATTICE_PUSH_USB "Build libusb in, for Ableton Push's display" ON)
 
 lattice_set_global_codegen()
 
@@ -112,6 +113,10 @@ else()
     target_link_libraries(lattice_sqlite PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
 endif()
 set_target_properties(lattice_sqlite PROPERTIES FOLDER "Dependencies" POSITION_INDEPENDENT_CODE ON)
+
+if(LATTICE_PUSH_USB)
+    include(Libusb)
+endif()
 
 # --- lattice_juce: every JUCE module, compiled exactly once ---------------------------------------
 # JUCE modules are INTERFACE libraries that add their sources to whatever links them. Linking them
@@ -311,6 +316,11 @@ add_library(lattice_ui STATIC
     src/control/display/DisplayRenderer.cpp
     src/control/generic/Encoding.cpp
     src/control/generic/GenericMidiDriver.cpp
+    src/control/push/PushDisplay.cpp
+    src/control/push/PushDriver.cpp
+    src/control/push/PushPalette.cpp
+    src/control/push/PushProtocol.cpp
+    src/control/push/PushUsb.cpp
     src/control/generic/SurfaceDefinition.cpp
     src/control/modes/DeviceMode.cpp
     src/control/modes/MixMode.cpp
@@ -396,6 +406,10 @@ add_library(lattice_ui STATIC
     src/ui/widgets/ValueBinding.cpp)
 target_include_directories(lattice_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(lattice_ui PUBLIC lattice_core PRIVATE lattice_binary_data) # the surface definitions
+if(LATTICE_PUSH_USB)
+    target_link_libraries(lattice_ui PRIVATE lattice_libusb)
+    set_source_files_properties(src/control/push/PushUsb.cpp PROPERTIES COMPILE_DEFINITIONS LATTICE_LIBUSB=1)
+endif()
 lattice_set_warnings(lattice_ui)
 
 # --- The window's content (M4): a library, so the tests can drive the whole app headless ----------

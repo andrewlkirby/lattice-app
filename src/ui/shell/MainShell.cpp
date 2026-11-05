@@ -1069,7 +1069,10 @@ void MainShell::setTheme(const Theme& t)
     if (virtualSurface != nullptr)
         virtualSurface->setColours(surfaceColours());
     if (surfaces != nullptr)
+    {
         surfaces->setColours(surfaceColours());
+        surfaces->setTheme(t);
+    }
     if (virtualPushWindow != nullptr)
         virtualPushWindow->setBackgroundColour(t.surface);
     resized(); // sizes come from the theme too
@@ -1504,6 +1507,7 @@ void MainShell::startControlSurfaces(std::unique_ptr<MidiPorts> ports)
         [this] { return control::SurfaceContext{session, registry, selected, stateFeed, &deviceSpecs, browseAccess.get()}; },
         platform::userDataFolder().getChildFile("Surfaces"));
     surfaces->setColours(surfaceColours());
+    surfaces->setTheme(theme());
     surfaces->setExpression(expressionSettings());
     surfaces->onOffer = [this](const SurfaceManager::Offer& o) { offerSurface(o); };
     surfaces->refreshPorts();
@@ -1525,11 +1529,11 @@ void MainShell::offerSurface(const SurfaceManager::Offer& offer)
                              .withButton("Use It")
                              .withButton("Never for " + d->name)
                              .withButton("Not Now");
-    juce::AlertWindow::showAsync(options, [safe = juce::Component::SafePointer<MainShell>(this), offer, grid = !d->grid.pads.empty()](int result) {
+    juce::AlertWindow::showAsync(options, [safe = juce::Component::SafePointer<MainShell>(this), offer, keys = d->playsKeys()](int result) {
         if (safe == nullptr || safe->surfaces == nullptr)
             return;
         if (result == 1)
-            safe->surfaces->add({offer.definition, offer.input, offer.output, !grid});
+            safe->surfaces->add({offer.definition, offer.input, offer.output, keys});
         else if (result == 2)
             safe->surfaces->decline(offer);
     });

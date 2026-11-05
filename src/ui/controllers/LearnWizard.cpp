@@ -195,7 +195,7 @@ juce::File LearnWizard::save(bool add)
     manager.endLearning();
     manager.reloadDefinitions();
     if (add && manager.definition(d.name) != nullptr)
-        manager.add({d.name, input, output, d.grid.pads.empty()});
+        manager.add({d.name, input, output, d.playsKeys()});
     return file;
 }
 

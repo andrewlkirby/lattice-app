@@ -1,0 +1,5 @@
+# Lets the logged-in user open Ableton Push's display over USB (Lattice, docs/06-m5-controllers.md).
+# Install: sudo cp 50-lattice-ableton-push.rules /etc/udev/rules.d/ && sudo udevadm control --reload
+# then unplug Push and plug it in again.
+SUBSYSTEM=="usb", ATTR{idVendor}=="2982", ATTR{idProduct}=="1967", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="2982", ATTR{idProduct}=="1969", TAG+="uaccess"

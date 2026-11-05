@@ -114,6 +114,13 @@ struct SurfaceDefinition
     bool isTemplate = false;
     juce::String source; // where its numbers came from (a programmer's reference)
     juce::String notes;
+    /** A native driver for the device ("push2", "push3"; docs/06-m5-controllers.md, "Drivers"):
+        the file gives its ports, the driver everything else. Empty: the file describes it all. */
+    juce::String driver;
+    static juce::StringArray nativeDrivers() { return {"push2", "push3"}; }
+    /** Whether its notes play the tracks by default: a keyboard's (a definition with no grid,
+        driven by the file). */
+    bool playsKeys() const noexcept { return driver.isEmpty() && grid.pads.empty(); }
 
     /** Ports it is on (regular expressions, matched against port names; the first input port that
         matches is used, and the output named most like it). */

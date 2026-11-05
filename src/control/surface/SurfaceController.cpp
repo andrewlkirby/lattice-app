@@ -10,6 +10,7 @@
 #include "ui/clip/ClipActions.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace lattice::control
 {
@@ -218,6 +219,7 @@ void SurfaceController::handle(const SurfaceInput& input)
         if (!encoderOwner().handle(input))
             handleEncoder(input);
         break;
+    case Kind::tempoTurn: turnTempo(input.delta); break;
     default:
         if (handleGlobal(input))
             break;
@@ -247,6 +249,17 @@ void SurfaceController::handleEncoder(const SurfaceInput& input)
     case SurfaceInput::Kind::encoderRelease: bank->release(input.encoder); break;
     default: break;
     }
+}
+
+void SurfaceController::turnTempo(int steps)
+{
+    // A BPM a step (Shift: a hundredth); a turn is one undo step (a pause of a second ends it).
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (now - lastTempoTurn > 1000.0)
+        ctx.session.beginEdit("Tempo");
+    lastTempoTurn = now;
+    auto& set = ctx.session.set();
+    set.setTempo(std::round((set.tempo() + steps * (shiftHeld() ? 0.01 : 1.0)) * 100.0) / 100.0);
 }
 
 bool SurfaceController::handleGlobal(const SurfaceInput& input)

@@ -1,8 +1,10 @@
 #pragma once
 
 #include "control/generic/GenericMidiDriver.h"
+#include "control/push/PushDisplay.h"
 #include "control/surface/SurfaceController.h"
 #include "engine/AudioEngine.h"
+#include "ui/theme/Theme.h"
 
 #include <juce_audio_devices/juce_audio_devices.h>
 
@@ -43,7 +45,9 @@ public:
     - A device whose ports match a definition, with no surface on them, is offered (onOffer)
       once a session, unless declined for good.
     - Definitions: the included ones and the user's folder's (a user's file of the same name
-      wins). A user's file that doesn't read is listed in problems(), with why. */
+      wins). A user's file that doesn't read is listed in problems(), with why.
+    - A definition naming a native driver ("driver": "push2") gets that driver on its ports
+      (docs/06-m5-controllers.md, 5f): Push's own pads, lights and display. */
 class SurfaceManager
 {
 public:
@@ -81,7 +85,9 @@ public:
     void setNotesToTracks(int index, bool on);
     bool isConnected(int index) const;
     control::SurfaceController* controller(int index) const;
-    control::generic::GenericMidiDriver* driver(int index) const;
+    control::generic::MidiSurfaceDriver* driver(int index) const;
+    /** What's wrong beside the MIDI (Push's display needing a driver), or empty. */
+    juce::String status(int index) const;
     /** The ports a definition would use now: the first input matching it that no surface has,
         and the output named most like it. Empty if none is there. */
     Offer portsFor(const control::generic::SurfaceDefinition& d) const;
@@ -123,6 +129,11 @@ public:
     /** How the surfaces' lights and pads look and play (as Virtual Push's). */
     void setColours(const control::SurfaceColours& c);
     void setExpression(const control::Expression& e);
+    /** The theme Push's display is drawn in. */
+    void setTheme(const Theme& t);
+    /** How a native driver opens Push's display (by USB product ID): openUsbDisplay unless a test
+        says otherwise. Applies to surfaces connected after. */
+    void setDisplayOpener(std::function<control::push::OpenedLink(int productId)> opener) { displayOpener = std::move(opener); }
 
     static constexpr const char* settingsKey = "surfaces";
     static constexpr const char* declinedKey = "surfaces.declined";
@@ -151,6 +162,8 @@ private:
     std::vector<Offer> offered;              // this session's
     std::optional<control::SurfaceColours> colours;
     std::optional<control::Expression> expression;
+    std::optional<Theme> theme;
+    std::function<control::push::OpenedLink(int productId)> displayOpener = control::push::openUsbDisplay;
 
     struct MonitorQueue;
     std::shared_ptr<MonitorQueue> monitorQueue;

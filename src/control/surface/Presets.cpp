@@ -37,10 +37,10 @@ SurfaceCapabilities push2()
     addNumbered(c, Role::displayUpper, 8, LedKind::rgb);
     addNumbered(c, Role::displayLower, 8, LedKind::rgb);
     addNumbered(c, Role::scene, 8, LedKind::rgb);
-    add(c, {Role::play, Role::record, Role::newClip, Role::duplicate, Role::fixedLength, Role::quantize, Role::doubleLoop,
-            Role::deleteClip, Role::undo, Role::mute, Role::solo, Role::stopClip},
-        LedKind::rgb);
-    add(c, {Role::shift, Role::modeSession, Role::modeNote, Role::modeDevice, Role::modeMix, Role::modeBrowse,
+    // RGB or white, as Push2-map.json gives each (Ableton's push-interface).
+    add(c, {Role::play, Role::record, Role::mute, Role::solo, Role::stopClip}, LedKind::rgb);
+    add(c, {Role::newClip, Role::duplicate, Role::fixedLength, Role::quantize, Role::doubleLoop, Role::deleteClip, Role::undo,
+            Role::shift, Role::modeSession, Role::modeNote, Role::modeDevice, Role::modeMix, Role::modeBrowse,
             Role::modeClip, Role::navUp, Role::navDown, Role::navLeft, Role::navRight, Role::octaveUp, Role::octaveDown,
             Role::layout, Role::scale, Role::metronome, Role::tapTempo});
     return c;

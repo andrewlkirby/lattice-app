@@ -156,7 +156,7 @@ TEST_CASE("Surface ports: the surface's own messages stop there; the rest go to 
 TEST_CASE("Surface manager: a recognised device is offered once; added, it connects, plays and keeps in the settings", "[control][generic][surfaces]")
 {
     Fixture f;
-    CHECK(f.manager->definitions().size() == 8);
+    CHECK(f.manager->definitions().size() == 10);
     f.manager->refreshPorts();
     CHECK(f.offers.empty());
 

@@ -429,7 +429,7 @@ private:
 };
 
 /** The control surfaces: one row each (its definition, ports and state), and adding one. */
-class SurfacesPanel final : public juce::Component
+class SurfacesPanel final : public juce::Component, private juce::Timer
 {
 public:
     explicit SurfacesPanel(SurfaceManager& m) : manager(m)
@@ -454,6 +454,7 @@ public:
             addAndMakeVisible(*b);
         manager.onChanged = [this] { rebuild(); };
         rebuild();
+        startTimer(1000); // a display's state changes on its own thread (Push's, opening)
     }
     ~SurfacesPanel() override { manager.onChanged = nullptr; }
 
@@ -489,6 +490,20 @@ public:
     }
 
 private:
+    juce::StringArray statuses() const
+    {
+        juce::StringArray all;
+        for (int i = 0; i < static_cast<int>(manager.entries().size()); ++i)
+            if (const auto s = manager.status(i); s.isNotEmpty())
+                all.add(manager.entries()[static_cast<std::size_t>(i)].definition + ": " + s);
+        return all;
+    }
+    void timerCallback() override
+    {
+        if (statuses() != shownStatuses)
+            rebuild();
+    }
+
     struct Row final : juce::Component
     {
         juce::String text;
@@ -550,6 +565,9 @@ private:
                                    "Add puts any definition on any ports (Keyboard + 8 knobs: a keyboard's knobs)."
                                  : "A surface's port plays the modes; what the surface doesn't use goes to MIDI Map (Ctrl+M). "
                                    "Definitions marked unverified haven't been tried on their device yet: Monitor shows what it sends.";
+        shownStatuses = statuses();
+        for (const auto& s : shownStatuses)
+            footer << "\n" << s;
         for (const auto& p : manager.problems())
             footer << "\n" << p;
         resized();
@@ -572,7 +590,7 @@ private:
             const auto d = safe->manager.definitions()[static_cast<std::size_t>(chosen - 1)];
             const auto found = safe->manager.portsFor(d);
             if (found.input.isNotEmpty())
-                safe->manager.add({d.name, found.input, found.output, d.grid.pads.empty()});
+                safe->manager.add({d.name, found.input, found.output, d.playsKeys()});
             else
                 safe->choosePorts(d);
         });
@@ -592,7 +610,7 @@ private:
         for (int i = 0; i < inputs.size(); ++i)
             in.addItem(i + 1, inputs[i].name);
         const auto name = d.name;
-        const bool keys = d.grid.pads.empty();
+        const bool keys = d.playsKeys();
         in.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&add), [safe = juce::Component::SafePointer<SurfacesPanel>(this), name, keys, inputs](int chosenIn) {
             if (safe == nullptr || chosenIn <= 0)
                 return;
@@ -655,6 +673,7 @@ private:
     juce::TextButton add{"Add..."}, learnButton{"Learn..."}, folder{"Definitions Folder"}, reload{"Read Again"};
     std::vector<std::unique_ptr<Row>> rows;
     juce::String footer;
+    juce::StringArray shownStatuses;
     juce::Rectangle<int> footerArea;
     std::unique_ptr<SurfaceMonitorWindow> monitorWindow;
     std::unique_ptr<juce::DocumentWindow> learnWindow;
