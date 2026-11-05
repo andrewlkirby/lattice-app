@@ -2,6 +2,7 @@
 
 #include "control/virtual/VirtualPush.h"
 #include "engine/WorkerPool.h"
+#include "ui/controllers/LearnWizard.h"
 #include "ui/controllers/SurfaceManager.h"
 #include "ui/prefs/AppSettings.h"
 #include "ui/theme/LatticeLookAndFeel.h"
@@ -442,12 +443,14 @@ public:
             f.createDirectory();
             f.startAsProcess();
         };
+        learnButton.setTitle("Learn a controller");
+        learnButton.onClick = [this] { showLearn(); };
         reload.setTitle("Read the definitions again");
         reload.onClick = [this] {
             manager.reloadDefinitions();
             rebuild();
         };
-        for (auto* b : {&add, &folder, &reload})
+        for (auto* b : {&add, &learnButton, &folder, &reload})
             addAndMakeVisible(*b);
         manager.onChanged = [this] { rebuild(); };
         rebuild();
@@ -473,6 +476,8 @@ public:
         auto r = getLocalBounds();
         auto top = r.removeFromTop(h);
         add.setBounds(top.removeFromLeft(h * 6));
+        top.removeFromLeft(juce::roundToInt(t.spacing));
+        learnButton.setBounds(top.removeFromLeft(h * 6));
         top.removeFromLeft(juce::roundToInt(t.spacing));
         folder.setBounds(top.removeFromLeft(h * 7));
         top.removeFromLeft(juce::roundToInt(t.spacing));
@@ -605,6 +610,36 @@ private:
         });
     }
 
+    void showLearn()
+    {
+        if (learnWindow == nullptr)
+        {
+            auto close = [safe = juce::Component::SafePointer<SurfacesPanel>(this)] {
+                // Not from inside the wizard's own button.
+                juce::MessageManager::callAsync([safe] {
+                    if (safe != nullptr)
+                        safe->learnWindow.reset();
+                });
+            };
+            struct Window final : juce::DocumentWindow
+            {
+                Window(juce::Colour background, std::function<void()> closed)
+                    : juce::DocumentWindow("Learn a Controller", background, juce::DocumentWindow::closeButton), onClosed(std::move(closed))
+                {
+                }
+                void closeButtonPressed() override { onClosed(); }
+                std::function<void()> onClosed;
+            };
+            learnWindow = std::make_unique<Window>(themeOf(*this).surface, close);
+            learnWindow->setContentOwned(new LearnWizard(manager, close), true);
+            learnWindow->setUsingNativeTitleBar(true);
+            learnWindow->setResizable(true, false);
+            learnWindow->centreWithSize(learnWindow->getWidth(), learnWindow->getHeight());
+        }
+        learnWindow->setVisible(true);
+        learnWindow->toFront(true);
+    }
+
     void showMonitor()
     {
         if (monitorWindow == nullptr)
@@ -617,11 +652,12 @@ private:
     }
 
     SurfaceManager& manager;
-    juce::TextButton add{"Add..."}, folder{"Definitions Folder"}, reload{"Read Again"};
+    juce::TextButton add{"Add..."}, learnButton{"Learn..."}, folder{"Definitions Folder"}, reload{"Read Again"};
     std::vector<std::unique_ptr<Row>> rows;
     juce::String footer;
     juce::Rectangle<int> footerArea;
     std::unique_ptr<SurfaceMonitorWindow> monitorWindow;
+    std::unique_ptr<juce::DocumentWindow> learnWindow;
 };
 
 // --- Controllers ---------------------------------------------------------------------------------

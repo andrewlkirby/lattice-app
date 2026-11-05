@@ -166,6 +166,8 @@ struct SurfaceDefinition
     /** Reads a definition; the result says what's wrong, with where ("buttons[3].role: no role
         'foo'"). */
     static juce::Result parse(const juce::String& json, SurfaceDefinition& out);
+    /** The file for it: parse() reads back the same definition. */
+    juce::String toJson() const;
     /** The definitions that come with the app (each unverified until tested on its device). */
     static std::vector<SurfaceDefinition> included();
 

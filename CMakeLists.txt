@@ -305,6 +305,8 @@ endif()
 
 # --- UI (M4, docs/05-m4-ui.md): a library, so the tests can drive the views headless ---------------
 add_library(lattice_ui STATIC
+    src/ui/controllers/LearnWizard.cpp
+    src/ui/controllers/SurfaceLearner.cpp
     src/ui/controllers/SurfaceManager.cpp
     src/control/display/DisplayRenderer.cpp
     src/control/generic/Encoding.cpp

@@ -421,6 +421,32 @@ Playing pads must feel as tight as a dedicated instrument. **Pad-to-sound latenc
   - **User definitions:** they load, and a broken one is reported with why. The monitor says what each message is.
   - **Preferences:** the surface is listed and follows its connection.
 
+##### As built (5e, part 3: the learn wizard, 2026-11-04)
+- **Where things are:** `src/ui/controllers/SurfaceLearner` (the steps' work, with no window), `LearnWizard` (its window: Preferences → Controllers → Learn...), `SurfaceManager::beginLearning`, and `SurfaceDefinition::toJson()`.
+- **The steps:**
+  1. **Setting up:** a name, the input and output ports (the output named like the input is chosen for you), and the grid's rows and columns, or no grid.
+  2. **The grid:** press the top-left pad, the one to its right, then the bottom-right.
+     - **Evenly numbered** (the usual case): the rest is worked out from those three.
+     - **Otherwise:** each pad is learned in turn, from the top-left.
+     - **Velocity:** if every press came at one value, the pads have no velocity.
+     - **Aftertouch:** whatever pressure is sent marks it.
+  3. **Encoders, one at a time:** turn it clockwise, say so, then anticlockwise. `detectEncoding` works out the encoding from the values. A 14-bit pair (its CC + 32) and an NRPN are recognised from the messages themselves. Values that don't say ask for more turns.
+  4. **Buttons:** press one, then pick its role. A numbered role (Scene, Track) gets the next index. A control already learned can't be learned twice.
+  5. **Lights:** each common way of lighting (the 128-colour palette, Akai's channel-7 brightness, on/off at 127 or at 1) lights the corners red, green, blue and white and every button, so you can pick the one that looks right.
+  6. **Saving:** the file goes into the user's Surfaces folder, marked unverified, with the date it was learned. The manager reads it at once, and it can be put on as a surface straight away.
+- **While learning:** the wizard has the input to itself. Nothing reaches the tracks or MIDI Map, and an input it opened is closed again afterwards.
+- **The writer:** `toJson()` writes any definition as a file that `parse()` reads back unchanged. It uses a formula when the grid is evenly numbered and a table when it isn't.
+- **Tests (`tests/control/SurfaceLearnerTests.cpp`, and the wizard in `SurfaceManagerTests.cpp`):**
+  - every included definition is written and read back the same;
+  - a grid from three presses;
+  - an uneven grid pad by pad;
+  - two's complement, 14-bit and NRPN encoders, and values that don't say;
+  - buttons and numbered roles;
+  - the lights' test pattern;
+  - the result driving the device as learned;
+  - the wizard listening to its input only, saving to the folder, and the new surface playing.
+- **Checks:** all 513 fast tests pass on Windows. Every 5e window was looked at in images. There's no hardware yet, so the included definitions and the wizard wait for a device.
+
 #### 5f: Push 2/3 driver
 - MIDI, the LED palette sysex, and the display over libusb (fetched by CMake with a pinned hash, like the other dependencies).
 - Detecting a missing WinUSB driver, and the udev rule for Linux.

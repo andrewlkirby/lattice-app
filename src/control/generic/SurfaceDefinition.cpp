@@ -630,6 +630,246 @@ juce::Result SurfaceDefinition::parse(const juce::String& json, SurfaceDefinitio
     }
 }
 
+// --- Writing ----------------------------------------------------------------------------------------
+
+namespace
+{
+juce::String hexOf(const std::uint8_t* data, int size)
+{
+    juce::StringArray b;
+    for (int i = 0; i < size; ++i)
+        b.add(juce::String::toHexString(data[i]).toUpperCase().paddedLeft('0', 2));
+    return b.joinIntoString(" ");
+}
+
+juce::String hexOf(const juce::MidiMessage& m)
+{
+    return hexOf(m.getRawData(), m.getRawDataSize());
+}
+
+juce::String templateText(const ByteTemplate& t)
+{
+    using Kind = ByteTemplate::Token::Kind;
+    static const std::vector<std::pair<Kind, const char*>> names{
+        {Kind::id, "{id}"},     {Kind::r7, "{r7}"},     {Kind::g7, "{g7}"},     {Kind::b7, "{b7}"},     {Kind::r8hi, "{r8hi}"}, {Kind::r8lo, "{r8lo}"},
+        {Kind::g8hi, "{g8hi}"}, {Kind::g8lo, "{g8lo}"}, {Kind::b8hi, "{b8hi}"}, {Kind::b8lo, "{b8lo}"}, {Kind::line, "{line}"}, {Kind::text, "{text}"}};
+    juce::StringArray out;
+    for (const auto& token : t.tokens)
+    {
+        if (token.kind == Kind::byte)
+        {
+            out.add(hexOf(&token.value, 1));
+            continue;
+        }
+        for (const auto& [k, n] : names)
+            if (k == token.kind)
+                out.add(n);
+    }
+    return out.joinIntoString(" ");
+}
+
+juce::var ledVar(const LedOutput& l)
+{
+    auto* o = new juce::DynamicObject();
+    switch (l.kind)
+    {
+    case LedOutput::Kind::none: o->setProperty("kind", "none"); break;
+    case LedOutput::Kind::single:
+        o->setProperty("kind", "single");
+        o->setProperty("on", l.onValue);
+        o->setProperty("off", l.offValue);
+        if (l.blinkValue >= 0)
+            o->setProperty("blink", l.blinkValue);
+        break;
+    case LedOutput::Kind::palette:
+    {
+        o->setProperty("kind", "palette");
+        if (l.paletteName.isNotEmpty())
+            o->setProperty("palette", l.paletteName);
+        else
+        {
+            juce::Array<juce::var> colours;
+            for (const auto c : l.palette)
+                colours.add("#" + juce::String::toHexString(static_cast<int>(c)).paddedLeft('0', 6));
+            o->setProperty("palette", colours);
+        }
+        if (l.blinkChannel >= 0)
+            o->setProperty("blinkChannel", l.blinkChannel + 1);
+        if (l.pulseChannel >= 0)
+            o->setProperty("pulseChannel", l.pulseChannel + 1);
+        break;
+    }
+    case LedOutput::Kind::sysex:
+        o->setProperty("kind", "sysex");
+        o->setProperty("template", templateText(l.sysex));
+        break;
+    }
+    if (l.kind != LedOutput::Kind::none && l.channel >= 0)
+        o->setProperty("channel", l.channel + 1);
+    return o;
+}
+
+void putAddress(juce::DynamicObject& o, const MidiAddress& a)
+{
+    o.setProperty(a.type == MidiAddress::Type::cc ? "cc" : "note", a.number);
+    o.setProperty("channel", a.channel + 1);
+}
+
+juce::var textList(const juce::StringArray& s)
+{
+    juce::Array<juce::var> a;
+    for (const auto& x : s)
+        a.add(x);
+    return a;
+}
+} // namespace
+
+juce::String SurfaceDefinition::toJson() const
+{
+    auto* root = new juce::DynamicObject();
+    const juce::var keep(root);
+    root->setProperty("lattice", "surface");
+    root->setProperty("version", 1);
+    root->setProperty("name", name);
+    if (manufacturer.isNotEmpty())
+        root->setProperty("manufacturer", manufacturer);
+    root->setProperty("verified", verified);
+    if (isTemplate)
+        root->setProperty("template", true);
+    if (source.isNotEmpty())
+        root->setProperty("source", source);
+    if (notes.isNotEmpty())
+        root->setProperty("notes", notes);
+    if (!inputPorts.isEmpty() || !outputPorts.isEmpty())
+    {
+        auto* p = new juce::DynamicObject();
+        p->setProperty("input", textList(inputPorts));
+        p->setProperty("output", textList(outputPorts));
+        root->setProperty("ports", p);
+    }
+    if (!identity.empty())
+        root->setProperty("identity", hexOf(identity.data(), static_cast<int>(identity.size())));
+    for (const auto& [key, list] : {std::pair{"init", &init}, std::pair{"exit", &exit}})
+        if (!list->empty())
+        {
+            juce::Array<juce::var> a;
+            for (const auto& m : *list)
+                a.add(hexOf(m));
+            root->setProperty(key, a);
+        }
+    if (!grid.pads.empty())
+    {
+        auto* g = new juce::DynamicObject();
+        g->setProperty("rows", grid.rows);
+        g->setProperty("columns", grid.columns);
+        const auto& first = grid.pads.front();
+        g->setProperty("message", first.type == MidiAddress::Type::cc ? "cc" : "note");
+        g->setProperty("channel", first.channel + 1);
+        // A formula when one fits every pad (one type and channel, even steps); else the table.
+        const int columnStep = grid.columns > 1 ? grid.pads[1].number - first.number : 1;
+        const int rowStep = grid.rows > 1 ? grid.pads[static_cast<std::size_t>(grid.columns)].number - first.number : 0;
+        bool formula = true;
+        bool oneChannel = true;
+        for (int r = 0; r < grid.rows; ++r)
+            for (int c = 0; c < grid.columns; ++c)
+            {
+                const auto& p = grid.pads[static_cast<std::size_t>(r * grid.columns + c)];
+                oneChannel = oneChannel && p.type == first.type && p.channel == first.channel;
+                formula = formula && p.number == first.number + r * rowStep + c * columnStep;
+            }
+        jassert(oneChannel); // the file has one message type and channel for the grid
+        if (formula)
+        {
+            g->setProperty("first", first.number);
+            g->setProperty("rowStep", rowStep);
+            g->setProperty("columnStep", columnStep);
+        }
+        else
+        {
+            juce::Array<juce::var> table;
+            for (int r = 0; r < grid.rows; ++r)
+            {
+                juce::Array<juce::var> row;
+                for (int c = 0; c < grid.columns; ++c)
+                    row.add(grid.pads[static_cast<std::size_t>(r * grid.columns + c)].number);
+                table.add(row);
+            }
+            g->setProperty("table", table);
+        }
+        g->setProperty("velocity", grid.velocity);
+        g->setProperty("aftertouch", grid.aftertouch == Aftertouch::channel      ? "channel"
+                                     : grid.aftertouch == Aftertouch::polyphonic ? "polyphonic"
+                                                                                 : "none");
+        if (grid.led.kind != LedOutput::Kind::none)
+            g->setProperty("led", ledVar(grid.led));
+        root->setProperty("grid", g);
+    }
+    if (singleLed.kind != LedOutput::Kind::none || rgbLed.kind != LedOutput::Kind::none)
+    {
+        auto* l = new juce::DynamicObject();
+        if (singleLed.kind != LedOutput::Kind::none)
+            l->setProperty("single", ledVar(singleLed));
+        if (rgbLed.kind != LedOutput::Kind::none)
+            l->setProperty("rgb", ledVar(rgbLed));
+        root->setProperty("leds", l);
+    }
+    if (!buttons.empty())
+    {
+        juce::Array<juce::var> list;
+        for (const auto& b : buttons)
+        {
+            auto* o = new juce::DynamicObject();
+            o->setProperty("role", roleName(b.id.role));
+            if (isNumbered(b.id.role))
+                o->setProperty("index", b.id.index);
+            putAddress(*o, b.address);
+            if (b.led.kind != LedOutput::Kind::none)
+                o->setProperty("led", ledVar(b.led));
+            else if (b.ledKind != LedKind::none)
+                o->setProperty("led", b.ledKind == LedKind::single ? "single" : "rgb");
+            list.add(o);
+        }
+        root->setProperty("buttons", list);
+    }
+    if (!encoders.empty())
+    {
+        juce::Array<juce::var> list;
+        for (const auto& e : encoders)
+        {
+            auto* o = new juce::DynamicObject();
+            if (e.encoding == Encoding::nrpn14)
+            {
+                o->setProperty("nrpn", e.nrpn);
+                o->setProperty("channel", e.address.channel + 1);
+            }
+            else
+                putAddress(*o, e.address);
+            o->setProperty("encoding", encodingName(e.encoding));
+            if (e.encoding == Encoding::cc14)
+                o->setProperty("lsb", e.lsb);
+            if (e.touch)
+            {
+                auto* t = new juce::DynamicObject();
+                putAddress(*t, *e.touch);
+                o->setProperty("touch", t);
+            }
+            list.add(o);
+        }
+        root->setProperty("encoders", list);
+    }
+    if (encoderResolution > 0)
+        root->setProperty("encoderResolution", encoderResolution);
+    if (display.lines > 0)
+    {
+        auto* d = new juce::DynamicObject();
+        d->setProperty("lines", display.lines);
+        d->setProperty("characters", display.characters);
+        d->setProperty("line", templateText(display.line));
+        root->setProperty("display", d);
+    }
+    return juce::JSON::toString(keep, false);
+}
+
 std::vector<SurfaceDefinition> SurfaceDefinition::included()
 {
     std::vector<SurfaceDefinition> out;

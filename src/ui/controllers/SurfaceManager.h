@@ -107,6 +107,19 @@ public:
     /** Reports what's waiting now (tests; otherwise it goes soon). */
     void deliverMonitor();
 
+    // --- The learn wizard ------------------------------------------------------------------------
+    /** Every message from an input goes to `heard` (message thread, soon after), and nowhere else,
+        until endLearning(). False if the input isn't there or a surface uses it. */
+    bool beginLearning(const juce::String& inputName, std::function<void(const juce::MidiMessage&)> heard);
+    void endLearning();
+    /** Reports what's waiting now (tests; otherwise it goes soon). */
+    void deliverLearning();
+    /** An output port by name, to try lights on (null if it isn't there). */
+    std::unique_ptr<control::generic::MidiSender> openOutput(const juce::String& outputName);
+    /** The ports there now. */
+    juce::StringArray inputNames() const;
+    juce::StringArray outputNames() const;
+
     /** How the surfaces' lights and pads look and play (as Virtual Push's). */
     void setColours(const control::SurfaceColours& c);
     void setExpression(const control::Expression& e);
@@ -141,6 +154,8 @@ private:
 
     struct MonitorQueue;
     std::shared_ptr<MonitorQueue> monitorQueue;
+    struct Learning;
+    std::unique_ptr<Learning> learning;
 };
 
 } // namespace lattice::ui

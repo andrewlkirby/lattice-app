@@ -163,6 +163,94 @@ struct SurfaceManager::Live final : AudioEngine::SurfaceSink
     }
 };
 
+// --- The learn wizard's input -----------------------------------------------------------------------
+
+struct SurfaceManager::Learning final : AudioEngine::SurfaceSink, juce::AsyncUpdater
+{
+    juce::String inputId;
+    bool openedInput = false;
+    std::function<void(const juce::MidiMessage&)> heard;
+    std::mutex lock;
+    std::vector<juce::MidiMessage> waiting;
+
+    bool receive(const juce::MidiMessage& message, double) override
+    {
+        {
+            const std::scoped_lock l(lock);
+            if (waiting.size() < 4096)
+                waiting.push_back(message);
+        }
+        triggerAsyncUpdate();
+        return true; // all of it the wizard's
+    }
+    void handleAsyncUpdate() override
+    {
+        std::vector<juce::MidiMessage> now;
+        {
+            const std::scoped_lock l(lock);
+            now.swap(waiting);
+        }
+        if (heard)
+            for (const auto& m : now)
+                heard(m);
+    }
+};
+
+bool SurfaceManager::beginLearning(const juce::String& inputName, std::function<void(const juce::MidiMessage&)> heard)
+{
+    endLearning();
+    const auto id = idOf(ports.inputs(), inputName);
+    if (id.isEmpty() || engine.isSurfaceInput(id))
+        return false;
+    learning = std::make_unique<Learning>();
+    learning->inputId = id;
+    learning->heard = std::move(heard);
+    engine.setSurfaceSink(id, learning.get(), false);
+    learning->openedInput = !ports.isInputOpen(id);
+    if (learning->openedInput)
+        ports.setInputOpen(id, true);
+    return true;
+}
+
+void SurfaceManager::endLearning()
+{
+    if (learning == nullptr)
+        return;
+    engine.setSurfaceSink(learning->inputId, nullptr, false);
+    if (learning->openedInput)
+        ports.setInputOpen(learning->inputId, false);
+    learning->cancelPendingUpdate();
+    learning.reset();
+}
+
+void SurfaceManager::deliverLearning()
+{
+    if (learning != nullptr)
+        learning->handleUpdateNowIfNeeded();
+}
+
+std::unique_ptr<MidiSender> SurfaceManager::openOutput(const juce::String& outputName)
+{
+    const auto id = idOf(ports.outputs(), outputName);
+    return id.isNotEmpty() ? ports.openOutput(id) : nullptr;
+}
+
+juce::StringArray SurfaceManager::inputNames() const
+{
+    juce::StringArray out;
+    for (const auto& d : ports.inputs())
+        out.add(d.name);
+    return out;
+}
+
+juce::StringArray SurfaceManager::outputNames() const
+{
+    juce::StringArray out;
+    for (const auto& d : ports.outputs())
+        out.add(d.name);
+    return out;
+}
+
 // --- The manager ----------------------------------------------------------------------------------
 
 SurfaceManager::SurfaceManager(AudioEngine& e, juce::PropertiesFile& s, MidiPorts& p, std::function<control::SurfaceContext()> c,
@@ -183,6 +271,7 @@ SurfaceManager::SurfaceManager(AudioEngine& e, juce::PropertiesFile& s, MidiPort
 
 SurfaceManager::~SurfaceManager()
 {
+    endLearning();
     ports.onChange = nullptr;
     for (int i = 0; i < static_cast<int>(live.size()); ++i)
         disconnect(i);

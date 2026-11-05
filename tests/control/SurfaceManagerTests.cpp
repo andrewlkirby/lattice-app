@@ -7,6 +7,7 @@
 #include "support/Snapshots.h"
 #include "support/TestDevices.h"
 #include "ui/commands/SessionCommands.h"
+#include "ui/controllers/LearnWizard.h"
 #include "ui/controllers/SurfaceManager.h"
 #include "ui/prefs/PreferencesView.h"
 #include "ui/shell/MainShell.h"
@@ -308,4 +309,52 @@ TEST_CASE("Surfaces in the window: Preferences lists them; their ports' MIDI swi
     row = titled(*view.pageComponent(), "Novation Launchpad X (unverified)");
     REQUIRE(row != nullptr);
     CHECK(row->getTitle().contains("not connected"));
+}
+
+TEST_CASE("Learn wizard: it listens to the chosen input only, saves a file the manager reads, and puts the surface on", "[control][generic][surfaces][learn]")
+{
+    Fixture f;
+    f.ports.plug("Mystery Pads");
+    f.offers.clear();
+    bool finished = false;
+    ui::LearnWizard wizard(*f.manager, [&] { finished = true; });
+    const auto shot = [&](const juce::String& name) {
+        if (const auto dir = juce::SystemStats::getEnvironmentVariable("LATTICE_WALKTHROUGH_DIR", {}); dir.isNotEmpty())
+            writePng(snapshot(wizard, 1.0f), juce::File(dir).getChildFile("learn-" + name + ".png")); // to look at
+    };
+    shot("1-setup");
+    REQUIRE(wizard.begin("Mystery", "Mystery Pads", "Mystery Pads", 2, 2));
+    CHECK(f.engine.isSurfaceInput("in:Mystery Pads")); // the wizard's while it learns
+    CHECK(f.ports.isInputOpen("in:Mystery Pads"));
+    const auto send = [&](const juce::MidiMessage& m) {
+        f.engine.receiveMidi("in:Mystery Pads", m);
+        f.manager->deliverLearning();
+    };
+    for (const int n : {50, 51, 54})
+        send(juce::MidiMessage::noteOn(2, n, static_cast<juce::uint8>(100)));
+    CHECK(f.toTracks() == 0); // learning: nothing reaches the tracks
+    shot("2-encoders");
+    REQUIRE(wizard.learner().step() == ui::SurfaceLearner::Step::encoders);
+    wizard.learner().encodersFinished();
+    send(juce::MidiMessage::controllerEvent(2, 20, 127));
+    REQUIRE(wizard.learner().hasPendingButton());
+    shot("3-button");
+    REQUIRE(wizard.learner().assign({Role::shift, 0}));
+    wizard.learner().buttonsFinished();
+    wizard.resized();
+    wizard.repaint();
+    shot("4-lights");
+    wizard.learner().chooseLights(2);
+
+    const auto file = wizard.save(true);
+    REQUIRE(file.existsAsFile());
+    CHECK(file.getParentDirectory() == f.folder);
+    CHECK(file.getFileName() == "Mystery.surface.json");
+    REQUIRE(f.manager->definition("Mystery") != nullptr);
+    CHECK_FALSE(f.manager->definition("Mystery")->verified);
+    REQUIRE(f.manager->entries().size() == 1);
+    CHECK(f.manager->isConnected(0)); // the wizard let the input go, the surface has it
+    // The learned grid plays: the bottom-right pad (54).
+    f.engine.receiveMidi("in:Mystery Pads", juce::MidiMessage::noteOn(2, 54, static_cast<juce::uint8>(100)));
+    CHECK(f.engine.takeRemoteMidi().empty());
 }
