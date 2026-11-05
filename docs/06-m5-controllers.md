@@ -445,7 +445,7 @@ Playing pads must feel as tight as a dedicated instrument. **Pad-to-sound latenc
   - the lights' test pattern;
   - the result driving the device as learned;
   - the wizard listening to its input only, saving to the folder, and the new surface playing.
-- **Checks:** all 513 fast tests pass on Windows; all 502 on Linux (warnings as errors). Callgrind: the engine benchmark -0.88%, the UI benchmark -0.01%. Every 5e window was looked at in images. There's no hardware yet, so the included definitions and the wizard wait for a device.
+- **Checks:** all 513 fast tests pass on Windows; all 502 on Linux (warnings as errors). Callgrind: the engine benchmark -0.88%, the UI benchmark -0.01%. Every 5e window was looked at in images. The hands-on check waits for hardware (the user has none yet, 2026-11-04). There's no hardware yet, so the included definitions and the wizard wait for a device.
 
 #### 5f: Push 2/3 driver
 - MIDI, the LED palette sysex, and the display over libusb (fetched by CMake with a pinned hash, like the other dependencies).
