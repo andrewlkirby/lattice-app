@@ -49,6 +49,7 @@ struct RecordedEvent
     std::uint8_t status = 0;
     std::uint8_t data1 = 0;
     std::uint8_t data2 = 0;
+    std::uint8_t flags = 0; // TimedMidi's
 
     bool isNoteOn() const noexcept { return (status & 0xf0) == 0x90 && data2 > 0; }
     bool isNoteOff() const noexcept
@@ -135,7 +136,7 @@ public:
     void onTrackEvent(std::int64_t trackId, std::int64_t absoluteSample, const TimedMidi& e) noexcept override
     {
         if (events.size() < events.capacity())
-            events.push_back({trackId, absoluteSample, e.bytes[0], e.bytes[1], e.bytes[2]});
+            events.push_back({trackId, absoluteSample, e.bytes[0], e.bytes[1], e.bytes[2], e.flags});
         else
             ++overflow;
     }

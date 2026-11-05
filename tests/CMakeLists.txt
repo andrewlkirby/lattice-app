@@ -14,6 +14,7 @@ add_executable(lattice_tests
     control/StepSequencerTests.cpp
     control/ClipBrowseTests.cpp
     control/FastPathTests.cpp
+    control/MultiSurfaceTests.cpp
     control/GenericMidiTests.cpp
     control/SurfaceManagerTests.cpp
     control/SurfaceLearnerTests.cpp

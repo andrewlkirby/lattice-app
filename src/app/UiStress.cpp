@@ -12,7 +12,7 @@ namespace lattice
 namespace
 {
 constexpr int framesPerPhase = 240; // 4 s at 60 frames a second
-constexpr int numPhases = 6;
+constexpr int numPhases = 7;
 constexpr double secondsPerScene = 30.0;
 
 /** 0 to 1 and back over `period` frames. */
@@ -32,6 +32,7 @@ UiStress::~UiStress()
 void UiStress::start()
 {
     startedSeconds = juce::Time::getMillisecondCounterHiRes() * 0.001;
+    shell.setVirtualPushVisible(true);
     shell.deviceContext().session.launchScene(0);
     startTimer(16);
 }
@@ -64,7 +65,8 @@ void UiStress::timerCallback()
 
 juce::String UiStress::describe() const
 {
-    static constexpr const char* names[numPhases] = {"session grid", "piano roll", "device knob", "mixer faders", "views", "selection"};
+    static constexpr const char* names[numPhases] = {"session grid", "piano roll", "device knob", "mixer faders", "views", "selection",
+                                                     "virtual push"};
     const int done = juce::jmax(0, frame - 1); // the frame last run
     return "round " + juce::String(round) + ", " + names[(done / framesPerPhase) % numPhases] + ", frame " +
            juce::String(done % framesPerPhase) + ", scene " + juce::String(scene);
@@ -130,13 +132,79 @@ void UiStress::step(int phase, int f)
         default: shell.setDetailVisible(true); break;
         }
         break;
-    default: // the selection moving from track to track (each Device view rebuilds)
+    case 5: // the selection moving from track to track (each Device view rebuilds)
         if (f % 6 == 0)
         {
             shell.selection().set({ui::SessionSelection::Kind::track, (f / 6) % tracks, 0});
             shell.showDeviceView();
         }
         break;
+    default: // Virtual Push: a mode a second, pads pressed and let go, encoders turning
+    {
+        auto* push = shell.virtualPushView();
+        if (push == nullptr)
+            break;
+        using control::SurfaceInput;
+        const auto& caps = push->capabilities();
+        if (f % 60 == 0)
+        {
+            static constexpr control::Role modes[] = {control::Role::modeSession, control::Role::modeNote, control::Role::modeDevice,
+                                                      control::Role::modeMix};
+            const auto role = modes[(f / 60) % 4];
+            push->deliver(SurfaceInput::buttonDown({role, 0}));
+            push->deliver(SurfaceInput::buttonUp({role, 0}));
+        }
+        if (caps.numPads() > 0)
+        {
+            const int pad = (f * 7 + round) % caps.numPads();
+            const int was = ((f - 4) * 7 + round) % caps.numPads();
+            if (f % 4 == 0)
+                push->deliver(SurfaceInput::padDown(pad / caps.columns, pad % caps.columns, 0.8f));
+            if (f >= 4 && f % 4 == 0)
+                push->deliver(SurfaceInput::padUp(was / caps.columns, was % caps.columns));
+        }
+        if (caps.encoders > 0)
+            push->deliver(SurfaceInput::encoderTurn(f % caps.encoders, (f / 20) % 2 == 0 ? 3 : -3));
+        if (f == framesPerPhase - 1)
+            for (int p = 0; p < caps.numPads(); ++p)
+                push->deliver(SurfaceInput::padUp(p / caps.columns, p % caps.columns)); // none left held
+        break;
+    }
+    }
+}
+
+namespace
+{
+juce::String summaryOf(const LatencyStats& stats)
+{
+    const auto s = stats.summary();
+    return "n=" + juce::String(static_cast<juce::int64>(s.count)) + " p50=" + juce::String(s.p50Ms, 2) + " p99=" + juce::String(s.p99Ms, 2) +
+           " max=" + juce::String(s.maxMs, 2);
+}
+} // namespace
+
+juce::String UiStress::report()
+{
+    auto* controller = shell.virtualPushController();
+    auto* push = shell.virtualPushView();
+    if (controller == nullptr || push == nullptr)
+        return " | virtual push: not shown";
+    return " | virtual push response ms (to its lights) " + summaryOf(controller->responseTimes()) + " | its refresh takes ms " +
+           summaryOf(controller->refreshCost()) + " | its paint ms " +
+           summaryOf(push->paintDelays()) + " (a frame: 16.67) | its paint takes ms " + summaryOf(push->paintCost());
+}
+
+void UiStress::resetMeasures()
+{
+    if (auto* controller = shell.virtualPushController())
+    {
+        controller->responseTimes().reset();
+        controller->refreshCost().reset();
+    }
+    if (auto* push = shell.virtualPushView())
+    {
+        push->paintDelays().reset();
+        push->paintCost().reset();
     }
 }
 

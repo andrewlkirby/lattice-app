@@ -485,8 +485,7 @@ void NoteMode::moveGrid(int direction)
 
 void NoteMode::selectTrack(int trackIndex)
 {
-    if (host.followsSelection())
-        host.context().selection.set({ui::SessionSelection::Kind::track, trackIndex, host.context().selection.get().scene});
+    host.context().selection.set({ui::SessionSelection::Kind::track, trackIndex, host.context().selection.get().scene});
     host.requestRefresh();
 }
 
@@ -556,6 +555,7 @@ void NoteMode::padMap(PadNoteMap& map)
                 auto& pad = map.pad(r, c);
                 pad.kind = PadNoteMap::Pad::Kind::note;
                 pad.note = static_cast<std::uint8_t>(note);
+                pad.slides = true; // a slide across the row moves along its notes (MPE)
             }
 }
 

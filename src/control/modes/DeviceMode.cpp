@@ -55,11 +55,7 @@ juce::ValueTree DeviceMode::device() const
         return {};
     if (emptyChain.isValid() && emptyChain.getNumChildren() == 0 && emptyChain.isAChildOf(own))
         return {};
-    juce::ValueTree d;
-    if (host.followsSelection())
-        d = ui::findDeviceById(own, host.context().selection.selectedDevice());
-    else if (local.isValid() && local.isAChildOf(own))
-        d = local;
+    const auto d = ui::findDeviceById(own, host.context().selection.selectedDevice());
     return d.isValid() ? d : LiveSet::chainOf(own).getChild(0);
 }
 
@@ -74,11 +70,9 @@ juce::ValueTree DeviceMode::level() const
 
 void DeviceMode::selectDevice(const juce::ValueTree& d)
 {
-    local = d;
     chainsOf = {};
     emptyChain = {};
-    if (host.followsSelection())
-        host.context().selection.selectDevice(LiveSet::idOf(d));
+    host.context().selection.selectDevice(LiveSet::idOf(d));
     host.requestRefresh();
 }
 

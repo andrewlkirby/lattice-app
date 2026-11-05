@@ -86,7 +86,6 @@ private:
     int pageButtons() const;   // how many lower buttons choose pages
     void step(int direction);  // along the chain
 
-    juce::ValueTree local;     // the device, when not following the shared selection
     juce::ValueTree chainsOf;  // a rack whose chains are shown
     juce::ValueTree emptyChain; // the DEVICES of an empty chain gone into
     std::map<std::int64_t, int> pageOf; // device ID -> its page

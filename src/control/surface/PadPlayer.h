@@ -43,6 +43,9 @@ struct Expression
     Pressure pressure = Pressure::polyphonic;
     float pressureThreshold = 0.0f; // pressure below it is none; the rest is scaled to 0..1
     Strip strip = Strip::pitchBend;
+    /** On a device with MPE pads (Push 3, Virtual Push): each note on a channel of its own, with
+        its own slide (pitch), timbre and pressure (docs/06-m5-controllers.md, 5g). */
+    bool perNote = true;
 
     /** The note velocity for a pad's raw velocity (0..1]: 1..127. */
     int velocityFor(float raw) const noexcept;
@@ -69,6 +72,9 @@ struct PadNoteMap
         Kind kind = Kind::none;
         std::uint8_t note = 0;
         bool hasUp = false;
+        /** A note pad a slide across moves the pitch from (a melodic layout's, not a drum's): the
+            slide follows the notes of the pads it crosses in its row. */
+        bool slides = false;
         EngineCommand onDown{};
         EngineCommand onUp{};
 
@@ -87,8 +93,14 @@ struct PadNoteMap
     int rows = 0, columns = 0;
     std::vector<Pad> pads;                // row by row, from the top
     std::vector<ButtonCommand> buttons;   // pressing one sends its command (no release)
-    std::uint8_t channel = 0;             // 0..15
+    std::uint8_t channel = 0;             // 0..15 (with perNote: MPE's master channel)
     std::uint8_t source = 0;              // the engine's source number for this surface
+    /** The track the notes are for (TimedMidi::target: a surface keeping its own selection), or 0
+        for the tracks that listen to the surface (armed). */
+    std::uint32_t target = 0;
+    /** Notes on channels of their own, the others than `channel` (MPE's lower zone), with their
+        slide, timbre and pressure (Expression::perNote, on a device with MPE pads). */
+    bool perNote = false;
     std::array<std::uint8_t, 128> velocity{}; // raw velocity (0..127) -> note velocity (1..127)
     std::array<std::uint8_t, 128> pressure{}; // raw pressure (0..127) -> what's sent (0..127)
     Expression::Pressure pressureMode = Expression::Pressure::off;
@@ -117,6 +129,10 @@ struct PadNoteMap
       ends that note even if the layout changed meanwhile. Two pads playing the same note: the
       second press plays it again, and it ends when the last of them is let go.
     - Pressure follows the map (each note's own, or the channel's); the strip bends or modulates.
+    - Per note (MPE, PadNoteMap::perNote): each note gets the channel used least recently, and
+      its slide (a pitch bend over perNoteBendSteps, following the notes of the pads crossed),
+      timbre (CC 74) and pressure (channel pressure) go on that channel, flagged per note. The
+      strip stays on the master channel, for every note.
     - Commands (a clip or scene launch, a track stop) go into the engine's command queue.
     - While a button the map lists as a modifier is held, pads go to the message thread instead.
 
@@ -149,17 +165,28 @@ private:
     {
         PadNoteMap::Pad::Kind kind = PadNoteMap::Pad::Kind::none;
         std::uint8_t note = 0, channel = 0, source = 0;
+        std::uint8_t master = 0; // the map's channel (with perNote, not the note's own)
         std::uint8_t lastPressure = 0;
         bool hasUp = false;
         bool channelWide = false; // its pressure is part of the channel's
+        bool perNote = false;     // on a channel of its own
+        std::uint32_t target = 0;
+        int lastBend = 8192, lastTimbre = 64; // per note: the last sent
         EngineCommand onUp{};
     };
     bool padDown(const PadNoteMap& map, int index, float velocity, double seconds) noexcept LATTICE_NONBLOCKING;
     bool padUp(int index, double seconds) noexcept LATTICE_NONBLOCKING;
     bool padPressure(const PadNoteMap& map, int index, float pressure, double seconds) noexcept LATTICE_NONBLOCKING;
-    void sendChannelPressure(std::uint8_t channel, std::uint8_t source, double seconds) noexcept LATTICE_NONBLOCKING;
+    void sendChannelPressure(const Held& h, double seconds) noexcept LATTICE_NONBLOCKING;
+    bool padSlide(const PadNoteMap& map, int index, float pads, double seconds) noexcept LATTICE_NONBLOCKING;
+    bool padTimbre(int index, float timbre, double seconds) noexcept LATTICE_NONBLOCKING;
     bool strip(const PadNoteMap& map, const SurfaceInput& input, double seconds) noexcept LATTICE_NONBLOCKING;
+    /** A note's own channel: one holding no note, used least recently (or, all busy, the note
+        started longest ago's). */
+    std::uint8_t channelForNote(const PadNoteMap& map) noexcept LATTICE_NONBLOCKING;
     bool send(std::uint8_t status, std::uint8_t data1, std::uint8_t data2, int size, std::uint8_t source,
+              std::uint32_t target, double seconds, std::uint8_t flags = 0) noexcept LATTICE_NONBLOCKING;
+    bool send(const Held& h, std::uint8_t status, std::uint8_t data1, std::uint8_t data2, int size,
               double seconds) noexcept LATTICE_NONBLOCKING;
 
     AudioEngine& engine;
@@ -169,6 +196,9 @@ private:
     std::array<std::uint8_t, 128> noteHolders{}; // pads holding each note
     std::uint64_t heldModifiers = 0;
     std::uint8_t channelPressure = 0;
+    std::array<std::uint8_t, 16> notesOnChannel{}; // per note: the held notes on each channel
+    std::array<std::uint64_t, 16> channelUsed{};   // when each last started or ended a note
+    std::uint64_t uses = 0;
     std::atomic<int> notesHeld{0};
     int numPads = 0;
 };

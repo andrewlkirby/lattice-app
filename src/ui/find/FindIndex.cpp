@@ -42,6 +42,8 @@ const std::vector<FindIndex::Setting>& FindIndex::settings()
         {"Control Surfaces", "Controllers", 2}, {"Surface Monitor", "Controllers", 2},
         {"Launchpad", "Controllers", 2},       {"APC", "Controllers", 2},
         {"Learn a Controller", "Controllers", 2}, {"Ableton Push", "Controllers", 2},
+        {"Per-Note Expression", "Controllers", 2}, {"MPE", "Controllers", 2},
+        {"Virtual Push Selection", "Controllers", 2},
         {"Theme", "Look & Feel", 3},           {"Zoom", "Look & Feel", 3},
         {"Colours", "Look & Feel", 3},         {"Places", "Library", 4},
         {"Library Folders", "Library", 4},     {"Rescan Library", "Library", 4},

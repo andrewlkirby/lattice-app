@@ -504,8 +504,7 @@ TEST_CASE("Fast path: RealtimeCheck on the input thread while pads are fuzzed an
     REQUIRE(rt::hooksInstalled());
     TuningRegistry tunings;
     AudioEngine engine;
-    auto caps = presets::virtualPush(8, 8);
-    caps.aftertouch = Aftertouch::polyphonic;
+    auto caps = presets::virtualPush(8, 8); // MPE pads: per note on half the maps (5g)
     PadPlayer player(engine, caps);
     player.publish(noteMap(presets::gridOnly(4, 4)));
 
@@ -520,8 +519,10 @@ TEST_CASE("Fast path: RealtimeCheck on the input thread while pads are fuzzed an
         {
             const int row = static_cast<int>(rng() % 8), column = static_cast<int>(rng() % 8);
             SurfaceInput in;
-            switch (rng() % 7)
+            switch (rng() % 9)
             {
+            case 7: in = SurfaceInput::padSlide(row, column, static_cast<float>(static_cast<int>(rng() % 200) - 100) / 20.0f); break;
+            case 8: in = SurfaceInput::padTimbre(row, column, static_cast<float>(rng() % 128) / 127.0f); break;
             case 0:
             case 1: in = SurfaceInput::padDown(row, column, static_cast<float>(rng() % 128) / 127.0f); break;
             case 2:
@@ -551,6 +552,7 @@ TEST_CASE("Fast path: RealtimeCheck on the input thread while pads are fuzzed an
         Expression e;
         e.pressure = i % 2 ? Expression::Pressure::channel : Expression::Pressure::polyphonic;
         e.strip = i % 3 == 0 ? Expression::Strip::modWheel : Expression::Strip::pitchBend;
+        e.perNote = i % 4 < 2;
         auto m = std::make_shared<PadNoteMap>(*noteMap(caps, e));
         m->rows = 8;
         m->columns = 8;
@@ -561,7 +563,9 @@ TEST_CASE("Fast path: RealtimeCheck on the input thread while pads are fuzzed an
             pad.kind = (p + i) % 5 == 0 ? PadNoteMap::Pad::Kind::command : PadNoteMap::Pad::Kind::note;
             pad.note = static_cast<std::uint8_t>((p * 3 + i) % 128);
             pad.onDown.type = CommandType::StopTrack;
+            pad.slides = p % 3 != 0;
         }
+        m->target = i % 5 == 0 ? 7u : 0u;
         player.publish(m);
         std::this_thread::sleep_for(std::chrono::microseconds(200));
     }

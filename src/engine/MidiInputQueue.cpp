@@ -16,7 +16,8 @@ bool MidiInputQueue::push(const juce::MidiMessage& message, std::uint8_t source,
     return push(message.getRawData(), message.getRawDataSize(), source, arrivalSeconds);
 }
 
-bool MidiInputQueue::push(const std::uint8_t* bytes, int size, std::uint8_t source, double arrivalSeconds) noexcept
+bool MidiInputQueue::push(const std::uint8_t* bytes, int size, std::uint8_t source, double arrivalSeconds,
+                          std::uint32_t target, std::uint8_t flags) noexcept
 {
     if (size < 1 || size > 3 || bytes[0] == 0xf0)
     {
@@ -26,6 +27,8 @@ bool MidiInputQueue::push(const std::uint8_t* bytes, int size, std::uint8_t sour
     Entry entry;
     entry.event.size = static_cast<std::uint8_t>(size);
     entry.event.source = source;
+    entry.event.target = target;
+    entry.event.flags = flags;
     std::copy_n(bytes, size, entry.event.bytes);
     entry.arrival = arrivalSeconds >= 0.0 ? arrivalSeconds : nowSeconds();
     return fifo.push(entry);

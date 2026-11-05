@@ -508,11 +508,14 @@ private:
     {
         juce::String text;
         juce::ToggleButton notes{"Notes to tracks"};
+        juce::ToggleButton follows{"Follows selection"};
         juce::TextButton monitor{"Monitor"}, remove{"Remove"};
         Row()
         {
             notes.setTooltip("What the surface doesn't use of its notes also plays the armed tracks (a keyboard's keys).");
-            for (auto* c : std::initializer_list<juce::Component*>{&notes, &monitor, &remove})
+            follows.setTooltip("On: the surface moves and follows the window's selection. Off: it keeps a track, scene and device of "
+                               "its own, and its pads play its own track.");
+            for (auto* c : std::initializer_list<juce::Component*>{&notes, &follows, &monitor, &remove})
                 addAndMakeVisible(*c);
         }
         void paint(juce::Graphics& g) override
@@ -522,7 +525,7 @@ private:
             g.setFont(t.font(t.fontNormal));
             g.drawFittedText(text, getLocalBounds().withRight(getWidth() - controlsWidth()), juce::Justification::centredLeft, 2);
         }
-        int controlsWidth() const { return juce::roundToInt(themeOf(*this).controlHeight * 17.0f); }
+        int controlsWidth() const { return juce::roundToInt(themeOf(*this).controlHeight * 24.0f); }
         void resized() override
         {
             const int h = juce::roundToInt(themeOf(*this).controlHeight);
@@ -531,6 +534,7 @@ private:
             r.removeFromRight(h / 4);
             monitor.setBounds(r.removeFromRight(h * 4));
             r.removeFromRight(h / 4);
+            follows.setBounds(r.removeFromRight(h * 7));
             notes.setBounds(r);
         }
     };
@@ -550,6 +554,8 @@ private:
             row->setTitle(row->text);
             row->notes.setToggleState(e.notesToTracks, juce::dontSendNotification);
             row->notes.onClick = [this, i, b = &row->notes] { manager.setNotesToTracks(i, b->getToggleState()); };
+            row->follows.setToggleState(e.followsSelection, juce::dontSendNotification);
+            row->follows.onClick = [this, i, b = &row->follows] { manager.setFollowsSelection(i, b->getToggleState()); };
             row->monitor.onClick = [this] { showMonitor(); };
             // Not from inside the row's own button: removing rebuilds the rows.
             row->remove.onClick = [safe = juce::Component::SafePointer<SurfacesPanel>(this), i] {
@@ -590,7 +596,7 @@ private:
             const auto d = safe->manager.definitions()[static_cast<std::size_t>(chosen - 1)];
             const auto found = safe->manager.portsFor(d);
             if (found.input.isNotEmpty())
-                safe->manager.add({d.name, found.input, found.output, d.playsKeys()});
+                safe->manager.add({d.name, found.input, found.output, d.playsKeys(), true});
             else
                 safe->choosePorts(d);
         });
@@ -623,7 +629,7 @@ private:
             out.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&safe->add), [safe, name, keys, input, outputs](int chosenOut) {
                 if (safe == nullptr || chosenOut <= 0)
                     return;
-                safe->manager.add({name, input, chosenOut >= 2 ? outputs[chosenOut - 2].name : juce::String(), keys});
+                safe->manager.add({name, input, chosenOut >= 2 ? outputs[chosenOut - 2].name : juce::String(), keys, true});
             });
         });
     }
@@ -739,18 +745,36 @@ public:
         strip.addItem("Scroll the Note mode pads", 3);
         strip.setSelectedId(juce::jlimit(0, 2, context.settings.getIntValue(prefs::stripKey, 0)) + 1, juce::dontSendNotification);
         strip.onChange = [this] { save(prefs::stripKey, strip.getSelectedId() - 1); };
+        perNote.setTitle("Per-note expression");
+        perNote.addItem("On: each note slides and sets its timbre (MPE)", 1);
+        perNote.addItem("Off", 2);
+        perNote.setSelectedId(context.settings.getBoolValue(prefs::perNoteKey, true) ? 1 : 2, juce::dontSendNotification);
+        perNote.onChange = [this] { save(prefs::perNoteKey, perNote.getSelectedId() == 1 ? 1 : 0); };
+        follows.setTitle("Virtual Push selection");
+        follows.addItem("Follows the window's", 1);
+        follows.addItem("Its own", 2);
+        follows.setSelectedId(context.settings.getBoolValue(prefs::virtualFollowsKey, true) ? 1 : 2, juce::dontSendNotification);
+        follows.onChange = [this] { save(prefs::virtualFollowsKey, follows.getSelectedId() == 1 ? 1 : 0); };
 
         row("Virtual Push rows", rows, 5.0f);
         row("Virtual Push columns", columns, 5.0f);
         row("Virtual Push encoders", encoders, 10.0f);
+        row("Virtual Push selection", follows, 10.0f);
         row("Pad velocity", velocity, 14.0f);
         row("Velocity curve", curve, 8.0f);
         row("Pad pressure", pressure, 14.0f);
         row("Pressure threshold", threshold, 5.0f);
         row("Touch strip", strip, 14.0f);
+        row("Per-note expression", perNote, 18.0f);
         note("Virtual Push (View menu, Ctrl+Alt+P) plays the session from the screen. Session mode: pads launch clips. Note mode: "
              "pads play the selected track in its tuning (Colundi's table, or In Key and Chromatic for 12-TET); Scale opens the "
-             "layout menu. Right-click latches a pad or a button; drag up on a held pad to press it harder.",
+             "layout menu. Right-click latches a pad or a button. Drag a held pad sideways to slide its note along the "
+             "pads' notes, and up or down to change its timbre (an instrument's Timbre source); with per-note expression off, "
+             "dragging up presses it harder.",
+             4);
+        note("Its own selection: Virtual Push keeps a selected track, scene and device of its own, and its notes play its own "
+             "track, armed or not. Following the window's, it moves the selection and plays the armed track, as every surface "
+             "that follows does.",
              3);
         note("Its encoders are the display's cells: drag one up or down (Shift: finely) or use the mouse wheel. Device mode: the "
              "selected device's parameters, the buttons above choosing the device and those below its pages. Mix mode: the volume, "
@@ -777,7 +801,7 @@ private:
     }
 
     Context& context;
-    juce::ComboBox rows, columns, encoders, velocity, curve, pressure, threshold, strip;
+    juce::ComboBox rows, columns, encoders, velocity, curve, pressure, threshold, strip, perNote, follows;
     std::unique_ptr<SurfacesPanel> surfaces;
 };
 

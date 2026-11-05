@@ -174,6 +174,31 @@ TEST_CASE("Virtual Push: the strip bends and springs back; dragging up from a he
 
     got.clear();
     const auto pad = l.pads[10];
+    // Per note (the default): sideways slides, up and down sets the timbre; a mouse presses nothing.
+    REQUIRE(push.playsPerNote());
+    push.mouseDown(mouseAt(push, pad.getCentre()));
+    push.mouseDrag(mouseAt(push, pad.getCentre().translated(l.unit * 0.1f, -l.unit * 0.5f))); // still in tune
+    push.mouseDrag(mouseAt(push, pad.getCentre().translated(l.unit * 1.5f, -l.unit * 0.5f)));
+    push.mouseDrag(mouseAt(push, pad.getCentre().translated(-l.unit * 0.575f, l.unit * 2.0f)));
+    push.mouseUp(mouseAt(push, pad.getCentre()));
+    REQUIRE(got.size() == 6);
+    CHECK(got[0].kind == SurfaceInput::Kind::padDown);
+    CHECK(got[5].kind == SurfaceInput::Kind::padUp);
+    CHECK(got[1].kind == SurfaceInput::Kind::padTimbre);
+    CHECK(std::abs(got[1].value - 0.75f) < 0.01f);
+    CHECK(got[2].kind == SurfaceInput::Kind::padSlide);
+    CHECK(std::abs(got[2].value - 1.5f) < 0.01f);
+    CHECK(got[3].kind == SurfaceInput::Kind::padSlide);
+    CHECK(std::abs(got[3].value + 0.5f) < 0.01f); // past the still part, half way to the next pad
+    CHECK(got[4].kind == SurfaceInput::Kind::padTimbre);
+    CHECK(got[4].value == 0.0f);
+    CHECK(got[2].row == got[0].row);
+    CHECK(got[2].column == got[0].column);
+    CHECK(std::abs(push.slideFor({100, 0}, {100.0f + l.unit, 0}) - 1.0f) < 1.0e-5f); // the next pad's centre: its note
+    got.clear();
+
+    // Not per note: dragging up presses harder.
+    push.setPerNote(false);
     push.mouseDown(mouseAt(push, pad.getCentre()));
     push.mouseDrag(mouseAt(push, pad.getCentre().translated(0.0f, -l.unit * 0.5f)));
     push.mouseDrag(mouseAt(push, pad.getCentre().translated(0.0f, -l.unit * 0.5f))); // the same: nothing new

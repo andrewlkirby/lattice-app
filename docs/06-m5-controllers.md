@@ -522,6 +522,68 @@ Playing pads must feel as tight as a dedicated instrument. **Pad-to-sound latenc
   - pad-to-sound latency measured on the reference machine (a quiet-machine session, arranged with the user first);
   - the UI stress soak with Virtual Push open.
 
+##### As built (5g, 2026-11-05)
+- **Several surfaces: shared or own selection.**
+  - By default every surface follows the window's selection and moves it, as before: Push, Virtual Push and a Launchpad stay together.
+  - A surface not following keeps a `SessionSelectionModel` of its own. It starts as a copy of the window's when it stops following. Its modes act on it: the Session box, the track Note mode plays, the device Device mode edits, and the clip Clip mode edits. The modes no longer check `followsSelection()` themselves: each acts on `host.context().selection`, which is the window's or the surface's own.
+  - **Its notes go to its own track.**
+    - `PadNoteMap::target` carries that track's ID, and the engine's live events carry it (`TimedMidi::target`, the ID's low 32 bits).
+    - Input meant for a track plays that track alone, armed or not, whatever its input port and channel. Only monitoring Off silences it.
+    - Untargeted input goes to the armed tracks, as before.
+    - Recording still follows arming: an independent surface records on a track only once it's armed.
+  - **New on an independent surface** makes the clip, or Shift+New the scene, in its own slot. The window's commands would act on the window's selection.
+  - **Settings:**
+    - each surface's row in Preferences → Controllers has "Follows selection", kept with the surface (`followsSelection`);
+    - Virtual Push has "Virtual Push selection: follows the window's / its own".
+- **MPE (per-note expression).**
+  - **The engine.** A channel message can carry `TimedMidi::perNote`, the MPE member-channel flag. Its pitch bend, channel pressure and CC 74 (timbre) then belong only to the notes started with the flag on that channel. The bend's range is `perNoteBendSteps` = 48 table steps (semitones on 12-TET), MPE's default for member channels. Unflagged messages are the channel's, as before.
+    - The flag makes MPE explicit. Guessing it from the channel would misread a keyboard on channel 2.
+    - A flagged event counts as channel 1 for a track's input-channel filter: its channel only says where its note is kept.
+  - **The instruments.** `PerNoteExpression` (devices/framework) holds each member channel's bend, pressure and timbre.
+    - Synth: a per-note voice adds its channel's bend in table steps, so a slide moves along the track's tuning table (Colundi's too), and takes the most of the channel's, the note's and its own channel's pressure. A new modulation source, Timbre (CC 74), is the voice's own for a per-note voice and the channel's otherwise. It goes at the end of the list, so saved sets keep their sources.
+    - Sampler: a per-note voice slides the same way, and a note-off ends the voice on its own channel. While there: the sustain pedal is now kept per voice, so lifting it no longer ends a key that was pressed again and is still held.
+  - **The pads** (`PadPlayer`, when `Expression::perNote` is on and the device has MPE pads: Virtual Push, and Push 3 once tested):
+    - each note gets a channel of its own: a free one used least recently, or, with all fifteen busy, the oldest note's;
+    - before the note starts, its bend, timbre (64) and pressure (0) are sent at rest;
+    - a slide (`SurfaceInput::padSlide`, in pads across) follows the notes of the pads it crosses in the row, so it lands on each pad's note at that pad's centre. Past the row's end it carries the last step on. Drum pads (`Pad::slides` off) don't slide;
+    - timbre goes as CC 74, and pressure as the channel's;
+    - the strip stays on the master channel, for every note.
+
+    With per-note expression off it's all as before: one channel, polyphonic pressure. The per-note path runs in the RealtimeCheck pad fuzz.
+  - **Virtual Push:** a held pad's drag sideways slides, and up and down sets the timbre (0.5 where pressed; a pad's height up is 1). A pen's pressure is its pressure; a mouse has none per note. The first 15% of a pad's width is still, so a click that wobbles stays in tune; from there the slide reaches the next pad's note at its centre. With per-note expression off (Preferences → Controllers → Per-note expression), dragging up presses harder, as in 5a.
+  - Recording MPE in clips waits until after the MVP, as planned; recorded notes keep their pitch.
+  - Push 3 still plays as Push 2 does (polyphonic pressure), until a unit is tested.
+- **Quality pass: timing built in.**
+  - `SurfaceController::responseTimes()`: from something asking for a refresh (an input, a hold, the set, the selection) to the lights, display and text handed to the driver. `refreshCost()`: how long a refresh takes. A feed tick refreshes at once, within its frame.
+  - `VirtualPush::paintDelays()`: from new lights, text or display to the paint that shows them. `paintCost()`: how long its paints take.
+  - `PushDriver::ledDelays()`: from lights changing to the last of them sent. `DisplaySender::delays()`: from a frame posted to its USB writes done.
+  - **The soak** (`scripts\perf-check.ps1 -Soak`):
+    - **`-UiStress`** keeps Virtual Push open and adds a seventh phase that works it: a mode button a second, pads pressed and let go, and encoders turning every frame. The progress and result lines give its response, refresh, paint delay and paint cost.
+    - **`-Pads`** presses pads on a thread of its own through a surface's fast path, as a controller's input thread would: up to four held, pressed every 20 to 80 ms. The lines then give pad-to-sound latency: from a press to its block handed to the device (the input probe), and with the device's output latency added.
+- **Measured** (on the reference machine, but not quiet: Windows Audio exclusive on the laptop's speakers at 256 samples (5.8 ms), with the UI stress running):
+  - **Lights handed to the driver:** p50 0.5–1.0 ms, p99 under 11 ms, the worst 11.3 ms. Within a frame. Refreshes take p99 1.2 ms.
+  - **Push's lights** (tests on the fake output): sent within the frame they change in. A page scroll in loaded colours, and every pad pulsing, fit one frame's budget; a first page of 15 new colours does too.
+  - **Push's display** (fake link): written p50 within a frame of being posted. That's the wait for the next 60 fps slot, plus the USB writes, which take no time on the fake link.
+  - **On Virtual Push's screen:** its paint itself takes p99 under 3 ms. The time to the paint is p50 3.7–10.8 ms, but p99 19–25 ms with the worst 21–60 ms, depending on the stress: about 1 change in 100 shows a frame late. Without the once-a-second mode switches it's p50 3.7 ms, p99 18.9 ms, worst 21.4 ms. **This misses ≤ 1 frame at the tail.** The controller and Virtual Push take under 3 ms of it. The rest is the message thread being busy with the window when the screen refreshes, under a stress that changes something every frame. **Next:** profile the message thread on the quiet machine (with a real profiler), and find what holds the window's frame.
+  - **Pads** (the same run, 20 s, not quiet): to the device p50 5.9 ms (one block), p99 10.7 ms, the worst 10.9 ms. With the output latency: p50 17.5 ms, p99 22.3 ms. The p99 is two blocks, which misses the target (buffer + 1 ms). This needs the quiet-machine run at 64 samples (ASIO4ALL) before anything is concluded: on a loaded machine WASAPI's callbacks are uneven.
+- **Checks:** all 538 fast tests pass on Windows; all 527 on Linux (warnings as errors). Short UI stress soaks (20 to 32 s, with and without `-Pads`) passed with no dropouts. Callgrind wasn't run for 5g.
+- **Waiting for the user:**
+  - the quiet-machine session: `scripts\perf-check.ps1 -Soak -Pads -SoakSeconds 300 -DeviceType ASIO -DeviceName "ASIO4ALL v2"`, then the same with `-UiStress`, and profiling the window's frame;
+  - the hands-on check: slides on Virtual Push in Colundi Note mode, and a second surface on its own selection. Push 3's MPE waits for a unit.
+- **Tests:**
+  - `tests/control/MultiSurfaceTests.cpp`:
+    - per-note channels, at rest before the note; two pads of one note being two voices; channel reuse; per-note off;
+    - slides along a row's notes (and past it), timbre and pressure, drums and the strip;
+    - the engine's targeted and per-note routing;
+    - Push, Virtual Push and a Launchpad on the window's selection and on their own; the independent surface's notes going to its track, and its New;
+    - response timing.
+  - Elsewhere:
+    - the Synth's per-note bend along the Colundi table (whole and half steps; another channel's, and an unflagged note's, untouched) and its Timbre source;
+    - Virtual Push's slide and timbre drag;
+    - Push's light and display response;
+    - the setting kept with a surface;
+    - the RealtimeCheck pad fuzz with per-note maps, slides and timbre.
+
 ## Architecture — `src/control/`
 
 ```

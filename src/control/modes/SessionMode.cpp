@@ -164,12 +164,8 @@ bool SessionMode::handle(const SurfaceInput& input)
             if (input.column < across && input.row < down)
             {
                 setOrigin(input.column * trackColumns(), input.row * sceneRows());
-                if (host.followsSelection())
-                {
-                    const int track = trackOfColumn(0);
-                    if (track >= 0)
-                        host.context().selection.set({SessionSelection::Kind::slot, track, scene0});
-                }
+                if (const int track = trackOfColumn(0); track >= 0)
+                    host.context().selection.set({SessionSelection::Kind::slot, track, scene0});
             }
             return true;
         }
@@ -281,8 +277,7 @@ void SessionMode::pressSlot(int padIndex, int track, int scene, bool played)
     // Armed before the press selects the track (auto-arm): the first press on an empty slot of a
     // track that wasn't armed selects (and arms) it rather than starting a recording at once.
     const bool wasArmed = c.session.isArmed(track);
-    if (host.followsSelection())
-        c.selection.set({SessionSelection::Kind::slot, track, scene});
+    c.selection.set({SessionSelection::Kind::slot, track, scene});
     if (host.shiftHeld() || played)
         return; // select only (or the fast path launched it already)
     const auto clip = set.clip(track, scene);
@@ -322,8 +317,7 @@ void SessionMode::pressScene(int scene)
         return;
     if (host.shiftHeld())
     {
-        if (host.followsSelection())
-            c.selection.set({SessionSelection::Kind::scene, 0, scene});
+        c.selection.set({SessionSelection::Kind::scene, 0, scene});
         return;
     }
     if (host.isHeld(Role::deleteClip))
@@ -362,10 +356,7 @@ void SessionMode::pressTrack(int track)
         c.session.beginEdit("Solo", node);
         set.setTrackSolo(track, !static_cast<bool>(node[ids::solo]), host.shiftHeld());
         return;
-    case Modifier::none:
-        if (host.followsSelection())
-            c.selection.set({SessionSelection::Kind::track, track, 0});
-        return;
+    case Modifier::none: c.selection.set({SessionSelection::Kind::track, track, 0}); return;
     }
 }
 
@@ -376,12 +367,6 @@ void SessionMode::navigate(int dx, int dy)
     const int stepY = page ? sceneRows() : 1;
     if (page)
         setOrigin(column0 + dx * stepX, scene0 + dy * stepY);
-    if (!host.followsSelection())
-    {
-        if (!page)
-            setOrigin(column0 + dx, scene0 + dy);
-        return;
-    }
     auto& c = host.context();
     const auto columns = columnsOfSet();
     if (columns.empty())
@@ -569,12 +554,11 @@ void SessionMode::render(LedFrame& frame)
     const int count = static_cast<int>(columnsList.size());
     const auto it = std::find(columnsList.begin(), columnsList.end(), sel.track);
     const int selColumn = it == columnsList.end() ? -1 : static_cast<int>(it - columnsList.begin());
-    const bool follow = host.followsSelection();
     const auto can = [&](bool possible) { return possible ? available : LedState::off(); };
-    setButton(frame, {Role::navUp, 0}, can(scene0 > 0 || (follow && sel.scene > 0)));
-    setButton(frame, {Role::navDown, 0}, can(scene0 + sceneRows() < set.numScenes() || (follow && sel.scene < set.numScenes() - 1)));
-    setButton(frame, {Role::navLeft, 0}, can(column0 > 0 || (follow && selColumn > 0)));
-    setButton(frame, {Role::navRight, 0}, can(column0 + trackColumns() < count || (follow && selColumn >= 0 && selColumn < count - 1)));
+    setButton(frame, {Role::navUp, 0}, can(scene0 > 0 || sel.scene > 0));
+    setButton(frame, {Role::navDown, 0}, can(scene0 + sceneRows() < set.numScenes() || sel.scene < set.numScenes() - 1));
+    setButton(frame, {Role::navLeft, 0}, can(column0 > 0 || selColumn > 0));
+    setButton(frame, {Role::navRight, 0}, can(column0 + trackColumns() < count || (selColumn >= 0 && selColumn < count - 1)));
 }
 
 } // namespace lattice::control

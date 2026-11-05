@@ -4,6 +4,7 @@
 #include "control/push/PushProtocol.h"
 #include "control/surface/Presets.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace lattice::control::push
@@ -178,6 +179,8 @@ void PushDriver::showLeds(const LedFrame& frame, const LedFrame::Changes& change
     for (const int i : changed.buttons)
         if (i >= 0 && i < static_cast<int>(frame.buttons.size()))
             want(static_cast<std::size_t>(padCount + i), frame.buttons[static_cast<std::size_t>(i)]);
+    if (dirtySince < 0.0 && std::any_of(lights.begin(), lights.end(), [](const Light& l) { return l.dirty; }))
+        dirtySince = juce::Time::getMillisecondCounterHiRes();
     flush();
     startTimerIfNeeded();
 }
@@ -252,6 +255,11 @@ void PushDriver::flush()
         }
     }
     nextDirty = 0;
+    if (dirtySince >= 0.0)
+    {
+        ledsAfter.record(juce::Time::getMillisecondCounterHiRes() - dirtySince);
+        dirtySince = -1.0;
+    }
 }
 
 bool PushDriver::anyAnimatedShown() const noexcept

@@ -6,7 +6,9 @@
 
 #include <juce_events/juce_events.h>
 
+#include <atomic>
 #include <functional>
+#include <thread>
 
 namespace lattice
 {
@@ -34,10 +36,16 @@ public:
         juce::String setFile;
         /** A WAV file of what the device plays, from the start line to the result (24-bit). */
         juce::String recordFile;
+        /** Pads pressed and let go on a thread of their own, through a surface's fast path, as a
+            controller's input thread would (docs/06-m5-controllers.md, 5g): the lines then give
+            pad-to-sound latency, from a press to its block handed to the device, and with the
+            device's output latency. */
+        bool pads = false;
     };
 
     /** Reads --soak-seconds, --buffer-size, --sample-rate, --device-type, --device-name,
-        --soak-level-db, --ui-stress, --set and --record. Returns false if --soak-seconds is absent. */
+        --soak-level-db, --ui-stress, --set, --record and --pads. Returns false if --soak-seconds is
+        absent. */
     static bool parseCommandLine(const juce::String& commandLine, Options& options);
 
     SoakTest(AudioEngine& engine, Options options, juce::File logFile, std::function<void(bool passed)> onFinished);
@@ -47,6 +55,10 @@ public:
     void start();
     /** What the app is doing, for the dropout lines (the UI stress test's step). */
     void setContext(std::function<juce::String()> describe) { context = std::move(describe); }
+    /** More for the progress and result lines (the controllers' response times), from the start line on. */
+    void setReport(std::function<juce::String()> more) { report = std::move(more); }
+    /** Called at the start line: what the report covers starts there. */
+    std::function<void()> onMeasuring;
 
 private:
     void timerCallback() override;
@@ -54,6 +66,9 @@ private:
     void finish();
     void startRecording();
     void stopRecording();
+    void startPads();
+    void stopPads();
+    juce::String padsReport() const;
 
     /** What the device plays, into the WAV file (lock-free on the audio thread). */
     struct Recorder final : AudioEngine::OutputTap
@@ -73,6 +88,10 @@ private:
     juce::File logFile;
     std::function<void(bool)> onFinished;
     std::function<juce::String()> context;
+    std::function<juce::String()> report;
+    std::thread padThread;
+    std::atomic<bool> padsRunning{false};
+    std::atomic<std::uint64_t> padPresses{0};
 
     juce::String setupError;
     juce::String availableBufferSizes;

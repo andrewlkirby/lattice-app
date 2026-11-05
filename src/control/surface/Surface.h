@@ -148,6 +148,9 @@ struct SurfaceInput
         padDown,     // row, column, value = velocity (0..1]
         padPressure, // row, column, value = pressure 0..1
         padUp,       // row, column
+        padSlide,    // row, column, value = how far across the finger has moved since the press,
+                     // in pads (signed: right is positive); per-note pitch (MPE)
+        padTimbre,   // row, column, value = 0..1 (0.5 where the pad was pressed); per-note timbre
         buttonDown,  // button
         buttonUp,    // button
         encoderTurn, // encoder, delta: steps (positive clockwise)
@@ -171,6 +174,8 @@ struct SurfaceInput
     static SurfaceInput padDown(int row, int column, float velocity) { return {Kind::padDown, row, column, velocity}; }
     static SurfaceInput padPressure(int row, int column, float pressure) { return {Kind::padPressure, row, column, pressure}; }
     static SurfaceInput padUp(int row, int column) { return {Kind::padUp, row, column}; }
+    static SurfaceInput padSlide(int row, int column, float pads) { return {Kind::padSlide, row, column, pads}; }
+    static SurfaceInput padTimbre(int row, int column, float timbre) { return {Kind::padTimbre, row, column, timbre}; }
     static SurfaceInput buttonDown(ButtonId id) { return {Kind::buttonDown, 0, 0, 0.0f, id}; }
     static SurfaceInput buttonUp(ButtonId id) { return {Kind::buttonUp, 0, 0, 0.0f, id}; }
     static SurfaceInput strip(float position) { return {Kind::strip, 0, 0, position}; }

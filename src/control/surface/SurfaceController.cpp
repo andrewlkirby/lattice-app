@@ -37,7 +37,8 @@ bool isEncoderMode(ModeKind kind)
 }
 } // namespace
 
-SurfaceController::SurfaceController(SurfaceContext context, SurfaceDriver& d) : ctx(context), driver(d)
+SurfaceController::SurfaceController(SurfaceContext context, SurfaceDriver& d)
+    : ctx(context), own{ctx.session, ctx.commands, ownSelection, ctx.feed, ctx.specs, ctx.browser}, driver(d)
 {
     if (ctx.specs == nullptr)
         ownSpecs = std::make_unique<DeviceSpecs>(ctx.session.deviceRegistry());
@@ -77,6 +78,7 @@ SurfaceController::SurfaceController(SurfaceContext context, SurfaceDriver& d) :
     driver.pads = player.get();
     driver.onInput = [this](const SurfaceInput& input) { handle(input); };
     ctx.selection.addListener(this);
+    ownSelection.addListener(this);
     ctx.session.set().state().addListener(this);
     listenToFeed();
     current().enter();
@@ -95,6 +97,7 @@ SurfaceController::~SurfaceController()
     ctx.feed.removeListener(this);
     ctx.session.set().state().removeListener(this);
     ctx.selection.removeListener(this);
+    ownSelection.removeListener(this);
 }
 
 ModeKind SurfaceController::modeKind() const noexcept
@@ -148,9 +151,17 @@ void SurfaceController::setMode(ModeKind kind)
 
 void SurfaceController::setFollowsSelection(bool f)
 {
+    if (f == follow)
+        return;
+    if (!f)
+    {
+        // Its own from here, starting where the shared one is.
+        ownSelection.showDevicesOf(ctx.selection.deviceOwner());
+        ownSelection.set(ctx.selection.get());
+        ownSelection.selectDevice(ctx.selection.selectedDevice());
+    }
     follow = f;
-    if (follow)
-        selectionChanged(ctx.selection.get());
+    showSelection();
     refresh();
 }
 
@@ -220,6 +231,8 @@ void SurfaceController::handle(const SurfaceInput& input)
             handleEncoder(input);
         break;
     case Kind::tempoTurn: turnTempo(input.delta); break;
+    case Kind::padSlide:
+    case Kind::padTimbre: break; // the fast path's alone: nothing a mode shows
     default:
         if (handleGlobal(input))
             break;
@@ -282,9 +295,9 @@ bool SurfaceController::handleGlobal(const SurfaceInput& input)
     case Role::tapTempo: commands.perform("transport.tapTempo"); return true;
     case Role::undo: commands.perform(shift ? "edit.redo" : "edit.undo"); return true;
     case Role::stopAll: commands.perform("transport.stopAllClips"); return true;
-    case Role::newClip: commands.perform(shift ? "create.scene" : "create.midiClip"); return true;
-    case Role::doubleLoop: ui::clipActions::duplicateLoop(ctx.session, selectedClip(ctx, selectedTrack(ctx))); return true;
-    case Role::quantize: ui::clipActions::quantize(ctx.session, selectedClip(ctx, selectedTrack(ctx))); return true;
+    case Role::newClip: createNew(shift); return true;
+    case Role::doubleLoop: ui::clipActions::duplicateLoop(ctx.session, selectedClip(context(), selectedTrack(context()))); return true;
+    case Role::quantize: ui::clipActions::quantize(ctx.session, selectedClip(context(), selectedTrack(context()))); return true;
     case Role::fixedLength:
     {
         // On and off (back to the length it had); with Shift, the next length.
@@ -351,7 +364,8 @@ void SurfaceController::renderGlobals(LedFrame& frame) const
     set(Role::stopAll, isHeld(Role::stopAll) ? lit : available);
     set(Role::newClip, isHeld(Role::newClip) ? lit : available);
     set(Role::fixedLength, ctx.session.set().fixedRecordBars() != 0 ? lit : available);
-    const bool hasClip = selectedClip(ctx, selectedTrack(ctx)).isValid();
+    const auto& c = follow ? ctx : own;
+    const bool hasClip = selectedClip(c, selectedTrack(c)).isValid();
     set(Role::doubleLoop, isHeld(Role::doubleLoop) ? lit : hasClip ? available : LedState::off());
     set(Role::quantize, isHeld(Role::quantize) ? lit : hasClip ? available : LedState::off());
     for (const auto role : {Role::modeSession, Role::modeNote, Role::modeDevice, Role::modeMix, Role::modeBrowse, Role::modeClip})
@@ -363,6 +377,7 @@ void SurfaceController::renderGlobals(LedFrame& frame) const
 
 void SurfaceController::refresh()
 {
+    const double began = juce::Time::getMillisecondCounterHiRes();
     cancelPendingUpdate();
     // What the modes show can change what they need from the feed (Note mode's sequencer).
     if ((current().aspects() | (knobs() != nullptr ? knobs()->aspects() : 0u)) != listened)
@@ -400,12 +415,20 @@ void SurfaceController::refresh()
     if (auto* k = knobs(); k != nullptr && &encoderOwner() == k)
         k->render(frame);
     auto changes = frame.changesFrom(shownAny ? shown : LedFrame{});
-    if (changes.empty() && shownAny)
-        return;
-    shown = std::move(frame);
-    shownAny = true;
-    ++sent;
-    driver.showLeds(shown, changes);
+    if (!changes.empty() || !shownAny)
+    {
+        shown = std::move(frame);
+        shownAny = true;
+        ++sent;
+        driver.showLeds(shown, changes);
+    }
+    const double done = juce::Time::getMillisecondCounterHiRes();
+    costs.record(done - began);
+    if (pendingSince >= 0.0)
+    {
+        response.record(done - pendingSince);
+        pendingSince = -1.0;
+    }
 }
 
 void SurfaceController::publishPadMap()
@@ -413,6 +436,14 @@ void SurfaceController::publishPadMap()
     auto map = PadNoteMap::empty(capabilities());
     map.source = source;
     map.setExpression(expressionSettings, capabilities());
+    if (!follow)
+    {
+        // Its own track's: the notes go there, not to the armed tracks.
+        const auto& o = ownSelection.deviceOwner();
+        const auto& set = ctx.session.set();
+        if (o.kind == ui::DeviceOwner::Kind::track && o.index >= 0 && o.index < set.numTracks())
+            map.target = static_cast<std::uint32_t>(set.trackId(o.index));
+    }
     current().padMap(map);
     if (published != nullptr && map == *published)
         return;
@@ -432,18 +463,44 @@ void SurfaceController::engineStateChanged(std::uint32_t)
     refresh();
 }
 
-void SurfaceController::selectionChanged(const ui::SessionSelection&)
+void SurfaceController::selectionChanged(const ui::SessionSelection& now)
+{
+    if (&now == &selection().get()) // the one the modes use (not the other)
+        showSelection();
+    later();
+}
+
+void SurfaceController::showSelection()
+{
+    current().selectionChanged();
+    // The Session box follows the selection under any mode: Mix's tracks are the box's.
+    if (session != &current())
+        session->selectionChanged();
+    if (auto* k = knobs())
+        k->selectionChanged();
+}
+
+void SurfaceController::createNew(bool scene)
 {
     if (follow)
     {
-        current().selectionChanged();
-        // The Session box follows the selection under any mode: Mix's tracks are the box's.
-        if (session != &current())
-            session->selectionChanged();
-        if (auto* k = knobs())
-            k->selectionChanged();
+        ctx.commands.perform(scene ? "create.scene" : "create.midiClip");
+        return;
     }
-    triggerAsyncUpdate();
+    // The window's commands act on the shared selection: the same, on this surface's own.
+    auto& set = ctx.session.set();
+    const auto s = ownSelection.get();
+    if (scene)
+    {
+        ctx.session.beginEdit("Insert scene");
+        ownSelection.set({ui::SessionSelection::Kind::scene, s.track, set.addScene(s.scene + 1)});
+    }
+    else if (s.kind == ui::SessionSelection::Kind::slot && s.track >= 0 && s.track < set.numTracks() &&
+             !set.clip(s.track, s.scene).isValid() && !set.isGroupTrack(s.track))
+    {
+        ctx.session.beginEdit("Insert MIDI clip", set.slot(s.track, s.scene));
+        set.createClip(s.track, s.scene, set.beatsPerBar());
+    }
 }
 
 } // namespace lattice::control

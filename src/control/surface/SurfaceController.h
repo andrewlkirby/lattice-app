@@ -1,6 +1,7 @@
 #pragma once
 
 #include "control/surface/Mode.h"
+#include "core/LatencyStats.h"
 
 #include <juce_data_structures/juce_data_structures.h>
 #include <juce_events/juce_events.h>
@@ -26,6 +27,12 @@ class BrowseMode;
     and an encoder mode (Device or Mix) on the encoders, the display and the buttons along it, as
     on a Push. On a device without encoders Device and Mix take the grid instead (its columns as
     faders). The encoders edit through an EncoderBank: a turn is one undo step.
+
+    Selection (docs/06-m5-controllers.md, 5g): by default the controller follows the window's
+    selection (the shared one, as every other surface that follows it) and moves it. Not
+    following, it keeps its own (a copy of the shared one when it stops following), and its
+    modes act on that: the box, the track Note mode plays, the device Device mode edits. Its
+    notes then go to its own track (PadNoteMap::target), armed or not.
 
     The LEDs are worked out again only when something they show changes: the feed's state (on
     the tick that saw it), the set, the selection, or a held button. The driver then gets the
@@ -78,6 +85,8 @@ public:
     void setExpression(const Expression& e);
 
     void setFollowsSelection(bool follow);
+    /** The selection the modes act on: the shared one, or the controller's own. */
+    ui::SessionSelectionModel& selection() noexcept { return context().selection; }
     void setColours(const SurfaceColours& c);
 
     /** Works the LEDs out now and sends what changed (the controller does this by itself; tests
@@ -86,15 +95,22 @@ public:
     const LedFrame& shownLeds() const noexcept { return shown; }
     /** How many frames have gone to the driver (a frame that changed nothing isn't sent). */
     std::uint64_t framesSent() const noexcept { return sent; }
+    /** From something asking for a refresh (an input, a hold, the set or the selection changing)
+        to its LEDs, display and text handed to the driver, in ms (docs/06-m5-controllers.md, 5g:
+        the charter's ≤ 1 frame). A feed tick refreshes at once, within its frame. */
+    const LatencyStats& responseTimes() const noexcept { return response; }
+    LatencyStats& responseTimes() noexcept { return response; }
+    /** How long refresh() takes, in ms (part of the response, and of the message thread's frame). */
+    LatencyStats& refreshCost() noexcept { return costs; }
 
     // ModeHost
     const SurfaceCapabilities& capabilities() const override { return driver.capabilities(); }
-    SurfaceContext& context() override { return ctx; }
+    SurfaceContext& context() override { return follow ? ctx : own; }
     const SurfaceColours& colours() const override { return palette; }
     bool isHeld(ButtonId id) const override;
     using ModeHost::isHeld;
     bool followsSelection() const override { return follow; }
-    void requestRefresh() override { triggerAsyncUpdate(); }
+    void requestRefresh() override { later(); }
     int trackOfColumn(int column) const override;
     const Expression& expression() const override { return expressionSettings; }
     EncoderBank& encoders() override { return *bank; }
@@ -121,16 +137,29 @@ private:
     void publishPadMap();
 
     void engineStateChanged(std::uint32_t aspects) override;
-    void selectionChanged(const ui::SessionSelection&) override;
-    void deviceOwnerChanged(const ui::DeviceOwner&) override { triggerAsyncUpdate(); }
-    void deviceSelected(std::int64_t) override { triggerAsyncUpdate(); }
-    void valueTreePropertyChanged(juce::ValueTree&, const juce::Identifier&) override { triggerAsyncUpdate(); }
-    void valueTreeChildAdded(juce::ValueTree&, juce::ValueTree&) override { triggerAsyncUpdate(); }
-    void valueTreeChildRemoved(juce::ValueTree&, juce::ValueTree&, int) override { triggerAsyncUpdate(); }
-    void valueTreeChildOrderChanged(juce::ValueTree&, int, int) override { triggerAsyncUpdate(); }
+    void selectionChanged(const ui::SessionSelection& now) override;
+    /** The modes see the selection anew (it changed, or which one they use did). */
+    void showSelection();
+    /** New (Shift: a scene), on the selection the modes use. */
+    void createNew(bool scene);
+    void deviceOwnerChanged(const ui::DeviceOwner&) override { later(); }
+    void deviceSelected(std::int64_t) override { later(); }
+    void valueTreePropertyChanged(juce::ValueTree&, const juce::Identifier&) override { later(); }
+    void valueTreeChildAdded(juce::ValueTree&, juce::ValueTree&) override { later(); }
+    void valueTreeChildRemoved(juce::ValueTree&, juce::ValueTree&, int) override { later(); }
+    void valueTreeChildOrderChanged(juce::ValueTree&, int, int) override { later(); }
     void handleAsyncUpdate() override { refresh(); }
+    /** A refresh soon (the next message), timed from the first ask. */
+    void later()
+    {
+        if (pendingSince < 0.0)
+            pendingSince = juce::Time::getMillisecondCounterHiRes();
+        triggerAsyncUpdate();
+    }
 
-    SurfaceContext ctx;
+    SurfaceContext ctx; // the shared selection's
+    ui::SessionSelectionModel ownSelection;
+    SurfaceContext own; // the same with the controller's own selection
     SurfaceDriver& driver;
     SurfaceColours palette;
     std::vector<std::unique_ptr<Mode>> modes; // by ModeKind; null for those not built yet
@@ -161,6 +190,8 @@ private:
     LedFrame shown;
     bool shownAny = false;
     std::uint64_t sent = 0;
+    LatencyStats response, costs;
+    double pendingSince = -1.0; // ms: the first ask since the last refresh (-1: none)
 
     JUCE_DECLARE_NON_COPYABLE(SurfaceController)
 };

@@ -167,7 +167,7 @@ TEST_CASE("Surface manager: a recognised device is offered once; added, it conne
     f.manager->refreshPorts();
     CHECK(f.offers.size() == 1); // once a session
 
-    const int i = f.manager->add({f.offers[0].definition, f.offers[0].input, f.offers[0].output, false});
+    const int i = f.manager->add({f.offers[0].definition, f.offers[0].input, f.offers[0].output, false, true});
     REQUIRE(f.manager->isConnected(i));
     CHECK(f.engine.isSurfaceInput("in:LPX MIDI"));
     CHECK(f.ports.isInputOpen("in:LPX MIDI"));
@@ -227,7 +227,7 @@ TEST_CASE("Surface manager: declined for good; an input already open stays open;
     f.ports.setInputOpen("in:Keystation", true); // the tracks' already
     f.ports.plug("Keystation");
     CHECK(f.offers.empty());
-    const int i = f.manager->add({"Keyboard + 8 knobs", "Keystation", "Keystation", true});
+    const int i = f.manager->add({"Keyboard + 8 knobs", "Keystation", "Keystation", true, true});
     REQUIRE(f.manager->isConnected(i));
     f.toTracks();
     f.engine.receiveMidi("in:Keystation", juce::MidiMessage::noteOn(1, 60, static_cast<juce::uint8>(100)));
@@ -250,7 +250,7 @@ TEST_CASE("Surface manager: the user's definitions, a broken one named; the moni
 
     f.ports.plug("MyPads");
     REQUIRE(f.offers.size() == 1);
-    const int i = f.manager->add({"My Pads", "MyPads", "MyPads", false});
+    const int i = f.manager->add({"My Pads", "MyPads", "MyPads", false, true});
     std::vector<SurfaceManager::Seen> seen;
     f.manager->setMonitor([&](const SurfaceManager::Seen& s) { seen.push_back(s); });
     f.engine.receiveMidi("in:MyPads", juce::MidiMessage::noteOn(1, 34, static_cast<juce::uint8>(100))); // top-left is 36: this is row 2
@@ -278,7 +278,7 @@ TEST_CASE("Surfaces in the window: Preferences lists them; their ports' MIDI swi
     manager->onOffer = [&](const SurfaceManager::Offer& o) { offers.push_back(o); };
     fake->plug("LPX MIDI");
     REQUIRE(offers.size() == 1);
-    manager->add({offers[0].definition, offers[0].input, offers[0].output, false});
+    manager->add({offers[0].definition, offers[0].input, offers[0].output, false, true});
 
     PreferencesView view(shell.preferencesContext());
     view.setSize(1000, 900);
@@ -357,4 +357,21 @@ TEST_CASE("Learn wizard: it listens to the chosen input only, saves a file the m
     // The learned grid plays: the bottom-right pad (54).
     f.engine.receiveMidi("in:Mystery Pads", juce::MidiMessage::noteOn(2, 54, static_cast<juce::uint8>(100)));
     CHECK(f.engine.takeRemoteMidi().empty());
+}
+
+TEST_CASE("Surface manager: a surface keeping its own selection keeps it in the settings, and connects that way",
+          "[control][generic][surfaces]")
+{
+    Fixture f;
+    f.ports.plug("LPX MIDI");
+    const int i = f.manager->add({"Novation Launchpad X", "LPX MIDI", "LPX MIDI", false, true});
+    REQUIRE(f.manager->controller(i) != nullptr);
+    CHECK(f.manager->controller(i)->followsSelection());
+    f.manager->setFollowsSelection(i, false);
+    CHECK_FALSE(f.manager->controller(i)->followsSelection());
+    CHECK_FALSE(f.manager->entries()[0].followsSelection);
+    f.make(); // the next start
+    REQUIRE(f.manager->controller(0) != nullptr);
+    CHECK_FALSE(f.manager->entries()[0].followsSelection);
+    CHECK_FALSE(f.manager->controller(0)->followsSelection());
 }

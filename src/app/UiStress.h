@@ -17,6 +17,8 @@ namespace lattice
     - moving mixer faders
     - switching views: Clip, Device and Tuning pages, the browser, the undo history, Find
     - the selection moving from track to track (the Device view rebuilds each time)
+    - Virtual Push (open throughout, docs/06-m5-controllers.md, 5g): its mode buttons, pads (in
+      Session mode launching, in Note mode playing) and encoders, a few each frame
     A theme change starts each round. A new scene launches every 30 s (as in the engine's stress
     test), and the undo history is cleared between phases (it would otherwise grow by 60 steps a
     second). Message thread only. */
@@ -31,6 +33,10 @@ public:
     int rounds() const noexcept { return round; }
     /** The current step, for the soak's dropout lines: e.g. "round 3, piano roll, frame 120, scene 2". */
     juce::String describe() const;
+    /** Virtual Push's response times since resetMeasures(), for the soak's lines: from an input
+        or a change to its lights handed over, and from those to their paint. */
+    juce::String report();
+    void resetMeasures();
 
 private:
     void timerCallback() override;

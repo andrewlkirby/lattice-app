@@ -56,6 +56,8 @@ public:
         juce::String definition; // its name
         juce::String input, output; // port names
         bool notesToTracks = false;
+        /** The window's selection (moved and followed), or one of its own (docs/06-m5-controllers.md, 5g). */
+        bool followsSelection = true;
         bool operator==(const Entry&) const = default;
     };
     struct Offer
@@ -83,6 +85,7 @@ public:
     int add(const Entry& entry);
     void remove(int index);
     void setNotesToTracks(int index, bool on);
+    void setFollowsSelection(int index, bool on);
     bool isConnected(int index) const;
     control::SurfaceController* controller(int index) const;
     control::generic::MidiSurfaceDriver* driver(int index) const;

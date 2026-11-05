@@ -1435,6 +1435,8 @@ void MainShell::setVirtualPushVisible(bool visible)
         control::SurfaceContext{session, registry, selected, stateFeed, &deviceSpecs, browseAccess.get()}, *virtualPush);
     virtualSurface->setColours(surfaceColours());
     virtualSurface->setExpression(expressionSettings());
+    virtualSurface->setFollowsSelection(settings.getBoolValue(prefs::virtualFollowsKey, true));
+    virtualPush->setPerNote(expressionSettings().perNote);
     placeVirtualPush();
 }
 
@@ -1485,6 +1487,7 @@ control::Expression MainShell::expressionSettings() const
     e.pressure = static_cast<control::Expression::Pressure>(juce::jlimit(0, 2, settings.getIntValue(prefs::pressureKey, 1)));
     e.pressureThreshold = static_cast<float>(juce::jlimit(0, 50, settings.getIntValue(prefs::pressureThresholdKey, 0))) / 100.0f;
     e.strip = static_cast<control::Expression::Strip>(juce::jlimit(0, 2, settings.getIntValue(prefs::stripKey, 0)));
+    e.perNote = settings.getBoolValue(prefs::perNoteKey, true);
     return e;
 }
 
@@ -1533,7 +1536,7 @@ void MainShell::offerSurface(const SurfaceManager::Offer& offer)
         if (safe == nullptr || safe->surfaces == nullptr)
             return;
         if (result == 1)
-            safe->surfaces->add({offer.definition, offer.input, offer.output, keys});
+            safe->surfaces->add({offer.definition, offer.input, offer.output, keys, true});
         else if (result == 2)
             safe->surfaces->decline(offer);
     });
@@ -1547,7 +1550,10 @@ void MainShell::applyVirtualPushSettings()
         return;
     if (virtualPush->settings() == virtualPushSettings())
     {
-        virtualSurface->setExpression(expressionSettings()); // the same device: only how it plays
+        // The same device: only how it plays, and whose selection it uses.
+        virtualSurface->setExpression(expressionSettings());
+        virtualPush->setPerNote(expressionSettings().perNote);
+        virtualSurface->setFollowsSelection(settings.getBoolValue(prefs::virtualFollowsKey, true));
         return;
     }
     setVirtualPushVisible(false);

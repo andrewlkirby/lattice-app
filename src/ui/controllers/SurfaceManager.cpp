@@ -265,7 +265,7 @@ SurfaceManager::SurfaceManager(AudioEngine& e, juce::PropertiesFile& s, MidiPort
     if (const auto xml = settings.getXmlValue(settingsKey))
         for (const auto* el : xml->getChildIterator())
             list.push_back({el->getStringAttribute("definition"), el->getStringAttribute("input"), el->getStringAttribute("output"),
-                            el->getBoolAttribute("notesToTracks")});
+                            el->getBoolAttribute("notesToTracks"), el->getBoolAttribute("followsSelection", true)});
     live.resize(list.size());
     loadDefinitions();
     // The surfaces whose ports are there; offers wait for refreshPorts() (onOffer set by then).
@@ -383,6 +383,17 @@ void SurfaceManager::setNotesToTracks(int index, bool on)
     changed();
 }
 
+void SurfaceManager::setFollowsSelection(int index, bool on)
+{
+    if (index < 0 || index >= static_cast<int>(list.size()))
+        return;
+    list[static_cast<std::size_t>(index)].followsSelection = on;
+    save();
+    if (const auto& l = live[static_cast<std::size_t>(index)])
+        l->controller->setFollowsSelection(on);
+    changed();
+}
+
 bool SurfaceManager::isConnected(int index) const
 {
     return index >= 0 && index < static_cast<int>(live.size()) && live[static_cast<std::size_t>(index)] != nullptr;
@@ -443,6 +454,7 @@ void SurfaceManager::connect(int index)
         l->controller->setColours(*colours);
     if (expression)
         l->controller->setExpression(*expression);
+    l->controller->setFollowsSelection(e.followsSelection);
     engine.setSurfaceSink(inputId, l.get(), e.notesToTracks);
     l->openedInput = !ports.isInputOpen(inputId);
     if (l->openedInput)
@@ -533,6 +545,7 @@ void SurfaceManager::save() const
         el->setAttribute("input", e.input);
         el->setAttribute("output", e.output);
         el->setAttribute("notesToTracks", e.notesToTracks);
+        el->setAttribute("followsSelection", e.followsSelection);
     }
     settings.setValue(settingsKey, &xml);
 }

@@ -20,7 +20,21 @@ struct TimedMidi
     /** Where live input came from: computerKeyboardSource (the computer and on-screen keyboards)
         or a MIDI input's number (AudioEngine::midiSourceFor). Unused for other events. */
     std::uint8_t source = 0;
+    /** perNote: a channel message on an MPE member channel (docs/06-m5-controllers.md, 5g): its
+        pitch bend, pressure and CC 74 (timbre) belong to the notes started with the flag on that
+        channel only, the bend over perNoteBendSteps. Without it a channel message is the
+        channel's, as it always was. */
+    std::uint8_t flags = 0;
+    static constexpr std::uint8_t perNote = 1;
+    /** Live input meant for one track only (a control surface keeping its own selection,
+        docs/06-m5-controllers.md, 5g): the low 32 bits of that track's ID. 0: the tracks that
+        listen to the source (armed, or monitoring In). */
+    std::uint32_t target = 0;
 };
+
+/** A per-note pitch bend's range either way, in table steps (semitones on 12-TET): MPE's
+    default for member channels. */
+inline constexpr double perNoteBendSteps = 48.0;
 
 /** The source number of the computer and on-screen keyboards. */
 inline constexpr std::uint8_t computerKeyboardSource = 0;
@@ -41,9 +55,10 @@ public:
         short message. arrivalSeconds: when it happened, on nowSeconds()'s clock (default: now). */
     bool push(const juce::MidiMessage& message, std::uint8_t source = computerKeyboardSource,
               double arrivalSeconds = -1.0) noexcept;
-    /** The same from raw bytes (1 to 3), without a juce::MidiMessage. Real-time safe. */
-    bool push(const std::uint8_t* bytes, int size, std::uint8_t source, double arrivalSeconds = -1.0) noexcept
-        LATTICE_NONBLOCKING;
+    /** The same from raw bytes (1 to 3), without a juce::MidiMessage. Real-time safe. target: a
+        track's (TimedMidi::target), or 0; flags: TimedMidi's. */
+    bool push(const std::uint8_t* bytes, int size, std::uint8_t source, double arrivalSeconds = -1.0,
+              std::uint32_t target = 0, std::uint8_t flags = 0) noexcept LATTICE_NONBLOCKING;
 
     /** Audio thread. Moves up to maxEvents queued messages into out (sampleOffset 0; the engine
         places them). Returns how many were written. If arrivalSeconds is given, it receives when

@@ -242,6 +242,20 @@ float VirtualPush::pressureFor(juce::Point<float> pressedAt, juce::Point<float> 
     return juce::jlimit(0.0f, 1.0f, (pressedAt.y - p.y) / std::max(1.0f, places.unit));
 }
 
+float VirtualPush::slideFor(juce::Point<float> pressedAt, juce::Point<float> p) const
+{
+    constexpr float still = 0.15f; // of a pad's width
+    const float across = (p.x - pressedAt.x) / std::max(1.0f, places.unit);
+    const float distance = std::abs(across);
+    const float slide = distance < still ? 0.0f : distance < 1.0f ? (distance - still) / (1.0f - still) : distance;
+    return across < 0.0f ? -slide : slide;
+}
+
+float VirtualPush::timbreFor(juce::Point<float> pressedAt, juce::Point<float> p) const
+{
+    return juce::jlimit(0.0f, 1.0f, 0.5f + 0.5f * (pressedAt.y - p.y) / std::max(1.0f, places.unit));
+}
+
 float VirtualPush::stepsForDrag(float pixels, bool fine) const
 {
     const float range = std::max(1.0f, places.unit * dragUnitsPerRange);
@@ -266,6 +280,7 @@ void VirtualPush::showLeds(const LedFrame& f, const LedFrame::Changes& changed)
 {
     const bool sameShape = f.pads.size() == frame.pads.size() && f.buttons.size() == frame.buttons.size();
     frame = f;
+    changedSince();
     if (!sameShape)
         repaint();
     else
@@ -281,12 +296,14 @@ void VirtualPush::showLeds(const LedFrame& f, const LedFrame::Changes& changed)
 void VirtualPush::showText(const SurfaceText& t)
 {
     words = t;
+    changedSince();
     repaint(); // the labels can change on every pad at once (a new layout)
 }
 
 void VirtualPush::showDisplay(const DisplayFrame& f)
 {
     screen = f;
+    changedSince();
     repaint(places.display.getSmallestIntegerContainer().expanded(1));
 }
 
@@ -341,6 +358,18 @@ juce::Rectangle<int> VirtualPush::areaOf(const Target& t) const
 
 void VirtualPush::paint(juce::Graphics& g)
 {
+    const double began = juce::Time::getMillisecondCounterHiRes();
+    if (shownSince >= 0.0)
+    {
+        paints.record(began - shownSince);
+        shownSince = -1.0;
+    }
+    struct Cost
+    {
+        LatencyStats& stats;
+        double began;
+        ~Cost() { stats.record(juce::Time::getMillisecondCounterHiRes() - began); }
+    } cost{paintCosts, began};
     const auto& t = ui::themeOf(*this);
     g.fillAll(t.surface);
     // Unlit pads and buttons are dark in every theme, as on a device: a light's brightness only
@@ -538,11 +567,27 @@ void VirtualPush::mouseDrag(const juce::MouseEvent& e)
     }
     else if (target.pad >= 0)
     {
+        const int row = target.pad / caps.columns, column = target.pad % caps.columns;
+        if (perNote)
+        {
+            if (const float slide = slideFor(target.pressedAt, e.position); slide != target.slide)
+            {
+                target.slide = slide;
+                deliver(SurfaceInput::padSlide(row, column, slide));
+            }
+            if (const float timbre = timbreFor(target.pressedAt, e.position); timbre != target.timbre)
+            {
+                target.timbre = timbre;
+                deliver(SurfaceInput::padTimbre(row, column, timbre));
+            }
+            if (!e.isPressureValid())
+                return; // a mouse: no pressure per note
+        }
         const float pressure = pressureFor(target.pressedAt, e.position, e.isPressureValid() ? e.pressure : -1.0f);
         if (const int step = juce::roundToInt(pressure * 127.0f); step != target.pressure)
         {
             target.pressure = step;
-            deliver(SurfaceInput::padPressure(target.pad / caps.columns, target.pad % caps.columns, pressure));
+            deliver(SurfaceInput::padPressure(row, column, pressure));
         }
     }
 }

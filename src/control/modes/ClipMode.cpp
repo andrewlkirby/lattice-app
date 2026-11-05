@@ -123,7 +123,7 @@ void ClipMode::perform(Action action)
     {
         const auto [t, s] = session.set().findClip(LiveSet::idOf(c));
         session.beginEdit("Duplicate clip", c);
-        if (const int to = session.set().duplicateClip(t, s); to >= 0 && host.followsSelection())
+        if (const int to = session.set().duplicateClip(t, s); to >= 0)
             host.context().selection.set({ui::SessionSelection::Kind::slot, t, to});
         break;
     }

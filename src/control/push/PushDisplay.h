@@ -1,8 +1,10 @@
 #pragma once
 
+#include "core/LatencyStats.h"
 #include <juce_core/juce_core.h>
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <functional>
@@ -67,6 +69,10 @@ public:
     DisplayStatus status() const noexcept { return state.load(); }
     /** Frames sent so far (resends too). */
     std::uint64_t framesSent() const noexcept { return sent.load(); }
+    /** From a frame posted to the display showing it (or a newer one), in ms: the wait for its
+        slot (60 a second at most) and the USB writes (docs/06-m5-controllers.md, 5g). */
+    const LatencyStats& delays() const noexcept { return shownAfter; }
+    LatencyStats& delays() noexcept { return shownAfter; }
 
     static constexpr int chunkBytes = 16384; // pixel data in 16 KB writes, as the manual suggests
     static constexpr double minFrameSeconds = 1.0 / 60.0;
@@ -81,6 +87,8 @@ private:
     std::condition_variable wake;
     std::vector<std::uint8_t> next;    // posted, not sent yet
     bool hasNext = false;
+    std::chrono::steady_clock::time_point postedAt; // the oldest post not shown yet
+    LatencyStats shownAfter;
     bool quit = false;
     std::atomic<DisplayStatus> state{DisplayStatus::starting};
     std::atomic<std::uint64_t> sent{0};

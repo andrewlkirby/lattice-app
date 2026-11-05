@@ -58,6 +58,8 @@ void DisplaySender::post(std::vector<std::uint8_t> frame)
 {
     {
         const std::scoped_lock l(lock);
+        if (!hasNext)
+            postedAt = std::chrono::steady_clock::now();
         next = std::move(frame);
         hasNext = true;
     }
@@ -98,7 +100,10 @@ void DisplaySender::run()
             link = std::move(opened.link);
             state = link != nullptr ? DisplayStatus::connected : opened.status;
             if (link != nullptr)
+            {
                 lastSent = Clock::now() - seconds(60.0); // show the frame at once
+                postedAt = Clock::now();                 // timed from here, not while there was no display
+            }
             continue;
         }
         if (link != nullptr)
@@ -107,6 +112,8 @@ void DisplaySender::run()
             const bool stale = !fresh && !hasNext && !shown.empty() && now - lastSent >= seconds(resend);
             if (fresh || stale || (hasNext && shown.empty()))
             {
+                const bool posted = hasNext;
+                const auto since = postedAt;
                 if (hasNext)
                 {
                     shown.swap(next);
@@ -116,6 +123,8 @@ void DisplaySender::run()
                 const bool ok = sendFrame(*link, shown);
                 l.lock();
                 lastSent = Clock::now();
+                if (ok && posted)
+                    shownAfter.record(std::chrono::duration<double, std::milli>(lastSent - since).count());
                 if (!ok)
                 {
                     link.reset(); // gone: open it again (the frame goes again then)

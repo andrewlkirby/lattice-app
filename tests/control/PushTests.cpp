@@ -761,7 +761,7 @@ TEST_CASE("Push in the app: its Live port is recognised and offered, the User po
         CHECK_FALSE(def->playsKeys());
         CHECK_FALSE(def->verified);
 
-        const int i = manager.add({offers[0].definition, offers[0].input, offers[0].output, def->playsKeys()});
+        const int i = manager.add({offers[0].definition, offers[0].input, offers[0].output, def->playsKeys(), true});
         REQUIRE(manager.isConnected(i));
         CHECK(dynamic_cast<PushDriver*>(manager.driver(i)) != nullptr);
         CHECK(!ports.sent.empty()); // connected: Live mode and the lights
@@ -805,4 +805,74 @@ TEST_CASE("Push definitions: they name their native driver; a driver Lattice doe
     const auto r = generic::SurfaceDefinition::parse(R"({"lattice": "surface", "version": 1, "name": "X", "driver": "push9", "ports": {"input": ["X"]}})", d);
     CHECK(r.failed());
     CHECK(r.getErrorMessage().contains("driver"));
+}
+
+TEST_CASE("Push response: lights go within the frame they change in; only a redraw of new colours past a frame's budget takes more",
+          "[control][push][response]")
+{
+    // docs/06-m5-controllers.md, 5g (the charter's ≤ 1 frame).
+    Recorder out;
+    PushDriver d(PushDriver::Model::push2, out, nullptr);
+    d.connect();
+    const auto& caps = d.capabilities();
+    auto frame = LedFrame::blank(caps);
+    const auto show = [&](const LedFrame& f) {
+        auto changes = f.changesFrom(frame);
+        frame = f;
+        d.showLeds(f, changes);
+    };
+    const auto framesToSend = [&](const LedFrame& f) {
+        const auto before = d.ledDelays().summary().count;
+        show(f);
+        int frames = 0;
+        while (d.ledDelays().summary().count == before && frames < 20)
+        {
+            d.tick();
+            ++frames;
+        }
+        return frames; // 0: all sent within the frame that changed them
+    };
+    d.ledDelays().reset();
+
+    // A page of clips in 16 colours, shown for the first time: their colours loaded too.
+    const auto page = [&](int shift, bool pulse) {
+        auto f = LedFrame::blank(caps);
+        for (int i = 0; i < caps.numPads(); ++i)
+        {
+            const auto rgb = 0x101010u * static_cast<std::uint32_t>(1 + (i + shift) % 15) + 0x200000u;
+            f.pads[static_cast<std::size_t>(i)] = pulse ? LedState::pulse(rgb) : LedState::solid(rgb);
+        }
+        return f;
+    };
+    const int firstShown = framesToSend(page(0, false));
+    INFO("a first page of new colours: " << firstShown << " frames more");
+    CHECK(firstShown <= 1);
+    // Scrolling to the next page: the same colours, loaded already: all within the frame.
+    CHECK(framesToSend(page(3, false)) == 0);
+    CHECK(framesToSend(page(7, false)) == 0);
+    // Every pad pulsing (two entries each): still within a frame once its colours are loaded.
+    framesToSend(page(0, true));
+    CHECK(framesToSend(page(5, true)) == 0);
+    const auto s = d.ledDelays().summary();
+    CHECK(s.count == 5); // one for each page
+    CHECK(s.maxMs < 1000.0 / 60.0 * (firstShown + 1));
+}
+
+TEST_CASE("Push response: a display frame is written within a frame of being posted", "[control][push][response]")
+{
+    FakeLink fake;
+    DisplaySender sender(fake.opener());
+    REQUIRE(eventually([&] { return sender.status() == DisplayStatus::connected; }));
+    for (int i = 0; i < 5; ++i)
+    {
+        const auto before = sender.delays().summary().count;
+        sender.post(encodeFrame(testPattern()));
+        REQUIRE(eventually([&] { return sender.delays().summary().count > before; }));
+    }
+    const auto s = sender.delays().summary();
+    INFO("post to written: p50 " << s.p50Ms << " ms, max " << s.maxMs << " ms");
+    CHECK(s.count == 5);
+    // At most the wait for the next 60 fps slot plus the writes (instant on the fake link); a
+    // loaded test machine may wake the thread late, so this checks the order of it.
+    CHECK(s.p50Ms < 1000.0 / 60.0 + 5.0);
 }

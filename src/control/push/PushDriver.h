@@ -3,6 +3,7 @@
 #include "control/generic/MidiSurfaceDriver.h"
 #include "control/push/PushDisplay.h"
 #include "control/push/PushPalette.h"
+#include "core/LatencyStats.h"
 #include "ui/theme/Theme.h"
 
 #include <juce_events/juce_events.h>
@@ -71,6 +72,10 @@ public:
     const juce::Image& displayImage() const noexcept { return image; }
     /** The MIDI clocks sent since the last start. */
     std::int64_t clocksSent() const noexcept { return clocks; }
+    /** From lights changing to the last of them sent, in ms (docs/06-m5-controllers.md, 5g): at
+        once, or over the next frames when a redraw is more than a frame's budget. */
+    const LatencyStats& ledDelays() const noexcept { return ledsAfter; }
+    LatencyStats& ledDelays() noexcept { return ledsAfter; }
 
 private:
     /** One LED as the device has it: its entry, and the second entry and channel of an
@@ -106,6 +111,8 @@ private:
     std::vector<Light> lights;
     Palette colours;
     std::size_t nextDirty = 0; // where the last frame's budget ran out
+    double dirtySince = -1.0;  // ms: the first change not sent yet (-1: none)
+    LatencyStats ledsAfter;
 
     // The animations' clock.
     bool clockStarted = false;

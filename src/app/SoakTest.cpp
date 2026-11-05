@@ -1,5 +1,10 @@
 #include "app/SoakTest.h"
 
+#include "control/surface/PadPlayer.h"
+#include "control/surface/Presets.h"
+
+#include <random>
+
 namespace lattice
 {
 namespace
@@ -12,6 +17,11 @@ double nowSeconds()
 juce::String pct(double fraction)
 {
     return juce::String(fraction * 100.0, 1) + "%";
+}
+
+juce::String ms(double value)
+{
+    return juce::String(value, 2);
 }
 } // namespace
 
@@ -41,6 +51,7 @@ bool SoakTest::parseCommandLine(const juce::String& commandLine, Options& option
     options.uiStress = args.contains("--ui-stress");
     options.setFile = valueOf("--set");
     options.recordFile = valueOf("--record");
+    options.pads = args.contains("--pads");
     return true;
 }
 
@@ -52,7 +63,90 @@ SoakTest::SoakTest(AudioEngine& e, Options o, juce::File log, std::function<void
 SoakTest::~SoakTest()
 {
     stopTimer();
+    stopPads();
     stopRecording();
+}
+
+void SoakTest::startPads()
+{
+    if (!options.pads || padThread.joinable())
+        return;
+    padsRunning = true;
+    padThread = std::thread([this] {
+        juce::Thread::setCurrentThreadName("Lattice soak pads");
+        // An 8x8 grid's pads, each a note: pressed every 20 to 80 ms, held 10 to 200 ms, up to
+        // four at once, as a player's fingers.
+        const auto caps = control::presets::gridOnly(8, 8);
+        control::PadPlayer player(engine, caps);
+        auto map = control::PadNoteMap::empty(caps);
+        map.source = engine.midiSourceFor("lattice.soak.pads");
+        for (int i = 0; i < caps.numPads(); ++i)
+        {
+            auto& pad = map.pads[static_cast<std::size_t>(i)];
+            pad.kind = control::PadNoteMap::Pad::Kind::note;
+            pad.note = static_cast<std::uint8_t>(36 + i);
+        }
+        player.publish(std::make_shared<const control::PadNoteMap>(std::move(map)));
+        std::mt19937 rng(17);
+        struct Held
+        {
+            int pad;
+            double until;
+        };
+        std::vector<Held> held;
+        double nextPress = nowSeconds();
+        while (padsRunning.load())
+        {
+            const double now = nowSeconds();
+            for (auto it = held.begin(); it != held.end();)
+                if (it->until <= now)
+                {
+                    auto up = control::SurfaceInput::padUp(it->pad / 8, it->pad % 8);
+                    player.handle(up);
+                    it = held.erase(it);
+                }
+                else
+                    ++it;
+            if (now >= nextPress && held.size() < 4)
+            {
+                const int pad = static_cast<int>(rng() % 64);
+                if (std::none_of(held.begin(), held.end(), [&](const Held& h) { return h.pad == pad; }))
+                {
+                    auto down = control::SurfaceInput::padDown(pad / 8, pad % 8, 0.4f + 0.6f * static_cast<float>(rng() % 100) / 100.0f);
+                    player.handle(down);
+                    held.push_back({pad, now + 0.01 + 0.19 * static_cast<double>(rng() % 1000) / 1000.0});
+                    padPresses.fetch_add(1, std::memory_order_relaxed);
+                }
+                nextPress = now + 0.02 + 0.06 * static_cast<double>(rng() % 1000) / 1000.0;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        player.releaseAll();
+    });
+}
+
+void SoakTest::stopPads()
+{
+    padsRunning = false;
+    if (padThread.joinable())
+        padThread.join();
+}
+
+juce::String SoakTest::padsReport() const
+{
+    // From a press arriving to the block that plays it handed to the device (the input probe),
+    // then the device's own output latency on top: pad to sound.
+    const auto s = engine.inputLatency().summary();
+    juce::String line;
+    line << " | pads: presses=" << juce::String(static_cast<juce::int64>(padPresses.load())) << " events=" << juce::String(static_cast<juce::int64>(s.count))
+         << " to the device ms p50=" << ms(s.p50Ms) << " p99=" << ms(s.p99Ms) << " max=" << ms(s.maxMs);
+    if (auto* device = engine.getDeviceManager().getCurrentAudioDevice())
+    {
+        const double out = 1000.0 * device->getOutputLatencyInSamples() / device->getCurrentSampleRate();
+        line << " | pad to sound ms (with the output latency) p50=" << ms(s.p50Ms + out) << " p99=" << ms(s.p99Ms + out)
+             << " max=" << ms(s.maxMs + out);
+    }
+    return line;
 }
 
 void SoakTest::startRecording()
@@ -171,6 +265,10 @@ void SoakTest::timerCallback()
         overrunsSeen = 0;
         xrunsSeen = 0;
         startRecording(); // from the start line's time
+        engine.inputLatency().reset();
+        if (onMeasuring)
+            onMeasuring();
+        startPads();
         writeLine("start");
         return;
     }
@@ -236,6 +334,13 @@ void SoakTest::writeLine(const juce::String& kind)
         line << " | setup error=" << setupError;
     if (kind == "dropout" && context)
         line << " | during=" << context();
+    if (measuring && (kind == "progress" || kind == "result"))
+    {
+        if (options.pads)
+            line << padsReport();
+        if (report)
+            line << report();
+    }
 
     if (kind == "result")
     {
@@ -251,6 +356,7 @@ void SoakTest::writeLine(const juce::String& kind)
 void SoakTest::finish()
 {
     stopTimer();
+    stopPads();
     stopRecording();
     engine.testTone().setEnabled(false);
 

@@ -132,7 +132,7 @@ SurfaceCapabilities virtualPush(int rows, int columns, int encoders)
     c.name = "Virtual Push";
     c.rows = juce::jlimit(minVirtualSize, maxVirtualSize, rows);
     c.columns = juce::jlimit(minVirtualSize, maxVirtualSize, columns);
-    c.aftertouch = Aftertouch::polyphonic; // dragging up from a held pad
+    c.aftertouch = Aftertouch::mpe; // dragging from a held pad (or a pen's pressure)
     c.touchStrip = true;
     addNumbered(c, Role::scene, c.rows, LedKind::rgb);
     addNumbered(c, Role::trackSelect, c.columns, LedKind::rgb);

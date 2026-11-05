@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/LatencyStats.h"
 #include "control/surface/Surface.h"
 #include "ui/feed/EngineStateFeed.h"
 
@@ -96,6 +97,16 @@ public:
     /** A held pad's pressure, dragging from where it was pressed to p: a pen's own pressure, or
         how far up it's dragged (a pad's height is all of it). */
     float pressureFor(juce::Point<float> pressedAt, juce::Point<float> p, float penPressure) const;
+    /** Per note (MPE, setPerNote): a held pad's slide, in pads across from where it was pressed.
+        The first part of a pad's width either way is still (a click that wobbles stays in tune);
+        from there the slide reaches the next pad's note at its centre. */
+    float slideFor(juce::Point<float> pressedAt, juce::Point<float> p) const;
+    /** Per note: a held pad's timbre, 0.5 where it was pressed, up a pad's height 1, down 0. */
+    float timbreFor(juce::Point<float> pressedAt, juce::Point<float> p) const;
+    /** Whether a held pad's drag plays per note (sideways: slide, up and down: timbre, pressure
+        from a pen) or presses (up: pressure), as the controllers' expression settings say. */
+    void setPerNote(bool on) noexcept { perNote = on; }
+    bool playsPerNote() const noexcept { return perNote; }
     /** The encoder steps a drag of `pixels` upwards turns (fine: ten times fewer). */
     float stepsForDrag(float pixels, bool fine) const;
 
@@ -106,6 +117,11 @@ public:
     const DisplayFrame& displayed() const noexcept { return screen; }
 
     bool isLatched(int padOrButton, bool isButton) const;
+    /** From new lights, text or a display frame to the paint that shows them, in ms
+        (docs/06-m5-controllers.md, 5g: the charter's ≤ 1 frame). */
+    LatencyStats& paintDelays() noexcept { return paints; }
+    /** How long its paints take, in ms. */
+    LatencyStats& paintCost() noexcept { return paintCosts; }
     /** True while an animated light is shown (the display refresh repaints them). */
     bool isAnimating() const noexcept { return animator != nullptr; }
     const LedFrame& leds() const noexcept { return frame; }
@@ -131,6 +147,8 @@ private:
         bool strip = false;
         juce::Point<float> pressedAt{};
         int pressure = 0; // the last sent, 0..127
+        float slide = 0.0f; // per note: the last sent
+        float timbre = 0.5f;
         int encoder = -1;
         float lastY = 0.0f;
         float steps = 0.0f; // dragged but not yet sent (less than a step)
@@ -149,7 +167,15 @@ private:
     LedFrame frame;
     SurfaceText words;
     DisplayFrame screen;
+    void changedSince()
+    {
+        if (shownSince < 0.0 && isShowing()) // hidden, nothing's painted until shown (and then all of it)
+            shownSince = juce::Time::getMillisecondCounterHiRes();
+    }
     float stripShown = 0.5f; // where the strip's marker is
+    LatencyStats paints, paintCosts;
+    double shownSince = -1.0; // ms: the first change not yet painted (-1: none)
+    bool perNote = true;
     std::map<int, Target> active; // by mouse source: what it's pressing
     std::vector<Target> latched;
     std::unique_ptr<juce::VBlankAttachment> animator;

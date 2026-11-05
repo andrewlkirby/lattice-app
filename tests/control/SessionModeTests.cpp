@@ -253,12 +253,19 @@ TEST_CASE("Session mode: the arrows move the selection and the box follows; Shif
     CHECK(f.surface.button(Role::navDown).isOff());
     CHECK_FALSE(f.surface.button(Role::navUp).isOff());
 
-    SECTION("Not following: the arrows move the box only")
+    SECTION("Not following: the arrows move the surface's own selection, not the window's")
     {
         f.controller->setFollowsSelection(false);
-        f.surface.click(Role::navUp);
+        CHECK(f.controller->selection().get() == ui::SessionSelection{Kind::slot, 11, 11}); // where it was
+        for (int i = 0; i < 4; ++i)
+            f.surface.click(Role::navUp);
+        CHECK(f.controller->selection().get().scene == 7);
         CHECK(m.firstScene() == 7);
         CHECK(f.selection.get().scene == 11);
+        // ...and the window's moves the box no more.
+        f.selection.set({Kind::slot, 0, 0});
+        CHECK(m.firstScene() == 7);
+        CHECK(m.firstColumn() == 8);
     }
 }
 
