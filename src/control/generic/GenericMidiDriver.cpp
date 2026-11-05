@@ -256,7 +256,7 @@ void GenericMidiDriver::sendLight(const MidiAddress& at, const LedOutput& led, L
     }
     case LedOutput::Kind::sysex:
     {
-        const auto b = led.sysex.fill({at.number, state.rgb});
+        const auto b = led.sysex.fill({.id = at.number, .rgb = state.rgb, .line = 0, .text = {}, .width = 0});
         if (b.size() >= 2 && b.front() == 0xf0 && b.back() == 0xf7)
             out.send(juce::MidiMessage::createSysExMessage(b.data() + 1, static_cast<int>(b.size()) - 2));
         return;
