@@ -1,5 +1,6 @@
 #pragma once
 
+#include "devices/framework/PerNoteExpression.h"
 #include "devices/dsp/Envelope.h"
 #include "devices/dsp/Ladder.h"
 #include "devices/dsp/Lfo.h"
@@ -83,7 +84,8 @@ public:
         ModWheel,
         Key,
         AmpEnv,
-        Random
+        Random,
+        Timbre // CC 74: a per-note voice's own (MPE), otherwise the channel's
     };
 
     enum class ModDest : std::uint8_t
@@ -194,6 +196,7 @@ private:
         double snappedTo = 0.0;
         float pressure = 0.0f;
         float random = 0.0f;
+        bool perNote = false; // its note came per note (MPE): its channel's bend, pressure and timbre are its own
 
         dsp::Adsr amp;
         dsp::Adsr env2;
@@ -225,9 +228,9 @@ private:
     };
 
     void handleEvent(const TimedMidi& e, const DeviceTimeInfo& time) noexcept LATTICE_NONBLOCKING;
-    void noteOn(int note, int velocity, int channel) noexcept LATTICE_NONBLOCKING;
+    void noteOn(int note, int velocity, int channel, bool perNote = false) noexcept LATTICE_NONBLOCKING;
     void noteOff(int note, int channel) noexcept LATTICE_NONBLOCKING;
-    void startVoice(Voice& v, int note, float velocity, int channel, bool retrigger) noexcept LATTICE_NONBLOCKING;
+    void startVoice(Voice& v, int note, float velocity, int channel, bool retrigger, bool perNote = false) noexcept LATTICE_NONBLOCKING;
     Voice* allocateVoice() noexcept LATTICE_NONBLOCKING;
     void setSustain(bool down) noexcept LATTICE_NONBLOCKING;
     /** False if no voice sounded (the segment stays silent). */
@@ -240,6 +243,12 @@ private:
     /** The rest of the block after the filter: drive, amplitude envelope and pan, into the output. */
     void finishVoiceBlock(Voice& v, float* outL, float* outR, int numSamples) noexcept LATTICE_NONBLOCKING;
     void readPatch() noexcept LATTICE_NONBLOCKING;
+    /** A voice's pressure: the channel's, its note's, and (per note) its channel's own. */
+    float pressureOf(const Voice& v) const noexcept
+    {
+        return std::max({channelPressure, v.pressure, v.perNote ? perNote.pressureOf(v.channel) : 0.0f});
+    }
+    float timbreOf(const Voice& v) const noexcept { return v.perNote ? perNote.timbreOf(v.channel) : timbre; }
     int heldNoteForMono() const noexcept;
 
     const TrackTuning& tuning;
@@ -251,6 +260,8 @@ private:
     float bend = 0.0f;
     float modWheel = 0.0f;
     float channelPressure = 0.0f;
+    float timbre = 0.0f; // CC 74, unflagged
+    PerNoteExpression perNote;
     bool sustainDown = false;
     double lastPitch = -1.0; // for glide in poly mode
     double freeLfoPhase[2] = {0.0, 0.0};

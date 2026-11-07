@@ -194,9 +194,68 @@ TEST_CASE("ParameterSpec formats and parses values with their units", "[devices]
     CHECK(steps.parse("+3 steps") == Catch::Approx(3.0f));
     CHECK(steps.constrain(2.6f) == Catch::Approx(3.0f));
 
+    const auto ratio = ParameterSpec::continuous("ratio", "Ratio", 1.0f, 100.0f, 4.0f, ParamUnit::Ratio);
+    CHECK(ratio.parse("inf : 1") == Catch::Approx(100.0f));
+
     CHECK(ParameterSpec::isValidId("osc1.shape"));
     CHECK_FALSE(ParameterSpec::isValidId("1osc"));
     CHECK_FALSE(ParameterSpec::isValidId("osc shape"));
+}
+
+TEST_CASE("A value shown in other units than it's kept in reads typed text in the units shown", "[devices][framework]")
+{
+    // The Synth's mod amounts are kept as -1..1 and shown as percentages: typing 60 means 60 %.
+    const auto amount = ParameterSpec::continuous("amount", "Amount", -1.0f, 1.0f, 0.0f).shownAsPercent(0, true);
+    CHECK(amount.format(0.6f) == "+60 %");
+    CHECK(amount.format(-0.004f) == "0 %");
+    CHECK(amount.parse("60") == Catch::Approx(0.6f));
+    CHECK(amount.parse("+60 %") == Catch::Approx(0.6f));
+    CHECK(amount.parse("-25") == Catch::Approx(-0.25f));
+    CHECK(amount.parse("250") == Catch::Approx(1.0f)); // constrained
+    CHECK(amount.parse("lots") == Catch::Approx(0.0f)); // unreadable: the default
+
+    const auto level = ParameterSpec::continuous("level", "Level", 0.0f, 1.0f, 0.5f, ParamUnit::Percent).shownAsPercent(1);
+    CHECK(level.format(0.255f) == "25.5 %");
+    CHECK(level.parse("25.5") == Catch::Approx(0.255f));
+
+    const auto pan = ParameterSpec::continuous("pan", "Pan", -1.0f, 1.0f, 0.0f).shownAsPan();
+    CHECK(pan.format(-0.4f) == "20L");
+    CHECK(pan.format(0.0f) == "C");
+    CHECK(pan.parse("20L") == Catch::Approx(-0.4f));
+    CHECK(pan.parse("50 r") == Catch::Approx(1.0f));
+    CHECK(pan.parse("c") == Catch::Approx(0.0f));
+    CHECK(pan.parse("-20") == Catch::Approx(-0.4f));
+
+    // An offset: a drum pad's play note shown as semitones from 60.
+    const auto tune = ParameterSpec::integer("tune", "Tune", 0, 127, 60).shownScaled(1.0, " st", 0, true, 60.0);
+    CHECK(tune.format(65.0f) == "+5 st");
+    CHECK(tune.format(60.0f) == "0 st");
+    CHECK(tune.parse("+5") == Catch::Approx(65.0f));
+    CHECK(tune.parse("-12 st") == Catch::Approx(48.0f));
+}
+
+TEST_CASE("Every built-in parameter reads its own text back as the value shown", "[devices][framework]")
+{
+    TrackTuning tuning;
+    DeviceCreateContext context;
+    context.tuning = &tuning;
+    for (const auto& type : testRegistry().types())
+    {
+        const auto device = testRegistry().create(type.id, context);
+        REQUIRE(device != nullptr);
+        for (int i = 0; i < device->numParameters(); ++i)
+        {
+            const auto& spec = device->parameter(i).spec();
+            const auto range = spec.normalisableRange();
+            for (const float plain : {spec.minValue, spec.maxValue, spec.defaultValue, range.convertFrom0to1(0.13f),
+                                      range.convertFrom0to1(0.5f), range.convertFrom0to1(0.87f)})
+            {
+                const auto shown = spec.format(spec.constrain(plain));
+                INFO(type.id << " " << spec.id << ": " << shown);
+                CHECK(spec.format(spec.parse(shown)) == shown);
+            }
+        }
+    }
 }
 
 // --- Device state in the document ---------------------------------------------------------------------

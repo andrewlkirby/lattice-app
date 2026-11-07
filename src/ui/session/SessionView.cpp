@@ -122,15 +122,11 @@ void SessionView::rebuildStrips()
                                                   col.index, &tunings);
         strip->setShowsSends(showSends);
         strip->setShowsIO(showIO);
-        // Kept as an image: scrolling the grid while it plays repaints every strip each frame,
-        // and only their meters change (a meter's repaint redraws just its part of the image).
-        strip->setBufferedToImage(true);
         stripArea.addAndMakeVisible(*strip);
         strips.push_back(std::move(strip));
     }
     master = std::make_unique<MixerStrip>(session, MixerStrip::Kind::master, 0);
     master->setShowsIO(showIO);
-    master->setBufferedToImage(true);
     addAndMakeVisible(*master);
 }
 

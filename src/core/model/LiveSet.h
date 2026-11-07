@@ -50,6 +50,8 @@ inline const juce::Identifier metronomeOn{"metronomeOn"};
 inline const juce::Identifier metronomeVolumeDb{"metronomeVolumeDb"};
 inline const juce::Identifier selectNextSceneOnLaunch{"selectNextSceneOnLaunch"};
 inline const juce::Identifier fixedRecordBars{"fixedRecordBars"};
+inline const juce::Identifier quantizeGrid{"quantizeGrid"};     // the controllers' Quantize: a grid (clipActions::grids), not undoable
+inline const juce::Identifier quantizeAmount{"quantizeAmount"}; // and its amount, 0..100 %
 inline const juce::Identifier reducedLatencyWhenMonitoring{"reducedLatencyWhenMonitoring"};
 
 // Shared
@@ -102,6 +104,7 @@ inline const juce::Identifier followChanceA{"followChanceA"};
 inline const juce::Identifier followTime{"followTime"};
 inline const juce::Identifier clipTimeSigNum{"timeSigNum"}; // the clip's own grid signature (absent: the set's)
 inline const juce::Identifier clipTimeSigDen{"timeSigDen"};
+inline const juce::Identifier noteLayout{"noteLayout"}; // on a TRACK: its Note mode layout (M5), saved, not undoable
 inline const juce::Identifier highlight{"highlight"}; // on a CLIP or a TRACK: table indices the piano roll marks
 
 // Note

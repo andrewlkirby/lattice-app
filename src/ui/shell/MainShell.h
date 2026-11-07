@@ -5,6 +5,9 @@
 #include "ui/browser/BrowserView.h"
 #include "ui/device/DeviceView.h"
 #include "ui/commands/SessionCommands.h"
+#include "control/surface/SurfaceController.h"
+#include "control/virtual/VirtualPush.h"
+#include "ui/controllers/SurfaceManager.h"
 #include "ui/session/SessionSelectionModel.h"
 #include "ui/session/SessionView.h"
 #include "ui/feed/EngineStateFeed.h"
@@ -111,6 +114,8 @@ public:
     /** After the note keys or a range step changed (the app re-reads the track's tuning). */
     std::function<void()> onKeyboardSettingsChanged;
     BrowserView& browserView() noexcept { return *browser; }
+    /** The browser as the controllers' Browse mode drives it. */
+    control::BrowseHost& browseHost() noexcept;
     library::Library& library() noexcept { return *libraryService; }
     /** Inserts what the browser names (a drag description) where the Device view is looking; a
         tuning goes to the selected track. False if nothing was inserted (or a question was asked). */
@@ -138,6 +143,29 @@ public:
 
     void setTheme(const Theme& theme);
     const Theme& theme() const noexcept { return lookAndFeel.theme(); }
+
+    /** Virtual Push (docs/06-m5-controllers.md, 5a): docked at the window's right (its width dragged
+        at its left edge), or in its own window. It and its controller exist only while shown. */
+    void setVirtualPushVisible(bool visible);
+    bool isVirtualPushVisible() const noexcept { return virtualPush != nullptr; }
+    void setVirtualPushDocked(bool docked);
+    bool isVirtualPushDocked() const noexcept { return pushDocked; }
+    control::VirtualPush* virtualPushView() noexcept { return virtualPush.get(); }
+    control::SurfaceController* virtualPushController() noexcept { return virtualSurface.get(); }
+    /** Its settings changed (the Preferences' Controllers tab): it's made again at the new size. */
+    void applyVirtualPushSettings();
+
+    /** Control surfaces on MIDI ports (docs/06-m5-controllers.md, 5e): the app starts them with
+        the system's ports; tests with their own (or not at all, so the machine's devices stay
+        out of them). Recognised devices are offered from then on. */
+    void startControlSurfaces(std::unique_ptr<MidiPorts> ports);
+    SurfaceManager* surfaceManager() noexcept { return surfaces.get(); }
+    /** How the pads play, and Virtual Push's own settings, as the Preferences have them. */
+    control::Expression expressionSettings() const;
+    control::VirtualPush::Settings virtualPushSettings() const;
+    /** The LEDs' state colours, from the theme. */
+    control::SurfaceColours surfaceColours() const;
+    void offerSurface(const SurfaceManager::Offer& offer);
 
     bool isBrowserVisible() const noexcept { return showBrowser; }
     bool isDetailVisible() const noexcept { return showDetail; }
@@ -171,6 +199,10 @@ public:
     static constexpr auto sendsKey = "view.sends";
     static constexpr auto ioKey = "view.io";
     static constexpr auto autoArmKey = "session.autoArm";
+    static constexpr auto virtualPushKey = "view.virtualPush";
+    static constexpr auto virtualPushWindowKey = "view.virtualPushWindow"; // in its own window
+    static constexpr auto virtualPushWidthKey = "view.virtualPushWidth";
+    static constexpr auto virtualPushBoundsKey = "view.virtualPushBounds";
 
     /** Auto-arm (on by default): selecting a MIDI track arms it while no track is armed by hand,
         so the keyboards play what's selected (the M3 hands-on checks found the keyboard playing a
@@ -196,6 +228,9 @@ private:
     std::vector<FocusArea> focusAreas() const;
 
     void addViewCommands();
+    void addControllerCommands();
+    class VirtualPushWindow;
+    void placeVirtualPush();
     void addTuningCommands();
     void addFileCommands();
     void addMappingCommands();
@@ -237,6 +272,8 @@ private:
     std::unique_ptr<presets::PresetLibrary> presetLibrary;
     std::unique_ptr<library::Library> libraryService; // after the presets and the job pool it uses
     std::unique_ptr<BrowserView> browser;
+    class ShellBrowseHost;
+    std::unique_ptr<ShellBrowseHost> browseAccess; // the browser and the Device view, for Browse mode
     std::unique_ptr<DeviceContext> deviceShared;
     std::unique_ptr<DeviceView> devices;
     std::unique_ptr<TuningView> tunings_;
@@ -264,6 +301,15 @@ private:
     juce::String audioError; // why the audio device didn't open
     std::unique_ptr<juce::FileChooser> chooser;
     std::unique_ptr<DetailView> detail; // after what it shows, so it goes first
+    std::unique_ptr<control::VirtualPush> virtualPush;
+    std::unique_ptr<control::SurfaceController> virtualSurface; // after the device it drives, so it goes first
+    std::unique_ptr<MidiPorts> midiPorts;
+    std::unique_ptr<SurfaceManager> surfaces; // after the ports it uses
+    std::unique_ptr<juce::DocumentWindow> virtualPushWindow;
+    bool pushDocked = true;
+    juce::Rectangle<int> pushDivider;
+    int pushWidth = 0; // 0: the default
+    int dragStartPushWidth = -1;
     juce::Rectangle<int> detailDivider, browserDivider;
     int detailHeight = 0; // 0: the default share of the window
     int dragStartHeight = -1;

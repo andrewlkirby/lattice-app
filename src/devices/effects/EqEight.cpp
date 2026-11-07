@@ -43,7 +43,7 @@ std::vector<ParameterSpec> makeSpecs()
     }
     s.push_back(ParameterSpec::continuous("eq.output", "Output", -12.0f, 12.0f, 0.0f, ParamUnit::Decibels).inGroup("Output"));
     s.push_back(ParameterSpec::continuous("eq.scale", "Scale", -2.0f, 2.0f, 1.0f, ParamUnit::Percent)
-                    .withFormatter([](float v) { return juce::String(juce::roundToInt(v * 100.0f)) + " %"; })
+                    .shownAsPercent()
                     .inGroup("Output"));
     return s;
 }

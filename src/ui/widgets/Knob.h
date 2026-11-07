@@ -34,6 +34,7 @@ public:
     juce::Rectangle<int> preferredSize() const;
 
     void paint(juce::Graphics&) override;
+    void parentHierarchyChanged() override;
 
 protected:
     juce::Rectangle<int> typeInArea() const override { return valueArea(); }

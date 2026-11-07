@@ -351,3 +351,75 @@ TEST_CASE("Synth: random parameter changes while playing stay finite and never a
     for (const float v : h.audioLeft)
         REQUIRE(std::isfinite(v));
 }
+
+TEST_CASE("Synth: a per-note bend (MPE) slides its own note along the table; the others stay", "[devices][synth][tuning][mpe]")
+{
+    // docs/06-m5-controllers.md, 5g: a member channel's bend is in table steps over
+    // perNoteBendSteps, for the notes started on it with the flag only.
+    ColundiTrack track;
+    const auto colundi = TuningRegistry::makeBuiltinColundi();
+    constexpr auto flag = TimedMidi::perNote;
+    const auto measure = [&](int channelBent, bool flagged, double expected) {
+        SynthDevice synth(track.tuning);
+        makePlainSine(synth);
+        DeviceHarness h(synth);
+        h.bend(0, 5.0 / perNoteBendSteps, channelBent, flagged ? flag : std::uint8_t{0});
+        h.noteOn(0, 47, 100, 2, flag);
+        h.renderTo(4800 + (1 << 16));
+        const auto [measured, level] = measureFundamental(h.slice(4800, 4800 + (1 << 16)), expected);
+        CHECK(measured == Catch::Approx(expected).margin(0.5));
+        CHECK(level > 0.9);
+    };
+    SECTION("Its own channel's bend: five steps up the table")
+    {
+        measure(2, true, colundi->hz[52]);
+    }
+    SECTION("Another member channel's: none")
+    {
+        measure(3, true, colundi->hz[47]);
+    }
+    SECTION("Half a step: half way along the table (in log terms)")
+    {
+        SynthDevice synth(track.tuning);
+        makePlainSine(synth);
+        DeviceHarness h(synth);
+        h.bend(0, 0.5 / perNoteBendSteps, 2, flag);
+        h.noteOn(0, 47, 100, 2, flag);
+        h.renderTo(4800 + (1 << 16));
+        const double expected = std::sqrt(colundi->hz[47] * colundi->hz[48]);
+        const auto [measured, level] = measureFundamental(h.slice(4800, 4800 + (1 << 16)), expected);
+        CHECK(measured == Catch::Approx(expected).margin(0.5));
+    }
+    SECTION("An unflagged note on that channel keeps the track's bend range")
+    {
+        SynthDevice synth(track.tuning);
+        makePlainSine(synth);
+        DeviceHarness h(synth);
+        h.bend(0, 5.0 / perNoteBendSteps, 2, flag); // a member's bend: not this note's
+        h.noteOn(0, 47, 100, 2);
+        h.renderTo(4800 + (1 << 16));
+        const auto [measured, level] = measureFundamental(h.slice(4800, 4800 + (1 << 16)), colundi->hz[47]);
+        CHECK(measured == Catch::Approx(colundi->hz[47]).margin(0.5));
+    }
+}
+
+TEST_CASE("Synth: Timbre (CC 74) is a modulation source, per note for per-note voices", "[devices][synth][mpe]")
+{
+    ColundiTrack track;
+    const auto levelWith = [&](int timbre, int channelSet) {
+        SynthDevice synth(track.tuning);
+        makePlainSine(synth);
+        setParam(synth, "mod1.source", static_cast<float>(SynthDevice::ModSource::Timbre));
+        setParam(synth, "mod1.dest", 13.0f); // Amp
+        setParam(synth, "mod1.amount", -1.0f);
+        DeviceHarness h(synth);
+        h.controller(0, 74, timbre, channelSet, TimedMidi::perNote);
+        h.noteOn(0, 60, 100, 1, TimedMidi::perNote);
+        h.renderTo(9600);
+        return peakOf(h.slice(4800, 9600));
+    };
+    const float quiet = levelWith(127, 1), loud = levelWith(0, 1);
+    CHECK(loud > quiet * 1.5f);
+    // Another channel's timbre isn't this voice's: it stays at rest (64).
+    CHECK(std::abs(levelWith(127, 4) - levelWith(0, 4)) < 1.0e-4f);
+}

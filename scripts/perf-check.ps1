@@ -22,7 +22,13 @@
     plays (written first by lattice_engine_bench --write-set; the master fader at -40 dB) while the
     window is worked every frame (src/app/UiStress.h). Same pass rule: 0 overruns, 0 xruns.
 
-    Later milestones add the reference-set load, pad-to-sound latency, and benchmark comparisons.
+    Pads (-Soak -Pads, docs/06-m5-controllers.md 5g): pads pressed on a thread of their own through
+    a surface's fast path, as a controller's input thread would. The progress and result lines then
+    give pad-to-sound latency: from a press to its block handed to the device (p50, p99, max), and
+    with the device's output latency added. With -UiStress the lines also give Virtual Push's
+    response times (to its lights, and to their paint), Virtual Push being open throughout.
+
+    Later milestones add the reference-set load and benchmark comparisons.
 
     Run under the charter's test conditions: on AC power, Performance mode, background apps closed.
 
@@ -31,6 +37,7 @@
     scripts\perf-check.ps1 -Soak
     scripts\perf-check.ps1 -Soak -BufferSize 128 -DeviceType "Windows Audio (Low Latency Mode)"
     scripts\perf-check.ps1 -Soak -UiStress -DeviceType ASIO -DeviceName "ASIO4ALL v2"
+    scripts\perf-check.ps1 -Soak -Pads -SoakSeconds 300 -DeviceType ASIO -DeviceName "ASIO4ALL v2"
     scripts\perf-check.ps1 -Runs 5 -Exe build\windows-release\Lattice_artefacts\Release\Lattice.exe
 #>
 param(
@@ -40,6 +47,7 @@ param(
     [double]$ReadyTarget = 1.5,
     [switch]$Soak,
     [switch]$UiStress,
+    [switch]$Pads,
     [int]$SoakSeconds = 600,
     [int]$BufferSize = 64,
     [double]$SampleRate = 0,
@@ -69,6 +77,7 @@ if ($Soak) {
     if ($SampleRate -gt 0) { $soakArgs += @('--sample-rate', $SampleRate) }
     if ($Record) { $soakArgs += @('--record', ('"{0}"' -f $Record)) }
     if ($LevelDb -ne 0) { $soakArgs += @('--soak-level-db', $LevelDb) }
+    if ($Pads) { $soakArgs += @('--pads') }
     if ($UiStress) {
         $bench = Join-Path (Split-Path $Exe) '..\..\tests\Release\lattice_engine_bench.exe'
         if (-not (Test-Path $bench)) { throw "lattice_engine_bench not found at $bench (it writes the reference set)" }

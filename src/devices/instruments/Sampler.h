@@ -1,5 +1,6 @@
 #pragma once
 
+#include "devices/framework/PerNoteExpression.h"
 #include "core/SettledShared.h"
 #include "devices/dsp/Envelope.h"
 #include "devices/dsp/SincResampler.h"
@@ -120,7 +121,9 @@ private:
         bool gate = false;
         bool stealing = false;
         bool oneShot = false;
+        bool sustained = false; // its key let go while the pedal is down
         int note = -1;
+        int channel = -1; // a per-note voice's channel (MPE: its bend is its own), or -1
         float velocity = 0.0f;
         std::uint64_t age = 0;
         double position = 0.0;   // frames into the sample
@@ -141,12 +144,15 @@ private:
     };
 
     void handleEvent(const TimedMidi& e) noexcept LATTICE_NONBLOCKING;
-    void noteOn(int note, int velocity) noexcept LATTICE_NONBLOCKING;
-    void noteOff(int note) noexcept LATTICE_NONBLOCKING;
+    /** channel: a per-note voice's (TimedMidi::perNote), or -1. */
+    void noteOn(int note, int velocity, int channel = -1) noexcept LATTICE_NONBLOCKING;
+    void noteOff(int note, int channel = -1) noexcept LATTICE_NONBLOCKING;
     Voice* allocateVoice() noexcept LATTICE_NONBLOCKING;
     void render(float* left, float* right, int numSamples) noexcept LATTICE_NONBLOCKING;
     void renderVoice(Voice& v, float* left, float* right, int numSamples) noexcept LATTICE_NONBLOCKING;
     double rateFor(const Voice& v) const noexcept LATTICE_NONBLOCKING;
+    /** A per-note voice's own bend, in table steps (semitones with Fixed tuning). */
+    double slideOf(const Voice& v) const noexcept { return v.channel >= 0 ? perNote.steps(v.channel) : 0.0; }
     /** Slice boundaries for the current settings into `out` (fixed capacity); returns the count. */
     int computeSlices(const Source& source, std::int64_t* out, int capacity) const noexcept LATTICE_NONBLOCKING;
     void loadFile(const juce::String& path);
@@ -166,8 +172,8 @@ private:
     std::uint64_t noteCounter = 0;
     std::uint32_t randomSeed = 0x6d2b79f5u;
     float bend = 0.0f;
+    PerNoteExpression perNote;
     bool sustainDown = false;
-    std::array<bool, 128> sustained{};
     std::array<std::int64_t, 512> sliceScratch{};
 
     float outGainLeft = 0.5f;

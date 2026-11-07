@@ -1,0 +1,16 @@
+{
+  "lattice": "surface",
+  "version": 1,
+  "name": "Native Instruments Maschine MK3 (MIDI mode)",
+  "manufacturer": "Native Instruments",
+  "verified": false,
+  "source": "A stopgap until the native driver (M7): Maschine's MIDI mode, set up in NI's Controller Editor to send these notes and CCs.",
+  "notes": "Unverified: set the Controller Editor's MIDI mode template to match (pads C1 up from the bottom-left on channel 1, knobs CC 70 to 77 relative in two's complement). No lights or displays in MIDI mode.",
+  "ports": { "input": ["Maschine MK3"], "output": ["Maschine MK3"] },
+  "grid": {
+    "rows": 4, "columns": 4, "message": "note",
+    "first": 48, "rowStep": -4, "columnStep": 1,
+    "velocity": true, "aftertouch": "polyphonic"
+  },
+  "encoders": [ { "cc": 70, "count": 8, "encoding": "twosComplement" } ]
+}

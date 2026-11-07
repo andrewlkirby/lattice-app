@@ -236,6 +236,33 @@ void SessionController::releaseSlot(int trackIndex, int sceneIndex)
     send(c);
 }
 
+std::optional<SessionController::DirectLaunch> SessionController::directLaunch(int trackIndex, int sceneIndex)
+{
+    if (trackIndex < 0 || trackIndex >= liveSet.numTracks() || sceneIndex < 0 || sceneIndex >= liveSet.numScenes() ||
+        liveSet.isGroupTrack(trackIndex))
+        return std::nullopt;
+    flush();
+    EngineCommand c;
+    c.trackId = trackIdOf(trackIndex);
+    c.scene = sceneIndex;
+    const auto clip = liveSet.clip(trackIndex, sceneIndex);
+    if (!clip.isValid())
+    {
+        if (isArmed(trackIndex) || !liveSet.hasStopButton(trackIndex, sceneIndex))
+            return std::nullopt; // records, or does nothing but select
+        c.type = CommandType::StopTrack;
+        return DirectLaunch{c, std::nullopt};
+    }
+    c.clipId = LiveSet::idOf(clip);
+    const auto state = trackState(trackIndex);
+    if (newRecordings.contains(c.clipId) || (state.queued == TrackPlayState::Queued::Record && state.queuedClipId == c.clipId))
+        return std::nullopt; // ends or cancels a recording (launchSlot)
+    c.type = CommandType::LaunchSlot;
+    auto up = c;
+    up.type = CommandType::ReleaseSlot;
+    return DirectLaunch{c, up};
+}
+
 void SessionController::launchScene(int sceneIndex)
 {
     if (sceneIndex < 0 || sceneIndex >= liveSet.numScenes())

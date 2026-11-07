@@ -23,6 +23,580 @@ Playing pads must feel as tight as a dedicated instrument. **Pad-to-sound latenc
 - Push 1 (possible later as a generic definition with a text display)
 - scripting inside definition files (they are JSON only for now; see the Risks section)
 
+## Starting point (updated 2026-11-02, after M4)
+
+### What M2–M4 leave to build on
+- **Used as they are:**
+  - `CommandRegistry`: every action has a stable ID, so the modes perform commands rather than calling into views;
+  - `SessionController` for launches, recording, tap tempo and note previews, and `LiveSet` with its `UndoManager` for edits;
+  - `SessionSelectionModel`, the shared selection (track, scene, and whose devices are shown);
+  - `EngineStateFeed`: slot states, track play states, the transport and meters, once per display refresh, calm at 4 Hz;
+  - `ParameterPager::pagesFor(device, encoders)`, for any encoder count;
+  - per-track and per-clip highlight sets (`LiveSet::effectiveHighlight`), the tuning registry and `TrackTuning`;
+  - MIDI Map's gestures (one undo step per turn, ended at rest), which encoder turns follow too;
+  - the Preferences → Controllers tab (empty so far).
+- **What has to change:**
+  - **Live MIDI isn't timestamped yet.** `MidiInputQueue` plays everything at sample 0 of the next block, and its producers share a mutex. The fast path needs lock-free queues, one per producer thread, and each event placed at the sample its timestamp gives (5b). The command queue (`MpscQueue`) is the same, for launches from a MIDI thread.
+  - **MIDI Map reads remote input on the message thread** (`takeRemoteMidi`). Surface ports bypass it: their driver reads its input directly, and only controls a surface leaves unassigned go on to MIDI Map (5e).
+  - `ComputerKeyboardInput` stays as it is. It keeps working alongside every controller.
+
+### Order of work
+- **Hardware comes last.** The modes are built and tested on `FakeSurface` and Virtual Push first, because no controller has been bought yet. Each driver is then a thin layer under modes that already work.
+- **Phases:** 5a → 5b → 5c → 5d → 5e → 5f → 5g.
+  - 5c and 5d both depend only on 5a and 5b, so they can swap places. 5e and 5f only depend on 5c.
+  - **Bringing up the purchased device** ("Hardware choice", below) goes in whenever it arrives, after its driver's phase.
+- **Each phase** ends the same way as in M4:
+  - its tests pass on Windows and Linux;
+  - the performance targets it touches are checked (the idle budget with Virtual Push open, LED response, pad latency);
+  - the user does a short hands-on check.
+
+#### 5a: Foundation, Virtual Push, Session mode
+- **`src/control/surface/` holds the device-independent types:**
+  - `SurfaceCapabilities` and the `Role` names;
+  - `SurfaceInput` events: pad down, pressure and up (row, column, velocity); button down and up (role); encoder turn (index, delta in steps) and touch; strip;
+  - `LedFrame`: each pad's and button's color and animation;
+  - `DisplayFrame`: what each display column shows (structured data; it's drawn in 5c).
+- **`SurfaceDriver`** is the interface every driver implements: its capabilities, an input callback, and LED and display frames out. `FakeSurface` implements it for the tests. **Capability presets** for every candidate device and the Virtual Push sizes are written now (see "Hardware choice").
+- **`SurfaceController` and `ModeStack`** run on the message thread. They read a `SurfaceContext`: the commands, the session, the selection, and the feed.
+  - Modes are plain classes, so tests drive them headlessly.
+  - LEDs are only re-computed when the feed or the selection reports a change. Drivers get the differences only.
+- **Session mode** and the **global controls**: play, record, session record, metronome, tap tempo, undo/redo (with Shift), new, stop all, and the Shift overlay.
+- **Virtual Push** (`src/control/virtual/`):
+  - a panel in the shell (View menu, or a shortcut) that can also open as its own window;
+  - grid size, encoder count and the button groups shown come from Preferences → Controllers;
+  - mouse input: velocity from the click position, right-click latches a pad;
+  - it repaints only the pads whose LEDs changed. Blinking and pulsing follow the transport's beat from the feed, so a still set costs nothing.
+- **Tests:**
+  - Session mode on every candidate size: the pad→slot mapping, navigation, page jumps, LED colors and animations for each clip state, and the overview;
+  - graceful degradation, with only a grid and no buttons;
+  - the LED diff;
+  - the idle budget with Virtual Push shown.
+- **Hands-on check:** launch clips and scenes and use the transport from Virtual Push, at 8×8 and at 8×12.
+
+##### As built (5a, 2026-11-02)
+- **Where things are:**
+  - `src/control/surface/`: `Surface.h` (roles, capabilities, input, LED frames, `SurfaceDriver`), `Presets` (every candidate device, Virtual Push, grid only), `Mode.h` (`SurfaceContext`, `ModeHost`, `Mode`), `SurfaceController`;
+  - `src/control/modes/SessionMode`;
+  - `src/control/virtual/VirtualPush`.
+  
+  They're built into `lattice_ui`, since the modes use its commands, feed and selection.
+- **LEDs:**
+  - A light is a colour (`0xRRGGBB`) plus an animation. A pulse takes one beat; a blink is on for the first half of each half-beat.
+  - Colours for states come from the theme (play, record, arm, mute, solo). White stays white, since it's the light's colour.
+  - The controller works the frame out again only when something changes: a feed tick it listens to, the set, the selection, or a held button. It then sends only the differences.
+- **Global buttons (the controller's):**
+  - Play: play/stop. Shift+Play continues.
+  - Record: session record.
+  - Undo; Shift+Undo redoes.
+  - New: a clip in the selected slot. Shift+New: a scene.
+  - Stop All, or Shift+Stop Clip (as on Push 2).
+  - Metronome, Tap Tempo, Shift, and the mode buttons. A mode that isn't built yet is unlit.
+- **Session mode as built:**
+  - **Pads and the selection:**
+    - Pressing a pad selects its slot. With Shift it only selects.
+    - The first press on an empty slot of a track that isn't armed only selects it, which auto-arms it in the app. It stops the track if the slot has a stop button. The next press records.
+    - Launching a scene doesn't select it, since that would take the selection, and auto-arm, off the track being played. Shift+scene selects it.
+  - **Delete and Duplicate held:** they act on the clip, or on the scene from a scene button. Each is one undo step.
+  - **Track buttons** (trackSelect, or the buttons under a display on Push): they select the track. With Stop Clip, Mute or Solo held they stop, mute or solo it instead; Shift+Solo adds to the soloed tracks. A device without track buttons gets a row of track pads at the bottom while one of those three is held.
+  - **A grid with no buttons:**
+    - its last column launches scenes;
+    - the box follows the selection made on screen;
+    - everything else stays on screen.
+  - **Columns** are the tracks the Session view shows, so a folded group hides its tracks. A group's pad launches its row, as in the Session view.
+  - **The overview** (Session held) shows the current page white, a page with a playing clip in the play colour, and dim pages with or without clips. A pad moves the box there, and the selection to the page's first slot.
+- **Virtual Push:**
+  - **Where it shows:**
+    - By default it's docked at the window's right, full height, with its width dragged at its left edge; the default is 35% of the window.
+    - "Virtual Push in Its Own Window" moves it to a window of its own, which remembers its place.
+    - It and its controller exist only while shown.
+    - Toggle it with View → Show Virtual Push (Ctrl+Alt+P).
+  - **Layout:** the grid, a scene button per row and a track button per column, with the other buttons in two columns on the left (all 30 roles). Everything is sized from one unit, the largest that fits, at the top of the panel.
+  - **Drawing:** unlit pads and buttons are dark in every theme, as on a device, so a light's brightness reads the same on the light theme.
+  - **Input:**
+    - Velocity comes from where a pad is clicked (top: loudest), or is fixed in Preferences → Controllers, which also sets the rows and columns (4–16).
+    - A right-click latches a pad or a button, so Shift, Delete or Mute can be held with one mouse.
+    - Each touch is its own press.
+  - **Animation:** a display-refresh repaint runs only while a blinking or pulsing light is shown. A still set adds no timers.
+- **Tests:**
+  - `tests/control/SessionModeTests.cpp`: Session mode on every preset (Push 2/3, Launchpad Pro MK3, APC64, APC40 MKII, Maschine MK3, Virtual Push at 8×8, 8×12, 16×16 and 4×4, and grids only), and the global buttons.
+  - `tests/control/VirtualPushTests.cpp`: the layout at six sizes in three shapes, clicks, latches and velocity, and the shell docking it, floating it and rebuilding it.
+  - A `virtual-push` render snapshot in each theme.
+  - `lattice_ui_bench --idle N --virtual-push` measures idle CPU with it shown.
+- **Checks (2026-11-02):**
+  - The user's hands-on check passed.
+  - Quiet-machine idle with Virtual Push shown: 0.25-0.27% above a bare JUCE window (budget 0.3%). Without it, in the same session, 0.25-0.29%, so it adds nothing measurable (`perf/reference-machine.md`).
+
+#### 5b: Playing: the fast path and Note mode
+- **Engine:**
+  - live MIDI and commands from lock-free queues, one per producer, with no mutex;
+  - events placed at the sample offset their timestamp gives, one block after they arrive, so the delay is constant and there's no jitter;
+  - the input latency probe covers it.
+- **`PadNoteMap`**, through `RtShared`: a driver's input thread plays pads without the message thread.
+- **Note mode layouts:** Colundi/table (with its presets), In Key, and Chromatic. Also the Scale/Tuning menu overlay, octave buttons, the highlight and anchor colors, and duplicate pads lighting together.
+- **Expression:** a velocity curve, polyphonic and channel pressure, and the touch strip modes.
+- **Tests:** the layout formulas and colors; timing through `OfflineRenderer`; a stalled UI (500 ms) not delaying notes or launches; and RealtimeCheck on the input threads during a pad fuzz.
+- **Hands-on check:** play the Colundi table from Virtual Push.
+
+##### As built (5b, 2026-11-03)
+- **Engine:**
+  - **Queues:** `MpscQueue` (commands) and `MidiInputQueue` (live MIDI) are lock-free for any number of producers: a bounded queue whose cells carry sequence numbers (Vyukov's). A producer claims a cell with one compare-exchange and never waits for another producer or for the audio thread.
+    - **Change from the plan:** one queue shared by every producer, not one per producer. The OS doesn't promise one thread per MIDI input, so a per-producer queue couldn't be guaranteed a single producer. The effect is the same: no mutex anywhere.
+  - **Timing:** each live message keeps its arrival time.
+    - Each callback places it at `block length − its age in samples`, so it plays exactly one block after it arrived: a constant delay, whatever the callback's own jitter.
+    - Older ones (a late callback) play at the block's start, and so does everything offline.
+    - A track's events are merged into time order in place, without allocating, only when out of order.
+    - `AudioEngine::process` takes the callback's start time; `OfflineRenderer::useClock` gives tests a device clock.
+  - **Latency probe:** it now measures from arrival to the moment the message's sample plays, counted from the callback's start. That's one block for every event, with the driver's output latency on top.
+  - **`AudioEngine::queueCommand`:** real-time safe. `sendCommand` also wakes what polls the engine, which can lock, so the fast path calls that afterwards.
+  - **Still to do (5e):** the JUCE MIDI-input callback still takes two short locks: the input's source number and MIDI Map's inbox. Its notes go into the lock-free queue. Lock-free tables for both come with 5e's generic MIDI drivers, which replace that path.
+- **The fast path (`PadPlayer`, `PadNoteMap`):**
+  - The controller makes a `PadNoteMap` from the current mode on each refresh and publishes it through `RtShared` only when it changed. Each pad has one of:
+    - a note;
+    - a command, with an optional release command;
+    - nothing: the message thread handles it.
+  - The map also holds the surface's source and channel, the velocity and pressure tables, the strip mode, and the modifier buttons.
+  - **How drivers use it:** a driver's input goes through `PadPlayer::handle` on its own thread, then to the controller marked `played`. Virtual Push and `FakeSurface` do both through `SurfaceDriver::deliver`.
+  - **Modifiers:** while a modifier is held (tracked on the input thread), pads go to the message thread.
+  - **Notes:**
+    - A pad remembers the note it started, so its release ends that note even if the layout changed in between.
+    - A second pad on a held note plays it again (off, then on), and the note ends with the last release.
+    - `releaseAll` ends everything when the driver goes away.
+  - **Pressure:** polyphonic sends each note its own. Channel sends the most any held pad is pressed, and goes back down as pads are let go. A device without aftertouch sends none.
+  - **Strip:** pitch bend springs back to the middle on release, and the mod wheel stays put; both are on the fast path. Scroll goes to the mode.
+  - **Session mode:** a slot pad gets `SessionController::directLaunch`'s launch (with a release for Gate clips) or its stop button. Scene buttons, and the scene column of a grid without them, launch their scenes (`PadNoteMap::buttons`).
+    - It gives nothing for group slots, armed empty slots and recordings; those still go through the message thread.
+    - The modifiers are Shift, Delete, Duplicate, Stop Clip, Mute, Solo and Session.
+    - A played press only selects, so it doesn't launch twice. A stale clip ID is ignored by the engine.
+  - **Routing:**
+    - Each surface has its own source number (`lattice.surface.<name>`).
+    - Tracks listening to all inputs (the default) hear it when armed or monitoring In, as in Live. There's no target track in the map: auto-arm puts the selected track there.
+- **Note mode:**
+  - **Layouts** (`NoteLayout`, plain functions):
+    - **Table:** `origin + column×step + row×rowOffset`. Presets: Sequential, and Overlap 3/5/7 (`columns − n`). Fine −1/+1 row steps.
+    - **In Key:** 14 scales, rows 4ths/3rds/Sequential, the root lit.
+    - **Chromatic:** rows a 4th apart, notes outside the scale dimmed.
+  - **Choosing a layout:** a table tuning offers only Table; 12-TET offers all three, In Key by default. The default Table origin is the computer keyboard's default page.
+  - **Saving:** the layout is kept on the track's node (`noteLayout`, not undoable, no engine rebuild), tagged with its tuning. When the track's tuning changes, it starts from that tuning's default.
+  - **Colours:**
+    - **Table:** anchors in the track's colour, the track's highlight set white, the rest dim (`padDim` 0.22). Entries the track can't play are unlit, and red while pressed.
+    - **12-TET:** the root in the track's colour, the scale white.
+    - **A pressed pad:** green, together with every pad playing the same note.
+  - **Buttons:**
+    - Octave up/down, or the up/down arrows, move by a row or a page (Table) or an octave. With Shift they move by one entry, or by one semitone of the root in In Key.
+    - Left/right and the track buttons choose the track.
+    - Layout cycles the layouts.
+  - **Scale/Tuning menu (Scale button):** shown on the pads until 5c's display renderer.
+    - Each setting gets a row of choices: Tuning (an undoable change of the track's tuning), Layout, Root and Scale (12-TET), Rows, and Octave buttons (Table).
+    - The pads are labelled on Virtual Push, and the status line shows the choice touched. The arrows scroll it on small grids.
+  - **Status line:** each pressed note's entry or name and its Hz; otherwise the track, tuning, layout, origin and the number of highlighted entries.
+- **Words on devices (`SurfaceText`):** pad labels and a status line, which Virtual Push draws and hardware ignores until 5c.
+- **Virtual Push:**
+  - A touch strip left of the grid (`stripAt`), and a status line above it.
+  - Dragging up from a held pad is pressure: a pad's height is all of it, and a pen's own pressure is used if it has one.
+  - Labels are shown when the pads are big enough.
+  - With a fixed velocity, it has no velocity curve: it plays as set.
+- **Preferences → Controllers:**
+  - velocity curve (Softest…Hardest);
+  - pad pressure (Off, Polyphonic, Channel) and its threshold;
+  - touch strip (Pitch bend, Mod wheel, Scroll).
+  - A change applies at once; only a new grid size or velocity rebuilds Virtual Push.
+- **Tests:**
+  - `tests/control/FastPathTests.cpp`:
+    - the curve and threshold;
+    - `PadPlayer`'s notes, duplicates, releases after a layout change, modifiers, pressure and strip;
+    - placement one block after arrival at 64 and 512 samples (and the latency probe);
+    - four producer threads with nothing lost;
+    - a 500 ms stall of the message thread delaying neither a note nor a launch (under 100 ms with 10 ms blocks in real time);
+    - RealtimeCheck on an input thread through a 40,000-event pad fuzz while maps are republished;
+    - Session mode's direct launches.
+  - `tests/control/NoteModeTests.cpp`:
+    - the formulas and presets, octave limits, saving;
+    - the Colundi and 12-TET colours, duplicates lighting together;
+    - the menu, including scrolling on 4×4;
+    - every preset device, the transport lights, and notes reaching the armed track.
+  - Virtual Push: strip, pressure and text tests.
+  - A `virtual-push-note` render snapshot in each theme.
+- **Checks (2026-11-03):**
+  - The user's hands-on check passed: the Colundi table played from Virtual Push.
+  - From the check: docked Virtual Push was hard to read at half the window. It can now widen until the main view is 16 control heights wide (its pads size to the width); the window form (View menu) goes full screen.
+
+#### 5c: Display and encoders: Device and Mix modes
+- **The display renderer,** shared by Virtual Push and Push: it draws a `DisplayFrame` into an image at the device's size, in one column per encoder, with a detail view while an encoder is touched.
+- **Encoders:**
+  - Device mode (including rack navigation and macros first);
+  - Mix mode;
+  - an encoder turn is one gesture, so a turn is one undo step.
+- **Tests:** the pages match `ParameterPager` for 8, 16 and 32 encoders, plus display snapshots.
+
+##### As built (5c, 2026-11-03)
+- **Where things are:**
+  - `src/control/surface/Display.h` (`DisplayFrame`: cells, the labels along the display, the detail, a message; `displayText` for text displays);
+  - `src/control/display/DisplayRenderer` (drawing; an image at a device's size);
+  - `src/control/surface/EncoderBank` (what each encoder edits, and its gestures);
+  - `src/control/modes/DeviceMode`, `MixMode`, `PadFaders.h`;
+  - `src/ui/mapping/Targets` (MIDI Map's address-to-binding code, now shared with the encoders).
+- **Two modes at once:**
+  - On a device with encoders, a pad mode (Session or Note) runs on the grid and an encoder mode (Device or Mix) on the encoders, the display and the buttons along it, as on a Push. It starts in Device.
+  - The buttons along the display go to the encoder mode first, everything else to the pad mode first. The Mode buttons light for both.
+  - **Graceful degradation:** on a device without encoders (a Launchpad), Device and Mix take the grid. Its columns are faders (lit from the bottom, or from the middle for pan), the scene buttons choose pages or what to mix, and the arrows move along the chain or the tracks.
+- **Encoders (`EncoderBank`):**
+  - Each encoder is given a value's address (`device:<id>/<parameter>`, a track's volume or pan, a send) and edits it through the same bindings as MIDI Map and the window's knobs.
+  - **One turn is one undo step:** from touch to release, or until the encoder rests for 400 ms on a device without touch. The step is named with the value, as a mouse drag's is.
+  - **How far a turn moves:**
+    - a whole range takes `encoderResolution` steps (a capability; 200 by default, unverified per device);
+    - Shift makes it ten times finer;
+    - a value with up to 24 settings (a switch, a choice, a small whole number) moves one setting every 10 steps, never sooner.
+  - An absolute control (`encoderSet`: APC40, APC64) picks the value up before moving it.
+- **Device mode:**
+  - **Which device:** the device selected in the shared selection. `SessionSelectionModel::selectDevice` now holds it, and the Device view writes and follows it, opening the rack chains a device is in. With none selected, it uses the first device of the track (or return, or master).
+  - **Pages:** `ParameterPager::pagesFor` for the encoder count. A rack's pages are its macros in use, read from the set (`RackDevice::macroPages`), with their names and colours.
+  - **Upper buttons:**
+    - they show the devices of the chain, in groups as wide as the buttons;
+    - pressing the selected rack again shows its chains, and choosing a chain goes into it;
+    - inside a rack, the first button ("‹ Rack") goes back out;
+    - an empty chain says so.
+  - **Lower buttons:** the device's On switch (undoable), then its pages. Each device remembers its page.
+  - **Display:** each parameter's name, value and an arc (drawn from the middle when bipolar), with the devices above and the pages below. A touched encoder is shown three cells wide, with its range.
+- **Mix mode:**
+  - **Upper buttons:** Volume, Pan, Sends (press again for the next return's) and Track (the selected track's volume, pan and every send).
+  - **Which tracks:** the tracks in view from the Session box. The box follows the selection under any pad mode, so Note mode moves it too.
+  - **Lower buttons:** select tracks; with Stop Clip, Mute or Solo held they stop, mute or solo them, through Session mode's track buttons.
+  - **Display:** each track's name in its colour, the value, an arc and its meter, drawn as the mixer draws its meters. Meters are read only while Mix is shown, in 64ths, so a still level doesn't redraw the display.
+- **The renderer (`DisplayRenderer`):**
+  - **Layout:** label strips above and below the cells, `across` cells to a row (Push: 8). Everything is sized from the bounds: a Push-shaped cell is 120 × 112, and each strip is 24.
+  - **Theme:** dark in every theme, as a device's screen is. The theme gives the accent and meter colours, and the high-contrast theme gets brighter text.
+  - `render()` gives an image at a device's size, for the Push driver (5f). Text displays get `displayText` (the touched encoder's name and value, otherwise the title and the cells).
+- **Virtual Push:**
+  - **Encoders setting** (Preferences → Controllers): none, 8, 16 or 32, default 8. With encoders it shows a display above the grid, as wide as the whole panel, with cells in rows of 8 (or the grid's width, if wider), and a button above and below each column.
+  - **The cells are the encoders:**
+    - pressing a cell touches its encoder;
+    - dragging turns it: a whole range is three pads' height, and Shift (the key, or the button) makes it ten times finer;
+    - the mouse wheel turns it by a fortieth of the range for each notch.
+- **Scale/Tuning menu:** it stays on the pads, which work on every device. It can move to the display once a pixel display's driver exists to check it on.
+- **Tests:**
+  - **`tests/control/DeviceMixTests.cpp`:**
+    - **Device:** pages equal to `ParameterPager`'s for 8, 16 and 32 encoders, and their addresses and cells; rack macros (12 in use: two pages on 8 encoders, named and coloured); choosing devices shared with the selection; the On switch and its undo; per-device pages; a track with no devices; going into a rack, choosing a chain, an empty chain, and back out.
+    - **Turns:** a turn as one undo step; Shift; rests; detents; absolute pickup.
+    - **Display frames:** a frame only sent when it changes; the detail on touch; text lines.
+    - **Mix:** volumes, pans, sends cycling, the Track page following the selection, the lower buttons with modifiers, and the box following the selection.
+    - **Without encoders:** faders on a Launchpad Pro, including their LEDs and undo.
+    - **Running together:** both modes at once and their lights.
+    - **Every candidate device:** Device and Mix usable and sized from what it has.
+  - **Virtual Push:** the layout with 0, 8, 16 and 32 encoders at every size (cells inside the display, nothing overlapping), and drags, Shift and the wheel turning encoders.
+  - **Snapshots:**
+    - the renderer at 960 × 160 and 1920 × 320 in every theme: a device page, a touched encoder, Mix with meters, and no devices;
+    - `virtual-push-device`: the 16-macro rack, with an encoder touched;
+    - the earlier Virtual Push snapshots, redrawn with the display.
+- **Checks:**
+  - All 483 fast tests pass on Windows; all 472 on Linux (warnings as errors), with its snapshot references written and looked at. Callgrind: the engine benchmark -0.88%, the UI benchmark -0.02%.
+  - The user's hands-on check passed (2026-11-04): Device mode, Mix mode, and pad faders with no encoders. From the check: Find now knows the Controllers tab's settings (it had missed them), with a test that every labelled Preferences row has a Find entry.
+  - Idle with Virtual Push shown, measured on a busy machine: 0.42% above a bare window with it shown, 0.48% without it in the same session. The display adds nothing measurable, but the busy machine puts both over the 0.3% budget. A quiet-machine run waits for the user's go-ahead.
+
+#### 5d: Drum, the step sequencers, and the Clip and Browse modes
+- The Drum layout and its zones, the melodic step sequencer, and the Clip and Browse modes, with previews on the M4 preview bus.
+
+##### As built (5d, 2026-11-04)
+- **Where things are:**
+  - `src/ui/clip/Steps` (a clip's notes as steps; a held step's bindings);
+  - `src/ui/clip/ClipBindings` (the Clip view's values, shared with Clip mode);
+  - `src/ui/clip/ClipActions` (Double Loop, Quantize and the set's Quantize and Fixed Length settings);
+  - `src/control/modes/StepSequencer` (`SequencerZones`, the steps and the loop selector), `ClipMode`, `BrowseMode`, `SelectedClip.h`;
+  - `src/control/surface/BrowseHost.h` (what Browse mode drives; the shell implements it).
+- **Steps (`ui::steps`):**
+  - A note shows on the step nearest its start, so a note nudged off the line, or drawn off it in the piano roll, still shows on its step. A step can be on, muted, tied (a longer note sounds through it) or off.
+  - Pressing an empty step adds a note at once, a step long at velocity 100. A step with notes loses them when it's let go, unless it was held for half a second or edited meanwhile, so holding a step to edit it never deletes it. With no clip, the first step makes one in the selected slot, a page long. Each is one undo step.
+  - **Held steps:** while steps are held, the encoders and the display are theirs: Velocity, Length (in steps) and Nudge (up to just under half a step either way, so a note stays on its step). The values go through `notes:<clip>/<step length>/<pitch>:<step>,…/<field>` addresses, so a turn is one undo step, as every encoder's is. Several held steps are edited together.
+- **Which clip:** the selected slot's, or (when it's empty) the clip the track is playing. That's the Clip view's clip too, so the screen and the controller edit the same one. The step sequencers, Clip mode and the Double Loop and Quantize buttons all use it.
+- **Zones (`SequencerZones`), from the grid's size:**
+  - **Drum:** the steps along the top half (32 on 8 × 8, 48 on 8 × 12, 128 on 16 × 16), with the pads below on the left (4 × 4 on 8 × 8) and the loop selector on the right. Layout switches to the pads filling the grid (64 on 8 × 8). A grid smaller than 6 × 6 (4 × 4) shows the pads, or the steps over a row of pages, and Layout switches between them.
+  - **Melodic:** a row for each note above, a column for each step, and the loop selector along the bottom (one row, or a row for every 8).
+  - A test checks that every candidate device's grid is covered exactly once.
+- **Drum layout:** used on any track whose chain has a Drum Rack.
+  - **Pads:** they play on the fast path. The last one played is the one whose steps are shown, and it lights white. Pads with something on them are in their chain's colour (or the track's).
+  - **Moving the pads:** the first pad on the grid is the rack's first pad on show, shared with the Device view. Octave up and down move the pads a page, and with Shift a row.
+- **Melodic sequencer:** Layout cycles through the tuning's layouts and then the sequencer, so Colundi goes Table, Sequencer, and 12-TET goes In Key, Chromatic, Table, Sequencer. The Scale menu has it too.
+  - **Rows:** each row is the layout's next note: a table entry (Colundi), a scale degree (In Key) or a semitone. Rows with anchors (or the root) are tinted, and unplayable rows are dark. Each row's first pad is labelled with its note.
+  - **Moving the rows:** Octave up and down move the rows a page of rows (a table) or an octave; the arrows move them one row.
+- **Step length:** 1/4, 1/8, 1/8T, 1/16 (the default), 1/16T or 1/32, chosen in the Scale menu and kept with the track's layout.
+- **Loop selector:** a pad per page. Pressing a page loops it, and holding one while pressing another loops from the first to the second (one undo step). Shift+page only shows that page. While the clip plays, the page in view follows the playhead until a page is chosen with Shift.
+- **Lights:** steps are lit in the track's colour, muted and tied steps dimmer. Empty steps inside the loop are dim, and steps past the loop end are dark. The playing step is green, and a held step is white.
+- **Clip mode:** an encoder mode, like Device and Mix.
+  - **Values:** the same bindings as the Clip view's panel (`clip:<id>/<value>` addresses), so a turn is the same undo step, with the same name, as a drag on the panel.
+  - **Pages:** Loop (on, start, position, length, end), Launch (mode, quantization, legato, follow actions A and B, chance, time), Signature, and Quantize (the grid, the amount, and Fixed Length). They are packed into pages as wide as the encoders: three pages on 8 encoders, two on 16, one on 32.
+  - **Upper buttons:** choose the page.
+  - **Lower buttons:** Double Loop (Push's: the notes copied after the loop and the loop doubled), Loop × 2, Loop ÷ 2, Quantize, and Duplicate (into the next empty slot below, which then gets selected).
+  - **Without encoders:** the columns are faders over a bottom row of the actions, and the scene buttons choose the page.
+- **Global buttons, in any mode:**
+  - **Double Loop and Quantize** act on the selected clip.
+  - **Fixed Length** turns fixed-length recording on and off, back to the length it had. Shift steps through 1, 2, 4, 8 and 16 bars. Each change is undoable.
+  - **Quantize settings:** the grid and amount Quantize uses are kept in the set (not undoable, as a view setting), and Clip mode's Quantize page edits them.
+- **Browse mode:** drives the window's browser (`BrowseHost`). The screen's browser follows it, selecting a row plays its preview on the preview bus as a click does, and Load inserts where the Device view is looking, by its rules. A surface without a browser has no Browse mode, and its button stays dark.
+  - **Display:** the sources (a quarter of the display) and the rows of the chosen source, as lists (`DisplayList`). Each list keeps its selection in the middle; about five rows fit on a Push.
+  - **Encoders:** the encoders over the sources choose a source, and the rest move along the rows: a row every 10 steps, a page with Shift. An absolute control spans the whole list.
+  - **Upper buttons:** the categories.
+  - **Lower buttons:** Load, Open/Close (a folder, or a device's presets), Back, Preview (on or off, the browser's own switch), and Hot-Swap (the next Load replaces the selected device).
+  - **Without encoders:** the rows go on the grid, a row of pads each. A press selects (and previews) a row, its last pad loads it, the arrows move and open, and the scene buttons choose categories. With encoders, the arrows stay the pad mode's, as in Device and Mix.
+- **Display renderer:** draws lists in place of the cells. Text displays show each list's selection.
+- **Tests:**
+  - **`tests/control/StepSequencerTests.cpp`:**
+    - steps' states, toggling, and the held-step bindings with their undo;
+    - the zones on every grid;
+    - the Drum layout: pads on the fast path, choosing the pad, steps making a clip, removing a step, holding a step, and the undo steps;
+    - the loop selector and Shift, and moving the pads;
+    - held steps taking the encoders and the display;
+    - the melodic sequencer's rows, moves and step lengths;
+    - the playhead while the clip plays.
+  - **`tests/control/ClipBrowseTests.cpp`:**
+    - Clip mode: its pages for 8, 16 and 32 encoders, a turn as one undo step named as the panel's, the actions, the global buttons, Fixed Length, and faders without encoders;
+    - Browse mode, through a real window: categories, scrolling, Load, Open, Back, Preview, hot-swap, and the grid without encoders.
+  - **Snapshots:** `virtual-push-drum`, `virtual-push-clip` and the renderer's `display-browse`. The earlier Virtual Push snapshots were redrawn for the buttons that now light: Layout (it reaches the sequencer), Clip, Fixed Length, Double Loop and Quantize.
+- **Checks:**
+  - All 496 fast tests pass on Windows; all 485 on Linux (warnings as errors), with its snapshot references written and looked at. Callgrind: the engine benchmark -0.88%, the UI benchmark -0.03%.
+  - The user's hands-on check passed (2026-11-04): the drum steps, the loop selector and the instruments, after the fixes below. The user put fuller hands-on testing off until the app is finished.
+- **During the hands-on check:**
+  - **Steps with only a track selected:** clicking a track's header selects no slot. The first step made a clip in the first slot, but the sequencer looked in the selected slot (none), so each step made the clip again and only the last note stayed. Steps now go into the track's first empty slot, which gets selected, and a clip already on the track is never replaced. A test clicks the way the user did.
+  - **A walkthrough** (`tests/control/WalkthroughTests.cpp`, hidden: run `"[.walkthrough]"`): it clicks Virtual Push in a real window at 8 × 12, with and without encoders, as a person would. It loads the Synth Kit from Browse mode, then goes through the steps, the playhead, the loop selector, Octave, Layout, a held step, a Colundi preset's sequencer, the Scale menu and Clip mode. With `LATTICE_WALKTHROUGH_DIR` set, it saves an image at each step to look at.
+  - **Labels without encoders,** found by looking at those images:
+    - Clip mode's fader columns had no names, so each top pad now shows its value's name and value.
+    - The scene buttons' jobs had no names, so a mode can now label a button (`SurfaceText::buttons`) and Virtual Push draws it: Clip mode's pages, Browse mode's categories and Mix mode's choices.
+  - **Empty steps** were hard to tell from unlit pads, so they're now as bright as notes outside the key.
+
+#### 5e: Generic MIDI controllers
+- The definition schema and loader, the encoder decoders, and the included definitions (all marked unverified).
+- Automatic detection, the Preferences → Controllers tab, how surfaces and MIDI Map work together, and the Surface Monitor.
+- The learn wizard.
+
+##### As built (5e, part 1: definitions and the driver, 2026-11-04)
+- **Where things are:**
+  - `src/control/generic/SurfaceDefinition` (the file format and its reader);
+  - `Encoding` (the encoders' encodings, and detecting one for the wizard);
+  - `GenericMidiDriver` (a definition as a `SurfaceDriver`);
+  - `resources/surfaces/` (the included definitions, compiled in, and `surface.schema.json`).
+- **The file:** `"lattice": "surface", "version": 1`, then:
+  - **Identity:** ports (regular expressions), an optional identity reply, and init and exit messages.
+  - **Grid:** the top-left pad's number and the steps across and down, or a table; velocity and aftertouch.
+  - **Buttons:** roles with a note or CC each. A numbered role can take a list of numbers.
+  - **Encoders:** CCs (a row with `count`) or NRPNs, with their encoding, and an optional touch note.
+  - **Lights:** on/off values, a palette (by name, or a list of colours) with the device's blink and pulse channels, or an RGB sysex template.
+  - **Text display:** a sysex template per line.
+  - Channels count from 1 in the file.
+  - A mistake comes back with its place, e.g. "buttons[1].role: no role 'jump'". Two controls may not send the same message. A numbered role's buttons must run 0, 1, 2… with no gaps.
+  - `"template": true` marks a starting point that is never matched by its ports (Keyboard + 8 knobs).
+- **The driver:**
+  - **Input:** messages arrive on the device's MIDI thread. Pads play on the fast path there, then everything goes on to the controller, in order. A message the definition doesn't know is passed on (part 2 gives it to MIDI Map and the tracks).
+  - **Encoders:** relative ones turn, absolute ones (7-bit, 14-bit pairs and NRPNs) set a position. Channel pressure goes to the pads held on that channel.
+  - **Lights:** only what changed is sent. A palette light picks the nearest colour, and blinking or pulsing uses the device's own channels; a sysex light is steady.
+  - **Connecting and letting go:** `connect()` sends init and then every light; `disconnect()` turns every light off and sends exit.
+- **Included, all unverified:** Launchpad X, Mini MK3 and Pro MK3; APC mini mk2 and APC40 MKII; the APC64 (its grid only: Akai's full protocol isn't published, so the rest is to come from a device); Maschine MK3 in MIDI mode (set up in NI's Controller Editor); and the Keyboard + 8 knobs template. The palettes are the first 64 entries of the 128-colour table Novation and Akai share, approximate until checked on a device.
+- **Tests (`tests/control/GenericMidiTests.cpp`):**
+  - every included definition reads, and none is marked verified;
+  - mistakes named by place;
+  - the encodings and their detection;
+  - input from pads, buttons, pressure, and relative, 14-bit and NRPN encoders;
+  - lights as palette entries, on/off values and sysex, only what changed, and init and exit;
+  - every included definition running every mode, with a pad launching a clip on the fast path;
+  - the schema lists every role and encoding the reader knows.
+
+##### As built (5e, part 2: surfaces in the app, 2026-11-04)
+- **Where things are:** `src/ui/controllers/SurfaceManager` (with `MidiPorts`, the system's ports or a test's), `AudioEngine::setSurfaceSink`, and the Controllers page's surfaces list and Surface Monitor (`PreferencesView.cpp`).
+- **Surface ports:**
+  - **Routing:** the engine gives a surface port's messages to its surface first, on the MIDI thread. What the surface doesn't use goes to MIDI Map. Notes reach the armed tracks only with Notes to tracks, which is on by default for a definition without a grid (a keyboard's keys).
+  - **The MIDI page:** a surface port's Track and Remote switches are disabled there, with a tooltip saying why.
+  - **Sharing the input:** the surface uses the input through the engine's callback, as one input can only be opened once on Windows. If the surface opened the input, it closes it again when it goes; an input that was already open for the tracks stays open.
+- **The manager:**
+  - **Saved:** each surface's definition, input and output by port name (identifiers can change between sessions), and Notes to tracks, kept in the settings (`surfaces`).
+  - **Connecting:** a surface connects when its port appears, and lets go when it's unplugged or removed. Removing sends the exit messages and turns the lights off.
+  - **Output port:** the output named most like the input.
+- **Recognised devices:** a device matching a definition, with no surface on it, is offered once a session ("Use It", "Never for…", "Not Now"). The offer says when a definition is unverified. "Never" is kept in `surfaces.declined`. Templates are never offered.
+- **Definitions:** the included ones, plus the user's folder (`Surfaces`, beside Themes), where a file of the same name wins. A user's file that doesn't read is listed on the Controllers page, with why. Read Again rereads them.
+- **The Controllers page:**
+  - **The list:** each surface's line shows its definition (marked unverified if it is), connected or not, and its ports, with Notes to tracks, Monitor and Remove.
+  - **Add:** lists every definition and marks the ones connected now. A definition with no matching port asks for the input and output.
+  - **Surface Monitor:** shows each message's bytes and what the surface makes of it ("pad row 1, column 2", "button scene[3]"), or that it went to MIDI Map.
+- **Startup:** the app's window starts the surfaces with the system's ports. Tests use fake ports, or none, so the machine's devices stay out of them. When the audio device opens, the surfaces' inputs are kept open.
+- **Tests (`tests/control/SurfaceManagerTests.cpp`):**
+  - **Engine routing:** a surface's own messages stop at the surface; MIDI Map gets the rest; the tracks get only what's passed on.
+  - **The manager:** offered once; added, a pad launches a clip; kept in the settings; unplugged and plugged back; removed, its input closed.
+  - **Edge cases:** declined for good; an input already open stays open; templates are never offered.
+  - **User definitions:** they load, and a broken one is reported with why. The monitor says what each message is.
+  - **Preferences:** the surface is listed and follows its connection.
+
+##### As built (5e, part 3: the learn wizard, 2026-11-04)
+- **Where things are:** `src/ui/controllers/SurfaceLearner` (the steps' work, with no window), `LearnWizard` (its window: Preferences → Controllers → Learn...), `SurfaceManager::beginLearning`, and `SurfaceDefinition::toJson()`.
+- **The steps:**
+  1. **Setting up:** a name, the input and output ports (the output named like the input is chosen for you), and the grid's rows and columns, or no grid.
+  2. **The grid:** press the top-left pad, the one to its right, then the bottom-right.
+     - **Evenly numbered** (the usual case): the rest is worked out from those three.
+     - **Otherwise:** each pad is learned in turn, from the top-left.
+     - **Velocity:** if every press came at one value, the pads have no velocity.
+     - **Aftertouch:** whatever pressure is sent marks it.
+  3. **Encoders, one at a time:** turn it clockwise, say so, then anticlockwise. `detectEncoding` works out the encoding from the values. A 14-bit pair (its CC + 32) and an NRPN are recognised from the messages themselves. Values that don't say ask for more turns.
+  4. **Buttons:** press one, then pick its role. A numbered role (Scene, Track) gets the next index. A control already learned can't be learned twice.
+  5. **Lights:** each common way of lighting (the 128-colour palette, Akai's channel-7 brightness, on/off at 127 or at 1) lights the corners red, green, blue and white and every button, so you can pick the one that looks right.
+  6. **Saving:** the file goes into the user's Surfaces folder, marked unverified, with the date it was learned. The manager reads it at once, and it can be put on as a surface straight away.
+- **While learning:** the wizard has the input to itself. Nothing reaches the tracks or MIDI Map, and an input it opened is closed again afterwards.
+- **The writer:** `toJson()` writes any definition as a file that `parse()` reads back unchanged. It uses a formula when the grid is evenly numbered and a table when it isn't.
+- **Tests (`tests/control/SurfaceLearnerTests.cpp`, and the wizard in `SurfaceManagerTests.cpp`):**
+  - every included definition is written and read back the same;
+  - a grid from three presses;
+  - an uneven grid pad by pad;
+  - two's complement, 14-bit and NRPN encoders, and values that don't say;
+  - buttons and numbered roles;
+  - the lights' test pattern;
+  - the result driving the device as learned;
+  - the wizard listening to its input only, saving to the folder, and the new surface playing.
+- **Checks:** all 513 fast tests pass on Windows; all 502 on Linux (warnings as errors). Callgrind: the engine benchmark -0.88%, the UI benchmark -0.01%. Every 5e window was looked at in images. The hands-on check waits for hardware (the user has none yet, 2026-11-04). There's no hardware yet, so the included definitions and the wizard wait for a device.
+
+#### 5f: Push 2/3 driver
+- MIDI, the LED palette sysex, and the display over libusb (fetched by CMake with a pinned hash, like the other dependencies).
+- Detecting a missing WinUSB driver, and the udev rule for Linux.
+- It's tested against reference bytes built from Ableton's spec. Hardware checks wait for a unit.
+
+##### As built (5f, 2026-11-04)
+- **Where things are:** `src/control/push/`:
+  - `PushProtocol` (every number, from the manual);
+  - `PushPalette`;
+  - `PushDisplay` (the USB thread) and `PushUsb.cpp` (libusb);
+  - `PushDriver`.
+  - The included `ableton-push-2.surface.json` and `ableton-push-3.surface.json`;
+  - `resources/linux/udev/50-lattice-ableton-push.rules`;
+  - `cmake/Libusb.cmake`.
+- **Source:** Ableton's *Push 2 MIDI and Display Interface Manual*, revision 1.1 (firmware 1.0.60), and its `Push2-map.json`, from github.com/Ableton/push-interface. Every number in `PushProtocol.h` is checked against it, and each example the manual gives is a test, byte for byte.
+- **A native driver behind a definition file:**
+  - A definition can name a driver (`"driver": "push2"`). The file gives only the ports; the driver does the rest.
+  - So Push is recognised, offered, saved, monitored and removed like any other surface, through the same SurfaceManager.
+  - `MidiSurfaceDriver` is the base for both drivers: receive, describe, connect, disconnect, and a status line.
+  - A native definition's notes don't go to the tracks by default (`playsKeys()`).
+- **Ports:**
+  - Push's Live port: "Ableton Push 2" or "Ableton Push 2 *nn*" (Windows), "… Live Port" (macOS), "…:0" (Linux, per the manual).
+  - The User port (MIDIIN2 on Windows) is left for other programs.
+  - On connecting: Live mode, polyphonic pressure, the strip's default settings (pitch bend, a point, back to the middle), LED brightness 127 (Push limits it to 8 on USB power alone) and display brightness 255.
+- **Input:**
+  - Pads: notes 36–99, with polyphonic pressure (and channel pressure, should Push be set to it).
+  - The eight encoders: two's complement, with touch.
+  - The tempo encoder: a BPM a step, a hundredth with Shift. A turn is one undo step (a new `SurfaceInput::tempoTurn`, which also wires up the plan's "Global controls" tempo encoder).
+  - The strip: pitch bend scaled to 0–1, with the middle exactly at 0.5.
+  - Every button with a role. What has no role passes on to MIDI Map: Select, Page, User, the master and swing encoders, and the pedals.
+- **Lights:**
+  - **Lattice's own colours:** each colour wanted is loaded into a palette entry (sysex 0x03) and the LED is set to that entry. Pads show the set's clip colours and the theme's exactly, not the nearest from a fixed palette.
+  - **Entries:** an entry a light shows is never reloaded. A freed entry is reused least recently used first. With all 127 entries lit, a new colour gets the nearest there is.
+  - **White LEDs** ask for a white level. Every entry carries the white level of its colour's brightness, scaled as the device's own (full white is 128).
+  - **Animations:** a pulse is the dimmed colour on channel 0, then the colour on channel 9 (pulsing, a quarter note). A blink is off, then the colour on channel 13 (blinking, an eighth). These match Virtual Push's animations.
+  - **The clock:** Push needs MIDI clock to keep animations on the beat. While anything animates, a start puts the device's phase at a whole beat, then clocks follow `animationBeat()`: the transport's beat, or the set's tempo while stopped. Virtual Push now uses the same function. A jump (the transport starting) sends a new start. Nothing animated: no clock, and the timer stops.
+  - **The budget:** changes go out at once, up to 2048 bytes of MIDI a frame. The rest goes on the next 60 Hz frames, carrying on where the last stopped, so every light gets its turn.
+- **The display:**
+  - **Drawing:** `DisplayRenderer` draws each frame at 960×160 in the app's theme, which follows theme changes.
+  - **Encoding:** `encodeFrame` gives the manual's format: BGR565 little-endian, 2048-byte lines (1920 bytes of pixels, 128 of filler), and the whole buffer XORed with E7 F3 E7 FF.
+  - **Sending:** `DisplaySender` sends from its own thread: the 16-byte header, then 16 KB bulk writes. A new frame goes at once (at most 60 a second). The same frame goes again each second, since the display goes black after 2 s without one. A failed write drops the link and reopens it (Push unplugged and plugged back).
+  - **libusb:** 1.0.30, the release tarball pinned by SHA-256 and built from its sources by `cmake/Libusb.cmake`: WinUSB on Windows, netlink on Linux (no libudev needed), IOKit on macOS (not built here yet). `LATTICE_PUSH_USB=OFF` builds without it, and the display then says so.
+  - **What goes wrong, in words:** the driver's status is shown on the Controllers page, refreshed each second:
+    - no WinUSB driver (Windows: Live or Ableton's driver installs it, or Zadig);
+    - no udev rule (Linux: the rule file and the commands to install it);
+    - another program using the display;
+    - no Push on USB.
+- **Push 3:**
+  - It runs on the same driver, unverified. Its USB product ID (0x1969) is from community captures.
+  - A community document (github.com/danielknng/push3-protocol-docs) disagrees with Ableton's Push 2 numbers in places: the rows of buttons above and below the display swapped, scene 1 at CC 36, and New at CC 92. That document also contradicts the manual on pixel order, so Push 2's map is kept until a unit shows which is right.
+  - MPE, the jog wheel and the new buttons wait for a unit.
+- **Corrected:** the `push2()` preset had seven white buttons marked RGB. They now follow `Push2-map.json`, and a test keeps the preset and the driver's table the same.
+- **Tests (`tests/control/PushTests.cpp`):**
+  - **The manual's numbers:** pads, encoders, strip and buttons, and every sysex example byte for byte, including the identity reply.
+  - **The display's bytes:**
+    - single pixels and the filler checked by hand from the manual;
+    - a test pattern's whole frame checked against `tests/data/push2/make_reference.py`, a separate implementation written from the manual's text (its FNV-1a hash; the script prints the SHA-256 too).
+  - **The palette:** loading, reuse, never reloading a lit entry, nearest when full, white levels.
+  - **The driver:**
+    - its input, and what passes on;
+    - lights with animations, only changes, and the budget over several frames;
+    - the clock: start, catch-up, nothing while still, restart on a jump;
+    - the display thread on a fake link: header and 16 KB writes, resend, reconnect, and a missing driver's status;
+    - every mode on Push 2 and 3, a pad launching a clip, and the tempo encoder with its undo.
+  - **In the app:** Push's Live port offered and not the User port; added, it runs on the Push driver, shows the display's status and plays.
+- **Checks:** all 526 fast tests pass on Windows; all 515 on Linux (warnings as errors, with libusb built from source). Push's display was looked at in images in Device and Mix modes. The hands-on check waits for a Push.
+
+#### 5g: Several devices, MPE, and the quality pass
+- Several surfaces at once, with shared or independent selection.
+- MPE: Virtual Push's touch slide and timbre first, then Push 3 when a unit is available.
+- **Quality pass:**
+  - LED and display response measured at ≤ 1 frame;
+  - pad-to-sound latency measured on the reference machine (a quiet-machine session, arranged with the user first);
+  - the UI stress soak with Virtual Push open.
+
+##### As built (5g, 2026-11-05)
+- **Several surfaces: shared or own selection.**
+  - By default every surface follows the window's selection and moves it, as before: Push, Virtual Push and a Launchpad stay together.
+  - A surface not following keeps a `SessionSelectionModel` of its own. It starts as a copy of the window's when it stops following. Its modes act on it: the Session box, the track Note mode plays, the device Device mode edits, and the clip Clip mode edits. The modes no longer check `followsSelection()` themselves: each acts on `host.context().selection`, which is the window's or the surface's own.
+  - **Its notes go to its own track.**
+    - `PadNoteMap::target` carries that track's ID, and the engine's live events carry it (`TimedMidi::target`, the ID's low 32 bits).
+    - Input meant for a track plays that track alone, armed or not, whatever its input port and channel. Only monitoring Off silences it.
+    - Untargeted input goes to the armed tracks, as before.
+    - Recording still follows arming: an independent surface records on a track only once it's armed.
+  - **New on an independent surface** makes the clip, or Shift+New the scene, in its own slot. The window's commands would act on the window's selection.
+  - **Settings:**
+    - each surface's row in Preferences → Controllers has "Follows selection", kept with the surface (`followsSelection`);
+    - Virtual Push has "Virtual Push selection: follows the window's / its own".
+- **MPE (per-note expression).**
+  - **The engine.** A channel message can carry `TimedMidi::perNote`, the MPE member-channel flag. Its pitch bend, channel pressure and CC 74 (timbre) then belong only to the notes started with the flag on that channel. The bend's range is `perNoteBendSteps` = 48 table steps (semitones on 12-TET), MPE's default for member channels. Unflagged messages are the channel's, as before.
+    - The flag makes MPE explicit. Guessing it from the channel would misread a keyboard on channel 2.
+    - A flagged event counts as channel 1 for a track's input-channel filter: its channel only says where its note is kept.
+  - **The instruments.** `PerNoteExpression` (devices/framework) holds each member channel's bend, pressure and timbre.
+    - Synth: a per-note voice adds its channel's bend in table steps, so a slide moves along the track's tuning table (Colundi's too), and takes the most of the channel's, the note's and its own channel's pressure. A new modulation source, Timbre (CC 74), is the voice's own for a per-note voice and the channel's otherwise. It goes at the end of the list, so saved sets keep their sources.
+    - Sampler: a per-note voice slides the same way, and a note-off ends the voice on its own channel. While there: the sustain pedal is now kept per voice, so lifting it no longer ends a key that was pressed again and is still held.
+  - **The pads** (`PadPlayer`, when `Expression::perNote` is on and the device has MPE pads: Virtual Push, and Push 3 once tested):
+    - each note gets a channel of its own: a free one used least recently, or, with all fifteen busy, the oldest note's;
+    - before the note starts, its bend, timbre (64) and pressure (0) are sent at rest;
+    - a slide (`SurfaceInput::padSlide`, in pads across) follows the notes of the pads it crosses in the row, so it lands on each pad's note at that pad's centre. Past the row's end it carries the last step on. Drum pads (`Pad::slides` off) don't slide;
+    - timbre goes as CC 74, and pressure as the channel's;
+    - the strip stays on the master channel, for every note.
+
+    With per-note expression off it's all as before: one channel, polyphonic pressure. The per-note path runs in the RealtimeCheck pad fuzz.
+  - **Virtual Push:** a held pad's drag sideways slides, and up and down sets the timbre (0.5 where pressed; a pad's height up is 1). A pen's pressure is its pressure; a mouse has none per note. The first 15% of a pad's width is still, so a click that wobbles stays in tune; from there the slide reaches the next pad's note at its centre. With per-note expression off (Preferences → Controllers → Per-note expression), dragging up presses harder, as in 5a.
+  - Recording MPE in clips waits until after the MVP, as planned; recorded notes keep their pitch.
+  - Push 3 still plays as Push 2 does (polyphonic pressure), until a unit is tested.
+- **Quality pass: timing built in.**
+  - `SurfaceController::responseTimes()`: from something asking for a refresh (an input, a hold, the set, the selection) to the lights, display and text handed to the driver. `refreshCost()`: how long a refresh takes. A feed tick refreshes at once, within its frame.
+  - `VirtualPush::paintDelays()`: from new lights, text or display to the paint that shows them. `paintCost()`: how long its paints take.
+  - `PushDriver::ledDelays()`: from lights changing to the last of them sent. `DisplaySender::delays()`: from a frame posted to its USB writes done.
+  - **The soak** (`scripts\perf-check.ps1 -Soak`):
+    - **`-UiStress`** keeps Virtual Push open and adds a seventh phase that works it: a mode button a second, pads pressed and let go, and encoders turning every frame. The progress and result lines give its response, refresh, paint delay and paint cost.
+    - **`-Pads`** presses pads on a thread of its own through a surface's fast path, as a controller's input thread would: up to four held, pressed every 20 to 80 ms. The lines then give pad-to-sound latency: from a press to its block handed to the device (the input probe), and with the device's output latency added.
+- **Measured** (on the reference machine, but not quiet: Windows Audio exclusive on the laptop's speakers at 256 samples (5.8 ms), with the UI stress running):
+  - **Lights handed to the driver:** p50 0.5–1.0 ms, p99 under 11 ms, the worst 11.3 ms. Within a frame. Refreshes take p99 1.2 ms.
+  - **Push's lights** (tests on the fake output): sent within the frame they change in. A page scroll in loaded colours, and every pad pulsing, fit one frame's budget; a first page of 15 new colours does too.
+  - **Push's display** (fake link): written p50 within a frame of being posted. That's the wait for the next 60 fps slot, plus the USB writes, which take no time on the fake link.
+  - **On Virtual Push's screen:** its paint itself takes p99 under 3 ms. The time to the paint is p50 3.7–10.8 ms, but p99 19–25 ms with the worst 21–60 ms, depending on the stress: about 1 change in 100 shows a frame late. Without the once-a-second mode switches it's p50 3.7 ms, p99 18.9 ms, worst 21.4 ms. **This misses ≤ 1 frame at the tail.** The controller and Virtual Push take under 3 ms of it. The rest is the message thread being busy with the window when the screen refreshes, under a stress that changes something every frame. **Next:** profile the message thread on the quiet machine (with a real profiler), and find what holds the window's frame.
+  - **Pads** (the same run, 20 s, not quiet): to the device p50 5.9 ms (one block), p99 10.7 ms, the worst 10.9 ms. With the output latency: p50 17.5 ms, p99 22.3 ms. The p99 is two blocks, which misses the target (buffer + 1 ms). This needs the quiet-machine run at 64 samples (ASIO4ALL) before anything is concluded: on a loaded machine WASAPI's callbacks are uneven.
+- **Checks:** all 538 fast tests pass on Windows; all 527 on Linux (warnings as errors). Short UI stress soaks (20 to 32 s, with and without `-Pads`) passed with no dropouts. Callgrind wasn't run for 5g.
+- **Quiet-machine session (2026-11-05):** ASIO4ALL at 64 samples (1.33 ms), 48 kHz, 300 s each.
+  - **Pads:** to the device p50 1.40 ms, p99 2.00 ms, the worst 2.15 ms: within the target (the buffer + 1 ms = 2.33 ms), with and without the UI stress. With the output latency (7.62 ms): p50 9.0 ms, p99 9.6 ms. No dropouts; the audio callback's load p99 3.5% (10.5% with the UI stress). The loaded run's two blocks were WASAPI's uneven callbacks.
+  - **Virtual Push under the UI stress, before the fixes:** to its lights p99 6.2 ms; its paint p50 11.9 ms, p99 23.3 ms, the worst 53.3 ms. Still a miss.
+  - **Profiled** (WPR's CPU sampling with context switches, 90 s of the UI stress, a Release build with symbols): the message thread was busy 17% of the time, so the frames weren't lost to its load but to two things.
+    - **Cached images on Direct2D.** Mixer strips and knobs were buffered to images (4h, measured with the software renderer). On Direct2D every redraw of a cached image opens and closes a drawing context of its own on the GPU (`Direct2DPixelData::Context`, an EndDraw flush and `ReclaimResources`). A strip's meter redraws it every frame, so the images took 28% of the message thread's busy time, 19% of it the contexts alone, against under 5% for the drawing they saved. Now they're buffered only where that pays (`ui::painting::cachedImagesPay`): off screen and with the software renderer, as in the UI benchmark and on Linux and macOS, but not on a Direct2D window. Each checks when it's put on a window.
+    - **A repaint during a refresh waited a frame.** On Windows JUCE's Direct2D windows paint only at a display refresh, and only what a WM_PAINT has marked; a WM_PAINT waits behind every posted message. So a change made during a refresh's work (the feed's tick, which refreshes the controllers) or just before it missed that refresh. Virtual Push now has its WM_PAINT handled at once after each change (`ui::painting::paintAtNextRefresh`), which only marks what to paint; the paint stays on the refresh.
+    - A/B, 90 s each: the worst paint 54.1 ms as it was, 43.1 without the images, 45.0 with the WM_PAINT, 20.5 with both.
+  - **After the fixes** (300 s): its paint p50 10.6 ms, p99 19.7 ms, the worst 37.9 ms (once, in the first minute). The rest is the wait for the next refresh (up to 16.7 ms) plus the main window's paint, which comes first on each refresh. So a change is now painted at the first refresh after it, but for that once in 2,672: the target as it can be met with a display synchronised at 60 Hz. No dropouts; one audio callback in the first minute took 80% of its budget (34% before), the p99 unchanged at 10.5%.
+  - **Not done:** the main window's own changes made during the feed's tick (meters, clip states) still show a refresh later. The same call would bring them a frame sooner, at the cost of more painting on the refresh before Virtual Push's; it's left as a follow-up, to measure before choosing.
+  - **Tests:** the fast tests pass on Windows run one at a time (531), and all 528 on Linux (warnings as errors). In parallel (`-j 8`) two fail on files of their own (the user library's tunings, the peaks cache), which other test processes share: a test isolation problem, not a regression.
+- **Hands-on check (2026-11-07), on Virtual Push only** (its own selection standing in for a second surface): slides, timbre, per-note off and its own selection all behaved. One bug, found setting up the timbre: typing 60 into the Synth's mod Amount set 100 %.
+  - **The cause:** values kept as a fraction of 1 but shown as percentages read typed text as plain values, so "60" was 60, clamped to 1. The same held for every such parameter (mixes, feedbacks, levels, widths, about a dozen devices), for pans ("20L" was full right), a drum pad's Tune ("+5 st" was note 5) and choke ("C3"), and the step editor's Length and Nudge.
+  - **The fix:** `ParameterSpec::shownScaled`, `shownAsPercent` and `shownAsPan` set the text both ways, replacing the devices' own formatters; the choke has its own parser, and "inf" reads as a ratio's top. Hz, ms and s now switch units where the smaller would round to 1000 (999.97 Hz showed "1000 Hz", which read back as "1 kHz").
+  - **Tests:** every built-in parameter reads back its own text as the value shown, at six points of its range; the builders' text both ways.
+- **Waiting for the user:**
+  - Push 3's MPE waits for a unit.
+- **Tests:**
+  - `tests/control/MultiSurfaceTests.cpp`:
+    - per-note channels, at rest before the note; two pads of one note being two voices; channel reuse; per-note off;
+    - slides along a row's notes (and past it), timbre and pressure, drums and the strip;
+    - the engine's targeted and per-note routing;
+    - Push, Virtual Push and a Launchpad on the window's selection and on their own; the independent surface's notes going to its track, and its New;
+    - response timing.
+  - Elsewhere:
+    - the Synth's per-note bend along the Colundi table (whole and half steps; another channel's, and an unflagged note's, untouched) and its Timbre source;
+    - Virtual Push's slide and timbre drag;
+    - Push's light and display response;
+    - the setting kept with a surface;
+    - the RealtimeCheck pad fuzz with per-note maps, slides and timbre.
+
 ## Architecture — `src/control/`
 
 ```

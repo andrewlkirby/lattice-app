@@ -19,20 +19,9 @@ namespace
 {
 using P = SamplerDevice::Param;
 
-juce::String percent(float v)
-{
-    return juce::String(v * 100.0f, 1) + " %";
-}
-
-juce::String panText(float v)
-{
-    const int p = juce::roundToInt(std::abs(v) * 50.0f);
-    return p == 0 ? juce::String("C") : juce::String(p) + (v < 0.0f ? "L" : "R");
-}
-
 ParameterSpec level01(const char* id, const char* name, float def)
 {
-    return ParameterSpec::continuous(id, name, 0.0f, 1.0f, def, ParamUnit::Percent).withFormatter(percent);
+    return ParameterSpec::continuous(id, name, 0.0f, 1.0f, def, ParamUnit::Percent).shownAsPercent(1);
 }
 
 ParameterSpec time(const char* id, const char* name, float def, float max = 20000.0f)
@@ -102,7 +91,7 @@ std::vector<ParameterSpec> makeSpecs()
     set(P::outVolume,
         ParameterSpec::continuous("out.volume", "Volume", -70.0f, 6.0f, -6.0f, ParamUnit::Decibels).withCentre(-12.0f),
         "Output");
-    set(P::outPan, ParameterSpec::continuous("out.pan", "Pan", -1.0f, 1.0f, 0.0f).withFormatter(panText), "Output");
+    set(P::outPan, ParameterSpec::continuous("out.pan", "Pan", -1.0f, 1.0f, 0.0f).shownAsPan(), "Output");
     return s;
 }
 
@@ -153,8 +142,8 @@ void SamplerDevice::reset() noexcept
         v.svf[1].reset();
     }
     sustainDown = false;
-    sustained.fill(false);
     bend = 0.0f;
+    perNote.reset();
 }
 
 void SamplerDevice::releaseAllNotes() noexcept
@@ -163,10 +152,10 @@ void SamplerDevice::releaseAllNotes() noexcept
         if (v.active && !v.stealing && !v.oneShot)
         {
             v.gate = false;
+            v.sustained = false;
             v.amp.noteOff();
         }
     sustainDown = false;
-    sustained.fill(false);
 }
 
 void SamplerDevice::choke() noexcept
@@ -345,18 +334,18 @@ double SamplerDevice::rateFor(const Voice& v) const noexcept
     if (juce::roundToInt(value(P::tuningMode)) == 1)
     {
         // Fixed: 12-TET relative to C4, ignoring the track's tuning (Drum Rack pads).
-        const double semitones = v.note - 60 + value(P::transpose) + value(P::detune) / 100.0 + 2.0 * bend;
+        const double semitones = v.note - 60 + value(P::transpose) + value(P::detune) / 100.0 + 2.0 * bend + slideOf(v);
         return fileRatio * std::exp2(semitones / 12.0);
     }
     double bendSteps = 0.0;
     double bendCents = 0.0;
     tuning.bendOffsets(bend, bendSteps, bendCents);
-    const double hz = tuning.hzAt(v.note + value(P::transpose) + bendSteps, value(P::detune) + bendCents);
+    const double hz = tuning.hzAt(v.note + value(P::transpose) + bendSteps + slideOf(v), value(P::detune) + bendCents);
     const double rootHz = std::max(1.0f, value(P::root));
     return hz > 0.0 ? fileRatio * hz / rootHz : 0.0;
 }
 
-void SamplerDevice::noteOn(int note, int velocity) noexcept
+void SamplerDevice::noteOn(int note, int velocity, int channel) noexcept
 {
     if (active == nullptr || active->object->sample == nullptr || switching)
         return;
@@ -398,7 +387,9 @@ void SamplerDevice::noteOn(int note, int velocity) noexcept
     v->killGain = 1.0f;
     v->killStep = 0.0f;
     v->oneShot = mode == Mode::OneShot;
+    v->sustained = false;
     v->note = note;
+    v->channel = channel;
     v->velocity = static_cast<float>(velocity) / 127.0f;
     v->age = ++noteCounter;
     v->pitched = pitched;
@@ -441,15 +432,15 @@ void SamplerDevice::noteOn(int note, int velocity) noexcept
     v->svf[1].reset();
 }
 
-void SamplerDevice::noteOff(int note) noexcept
+void SamplerDevice::noteOff(int note, int channel) noexcept
 {
     for (auto& v : voices)
     {
-        if (!v.active || v.note != note || !v.gate || v.oneShot || v.stealing)
+        if (!v.active || v.note != note || v.channel != channel || !v.gate || v.oneShot || v.stealing || v.sustained)
             continue;
         if (sustainDown)
         {
-            sustained[static_cast<std::size_t>(note & 127)] = true;
+            v.sustained = true;
             continue;
         }
         v.gate = false;
@@ -460,16 +451,19 @@ void SamplerDevice::noteOff(int note) noexcept
 void SamplerDevice::handleEvent(const TimedMidi& e) noexcept
 {
     const int status = e.bytes[0] & 0xf0;
+    if (perNote.handle(e))
+        return; // a per-note voice's slide: its rate follows each block
+    const int channel = PerNoteExpression::isPerNote(e) ? e.bytes[0] & 0x0f : -1;
     switch (status)
     {
     case 0x90:
         if (e.bytes[2] > 0)
-            noteOn(e.bytes[1], e.bytes[2]);
+            noteOn(e.bytes[1], e.bytes[2], channel);
         else
-            noteOff(e.bytes[1]);
+            noteOff(e.bytes[1], channel);
         break;
     case 0x80:
-        noteOff(e.bytes[1]);
+        noteOff(e.bytes[1], channel);
         break;
     case 0xe0:
         bend = std::clamp(static_cast<float>(((e.bytes[2] << 7) | e.bytes[1]) - 8192) / 8191.0f, -1.0f, 1.0f);
@@ -479,11 +473,12 @@ void SamplerDevice::handleEvent(const TimedMidi& e) noexcept
         {
             sustainDown = e.bytes[2] >= 64;
             if (!sustainDown)
-                for (int n = 0; n < 128; ++n)
-                    if (sustained[static_cast<std::size_t>(n)])
+                for (auto& v : voices)
+                    if (v.sustained)
                     {
-                        sustained[static_cast<std::size_t>(n)] = false;
-                        noteOff(n);
+                        v.sustained = false;
+                        v.gate = false;
+                        v.amp.noteOff();
                     }
         }
         else if (e.bytes[1] == 120)

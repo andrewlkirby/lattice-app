@@ -12,26 +12,9 @@ namespace
 {
 using P = SynthDevice::Param;
 
-juce::String percent(float v)
-{
-    return juce::String(juce::roundToInt(v * 100.0f)) + " %";
-}
-
-juce::String signedPercent(float v)
-{
-    const int p = juce::roundToInt(v * 100.0f);
-    return (p > 0 ? "+" : "") + juce::String(p) + " %";
-}
-
 juce::String octaves(float v)
 {
     return (v > 0.0f ? "+" : "") + juce::String(v, 2) + " oct";
-}
-
-juce::String panText(float v)
-{
-    const int p = juce::roundToInt(std::abs(v) * 50.0f);
-    return p == 0 ? juce::String("C") : juce::String(p) + (v < 0.0f ? "L" : "R");
 }
 
 ParameterSpec time(const char* id, const char* name, float def, float max = 20000.0f)
@@ -41,7 +24,7 @@ ParameterSpec time(const char* id, const char* name, float def, float max = 2000
 
 ParameterSpec level01(const char* id, const char* name, float def)
 {
-    return ParameterSpec::continuous(id, name, 0.0f, 1.0f, def, ParamUnit::Percent).withFormatter(percent);
+    return ParameterSpec::continuous(id, name, 0.0f, 1.0f, def, ParamUnit::Percent).shownAsPercent();
 }
 
 std::vector<ParameterSpec> makeSpecs()
@@ -71,7 +54,7 @@ std::vector<ParameterSpec> makeSpecs()
             group);
         set(base + 4,
             ParameterSpec::continuous(id("pw"), "Pulse Width", 0.02f, 0.98f, 0.5f, ParamUnit::Percent)
-                .withFormatter(percent),
+                .shownAsPercent(),
             group);
         set(base + 5, ParameterSpec::choice(id("table"), "Wavetable", tables, 0), group);
         set(base + 6, level01(id("position").toRawUTF8(), "Position", 0.0f), group);
@@ -139,7 +122,7 @@ std::vector<ParameterSpec> makeSpecs()
     }
 
     const juce::StringArray sources{"Off", "Env 2", "LFO 1", "LFO 2", "Velocity", "Aftertouch",
-                                    "Mod Wheel", "Key", "Amp Env", "Random"};
+                                    "Mod Wheel", "Key", "Amp Env", "Random", "Timbre"};
     const juce::StringArray dests{"Off",        "Pitch",      "Osc 1 Pitch", "Osc 2 Pitch", "Osc 1 PW",   "Osc 2 PW",
                                   "Osc 1 Pos",  "Osc 2 Pos",  "Osc 1 Level", "Osc 2 Level", "Cutoff",     "Resonance",
                                   "Pan",        "Amp",        "LFO 1 Rate",  "LFO 2 Rate",  "Noise Level", "Sub Level"};
@@ -150,7 +133,7 @@ std::vector<ParameterSpec> makeSpecs()
         set(base + 0, ParameterSpec::choice("mod" + n + ".source", "Source " + n, sources, 0), "Mod Matrix");
         set(base + 1, ParameterSpec::choice("mod" + n + ".dest", "Dest " + n, dests, 0), "Mod Matrix");
         set(base + 2,
-            ParameterSpec::continuous("mod" + n + ".amount", "Amount " + n, -1.0f, 1.0f, 0.0f).withFormatter(signedPercent),
+            ParameterSpec::continuous("mod" + n + ".amount", "Amount " + n, -1.0f, 1.0f, 0.0f).shownAsPercent(0, true),
             "Mod Matrix");
     }
 
@@ -163,7 +146,7 @@ std::vector<ParameterSpec> makeSpecs()
     set(P::outVolume,
         ParameterSpec::continuous("out.volume", "Volume", -70.0f, 6.0f, -6.0f, ParamUnit::Decibels).withCentre(-12.0f),
         "Output");
-    set(P::outPan, ParameterSpec::continuous("out.pan", "Pan", -1.0f, 1.0f, 0.0f).withFormatter(panText), "Output");
+    set(P::outPan, ParameterSpec::continuous("out.pan", "Pan", -1.0f, 1.0f, 0.0f).shownAsPan(), "Output");
     set(P::tuningMode, ParameterSpec::choice("voice.tuning", "Tuning", {"Track", "Fixed (12-TET)", "Nearest Step"}, 0), "Voice");
     return s;
 }
@@ -220,6 +203,8 @@ void SynthDevice::reset() noexcept
     monoCount = 0;
     sustainDown = false;
     bend = 0.0f;
+    timbre = 0.0f;
+    perNote.reset();
     lastPitch = -1.0;
 }
 
@@ -390,11 +375,12 @@ SynthDevice::Voice* SynthDevice::allocateVoice() noexcept
     return oldest;
 }
 
-void SynthDevice::startVoice(Voice& v, int note, float velocity, int channel, bool retrigger) noexcept
+void SynthDevice::startVoice(Voice& v, int note, float velocity, int channel, bool retrigger, bool isPerNote) noexcept
 {
     const bool fresh = !v.isActive() || v.stealing;
     v.note = note;
     v.channel = channel;
+    v.perNote = isPerNote;
     v.velocity = velocity;
     v.gate = v.keyDown = true;
     v.stealing = false;
@@ -459,13 +445,13 @@ int SynthDevice::heldNoteForMono() const noexcept
     return monoCount > 0 ? monoStack[static_cast<std::size_t>(monoCount - 1)] : -1;
 }
 
-void SynthDevice::noteOn(int note, int velocity, int channel) noexcept
+void SynthDevice::noteOn(int note, int velocity, int channel, bool isPerNote) noexcept
 {
     const float vel = static_cast<float>(velocity) / 127.0f;
     if (patch.mode == VoiceMode::Poly)
     {
         if (auto* v = allocateVoice())
-            startVoice(*v, note, vel, channel, true);
+            startVoice(*v, note, vel, channel, true, isPerNote);
         return;
     }
 
@@ -494,7 +480,7 @@ void SynthDevice::noteOn(int note, int velocity, int channel) noexcept
         // Glide from where the voice is now.
         lastPitch = v.pitch;
     }
-    startVoice(v, note, vel, channel, !legato);
+    startVoice(v, note, vel, channel, !legato, isPerNote);
 }
 
 void SynthDevice::noteOff(int note, int channel) noexcept
@@ -516,7 +502,7 @@ void SynthDevice::noteOff(int note, int channel) noexcept
         {
             // Back to the key still held, gliding, without retriggering.
             lastPitch = v.pitch;
-            startVoice(v, heldNoteForMono(), v.velocity, channel, false);
+            startVoice(v, heldNoteForMono(), v.velocity, v.channel, false, v.perNote);
             return;
         }
         v.keyDown = false;
@@ -561,11 +547,13 @@ void SynthDevice::handleEvent(const TimedMidi& e, const DeviceTimeInfo&) noexcep
 {
     const int status = e.bytes[0] & 0xf0;
     const int channel = e.bytes[0] & 0x0f;
+    if (perNote.handle(e))
+        return;
     switch (status)
     {
     case 0x90:
         if (e.bytes[2] > 0)
-            noteOn(e.bytes[1], e.bytes[2], channel);
+            noteOn(e.bytes[1], e.bytes[2], channel, PerNoteExpression::isPerNote(e));
         else
             noteOff(e.bytes[1], channel);
         break;
@@ -586,6 +574,8 @@ void SynthDevice::handleEvent(const TimedMidi& e, const DeviceTimeInfo&) noexcep
     case 0xb0:
         if (e.bytes[1] == 1)
             modWheel = static_cast<float>(e.bytes[2]) / 127.0f;
+        else if (e.bytes[1] == 74)
+            timbre = static_cast<float>(e.bytes[2]) / 127.0f;
         else if (e.bytes[1] == 64)
             setSustain(e.bytes[2] >= 64);
         else if (e.bytes[1] == 120)
@@ -750,7 +740,8 @@ void SynthDevice::renderVoiceBlock(Voice& v, int start, int m, const DeviceTimeI
                 {
                 case ModSource::Env2: src = env2Value; break;
                 case ModSource::Velocity: src = v.velocity; break;
-                case ModSource::Aftertouch: src = std::max(channelPressure, v.pressure); break;
+                case ModSource::Aftertouch: src = pressureOf(v); break;
+                case ModSource::Timbre: src = timbreOf(v); break;
                 case ModSource::ModWheel: src = modWheel; break;
                 case ModSource::Key: src = static_cast<float>((v.pitch - 60.0) / 48.0); break;
                 case ModSource::AmpEnv: src = v.amp.currentValue(); break;
@@ -787,7 +778,8 @@ void SynthDevice::renderVoiceBlock(Voice& v, int start, int m, const DeviceTimeI
             case ModSource::Lfo1: src = lfoValue[0]; break;
             case ModSource::Lfo2: src = lfoValue[1]; break;
             case ModSource::Velocity: src = v.velocity; break;
-            case ModSource::Aftertouch: src = std::max(channelPressure, v.pressure); break;
+            case ModSource::Aftertouch: src = pressureOf(v); break;
+            case ModSource::Timbre: src = timbreOf(v); break;
             case ModSource::ModWheel: src = modWheel; break;
             case ModSource::Key: src = static_cast<float>((v.pitch - 60.0) / 48.0); break;
             case ModSource::AmpEnv: src = v.amp.currentValue(); break;
@@ -828,7 +820,9 @@ void SynthDevice::renderVoiceBlock(Voice& v, int start, int m, const DeviceTimeI
             }
             notePitch = v.snappedTo;
         }
-        const double basePitch = notePitch + bendSteps + 24.0 * mod(ModDest::Pitch);
+        // A per-note voice's own bend (its slide) on top of the channel's.
+        const double slide = v.perNote ? perNote.steps(v.channel) : 0.0;
+        const double basePitch = notePitch + bendSteps + slide + 24.0 * mod(ModDest::Pitch);
 
         std::uint32_t targetInc[2][maxUnison]{};
         dsp::MipmappedWave::Position at[2][maxUnison]{};

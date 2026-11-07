@@ -1,13 +1,12 @@
 #pragma once
 
 #include "core/RealtimeCheck.h"
+#include "core/RtFifo.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
-#include <array>
 #include <atomic>
 #include <cstdint>
-#include <mutex>
 
 namespace lattice
 {
@@ -21,44 +20,67 @@ struct TimedMidi
     /** Where live input came from: computerKeyboardSource (the computer and on-screen keyboards)
         or a MIDI input's number (AudioEngine::midiSourceFor). Unused for other events. */
     std::uint8_t source = 0;
+    /** perNote: a channel message on an MPE member channel (docs/06-m5-controllers.md, 5g): its
+        pitch bend, pressure and CC 74 (timbre) belong to the notes started with the flag on that
+        channel only, the bend over perNoteBendSteps. Without it a channel message is the
+        channel's, as it always was. */
+    std::uint8_t flags = 0;
+    static constexpr std::uint8_t perNote = 1;
+    /** Live input meant for one track only (a control surface keeping its own selection,
+        docs/06-m5-controllers.md, 5g): the low 32 bits of that track's ID. 0: the tracks that
+        listen to the source (armed, or monitoring In). */
+    std::uint32_t target = 0;
 };
+
+/** A per-note pitch bend's range either way, in table steps (semitones on 12-TET): MPE's
+    default for member channels. */
+inline constexpr double perNoteBendSteps = 48.0;
 
 /** The source number of the computer and on-screen keyboards. */
 inline constexpr std::uint8_t computerKeyboardSource = 0;
 
 /** Live MIDI from any number of producer threads (MIDI input callbacks, the on-screen and computer
-    keyboards) to the audio thread.
+    keyboards, a control surface's input thread) to the audio thread.
 
-    Producers serialise among themselves with a mutex, which only non-real-time threads ever take;
-    the audio thread is the single consumer of a lock-free FIFO, so it never locks or allocates.
-    Replaces juce::MidiMessageCollector, which locks and can allocate on the audio thread.
-    Only short messages are carried (SysEx is ignored). */
+    Lock-free on both sides (MpscQueue): a producer never waits for another one or for the audio
+    thread, so a pad press on a controller's thread goes straight in (docs/06-m5-controllers.md,
+    5b). Each message keeps when it arrived, so the engine plays it at the matching sample of the
+    next block. Only short messages are carried (SysEx is ignored). */
 class MidiInputQueue
 {
 public:
     static constexpr int capacity = 2048;
 
-    /** Any thread except the audio thread. Returns false (and counts a drop) if the queue is full
-        or the message is not a short message. */
-    bool push(const juce::MidiMessage& message, std::uint8_t source = computerKeyboardSource);
+    /** Any thread. Returns false (and counts a drop) if the queue is full or the message is not a
+        short message. arrivalSeconds: when it happened, on nowSeconds()'s clock (default: now). */
+    bool push(const juce::MidiMessage& message, std::uint8_t source = computerKeyboardSource,
+              double arrivalSeconds = -1.0) noexcept;
+    /** The same from raw bytes (1 to 3), without a juce::MidiMessage. Real-time safe. target: a
+        track's (TimedMidi::target), or 0; flags: TimedMidi's. */
+    bool push(const std::uint8_t* bytes, int size, std::uint8_t source, double arrivalSeconds = -1.0,
+              std::uint32_t target = 0, std::uint8_t flags = 0) noexcept LATTICE_NONBLOCKING;
 
-    /** Audio thread. Moves up to maxEvents queued messages into out, all at sampleOffset 0 (live
-        input is played as soon as it arrives). Returns how many were written. If arrivalSeconds is
-        given, it receives when each message was pushed (steady-clock seconds; see nowSeconds()),
-        for the input latency probe. */
+    /** Audio thread. Moves up to maxEvents queued messages into out (sampleOffset 0; the engine
+        places them). Returns how many were written. If arrivalSeconds is given, it receives when
+        each message arrived. */
     int popInto(TimedMidi* out, int maxEvents, double* arrivalSeconds = nullptr) noexcept LATTICE_NONBLOCKING;
 
     /** The clock arrival times are measured with (std::chrono::steady_clock, in seconds). */
-    static double nowSeconds() noexcept;
+    static double nowSeconds() noexcept LATTICE_NONBLOCKING;
 
-    std::uint32_t droppedCount() const noexcept { return dropped.load(std::memory_order_relaxed); }
+    std::uint32_t droppedCount() const noexcept
+    {
+        return dropped.load(std::memory_order_relaxed) + fifo.droppedCount();
+    }
 
 private:
-    std::mutex producerMutex;
-    juce::AbstractFifo fifo{capacity};
-    std::array<TimedMidi, capacity> buffer{};
-    std::array<double, capacity> arrivals{};
-    std::atomic<std::uint32_t> dropped{0};
+    struct Entry
+    {
+        TimedMidi event;
+        double arrival = 0.0;
+    };
+    MpscQueue<Entry> fifo{capacity};
+    std::atomic<std::uint32_t> dropped{0}; // not short messages
 };
 
 } // namespace lattice

@@ -18,7 +18,6 @@ std::vector<ParameterSpec> makeSpecs()
         spec.group = group;
         s[static_cast<std::size_t>(index)] = std::move(spec);
     };
-    const auto pct = [](float v) { return juce::String(juce::roundToInt(v * 100.0f)) + " %"; };
     set(P::mode, ParameterSpec::choice("delay.mode", "Mode", {"Stereo", "Ping-Pong"}, 0), "Delay");
     set(P::sync, ParameterSpec::toggle("delay.sync", "Sync", true), "Delay");
     set(P::syncLeft, ParameterSpec::choice("delay.syncLeft", "Time L", dsp::SyncRates::names(), dsp::SyncRates::indexOf("1/8")),
@@ -33,7 +32,7 @@ std::vector<ParameterSpec> makeSpecs()
         "Delay");
     set(P::link, ParameterSpec::toggle("delay.link", "Link", false), "Delay");
     set(P::feedback,
-        ParameterSpec::continuous("delay.feedback", "Feedback", 0.0f, 1.0f, 0.4f, ParamUnit::Percent).withFormatter(pct),
+        ParameterSpec::continuous("delay.feedback", "Feedback", 0.0f, 1.0f, 0.4f, ParamUnit::Percent).shownAsPercent(),
         "Delay");
     set(P::lowCut,
         ParameterSpec::continuous("delay.lowCut", "Low Cut", 20.0f, 2000.0f, 50.0f, ParamUnit::Hz).withCentre(200.0f),
@@ -46,7 +45,7 @@ std::vector<ParameterSpec> makeSpecs()
     set(P::modDepth,
         ParameterSpec::continuous("delay.modDepth", "Mod Depth", 0.0f, 10.0f, 0.0f, ParamUnit::Milliseconds), "Modulation");
     set(P::freeze, ParameterSpec::toggle("delay.freeze", "Freeze", false), "Modulation");
-    set(P::mix, ParameterSpec::continuous("delay.mix", "Dry/Wet", 0.0f, 1.0f, 0.5f, ParamUnit::Percent).withFormatter(pct),
+    set(P::mix, ParameterSpec::continuous("delay.mix", "Dry/Wet", 0.0f, 1.0f, 0.5f, ParamUnit::Percent).shownAsPercent(),
         "Modulation");
     return s;
 }

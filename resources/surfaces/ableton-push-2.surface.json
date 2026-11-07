@@ -1,0 +1,14 @@
+{
+  "lattice": "surface",
+  "version": 1,
+  "name": "Ableton Push 2",
+  "manufacturer": "Ableton",
+  "verified": false,
+  "driver": "push2",
+  "source": "Ableton Push 2 MIDI and Display Interface Manual, revision 1.1 (github.com/Ableton/push-interface): the Live port's names on each system.",
+  "notes": "Unverified: written from Ableton's manual, not yet tried on a device. Lattice drives Push itself (its pads, buttons, encoders, lights and display): this file only says which ports are Push's Live port. The User port (MIDIIN2 on Windows) is left for other programs. The Linux names are the manual's and ALSA's usual ones, still to be checked.",
+  "ports": {
+    "input": ["^Ableton Push 2( \d+)?$", "^Ableton Push 2 Live Port", "^Ableton Push 2.*:0$", "^Ableton Push 2 MIDI 1$"],
+    "output": ["^Ableton Push 2( \d+)?$", "^Ableton Push 2 Live Port", "^Ableton Push 2.*:0$", "^Ableton Push 2 MIDI 1$"]
+  }
+}

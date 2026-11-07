@@ -30,6 +30,7 @@ option(LATTICE_RTSAN "Build with Clang's real-time sanitizer (-fsanitize=realtim
 option(LATTICE_TSAN "Build with ThreadSanitizer (-fsanitize=thread) to find data races" OFF)
 option(LATTICE_BUILD_APP "Build the Lattice GUI app" ON)
 option(LATTICE_BUILD_TESTS "Build the unit tests" ON)
+option(LATTICE_PUSH_USB "Build libusb in, for Ableton Push's display" ON)
 
 lattice_set_global_codegen()
 
@@ -113,6 +114,10 @@ else()
 endif()
 set_target_properties(lattice_sqlite PROPERTIES FOLDER "Dependencies" POSITION_INDEPENDENT_CODE ON)
 
+if(LATTICE_PUSH_USB)
+    include(Libusb)
+endif()
+
 # --- lattice_juce: every JUCE module, compiled exactly once ---------------------------------------
 # JUCE modules are INTERFACE libraries that add their sources to whatever links them. Linking them
 # PRIVATE here and re-exporting only their include paths and definitions means the app and the
@@ -173,13 +178,14 @@ target_compile_definitions(lattice_juce
 set_target_properties(lattice_juce PROPERTIES FOLDER "Dependencies")
 
 # --- Embedded resources ----------------------------------------------------------------------------
-# The Colundi table and the factory presets are compiled in, so the app works without the files on
+# The Colundi table, the factory presets and the surface definitions are compiled in, so the app works without the files on
 # disk. The presets are generated (tests/support/FactoryPresets.h).
 file(GLOB LATTICE_FACTORY_PRESETS CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/resources/presets/*.lpreset)
+file(GLOB LATTICE_SURFACE_DEFINITIONS CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/resources/surfaces/*.surface.json)
 juce_add_binary_data(lattice_binary_data
     HEADER_NAME LatticeBinaryData.h
     NAMESPACE LatticeResources
-    SOURCES resources/tunings/colundi_scale.txt ${LATTICE_FACTORY_PRESETS})
+    SOURCES resources/tunings/colundi_scale.txt ${LATTICE_FACTORY_PRESETS} ${LATTICE_SURFACE_DEFINITIONS})
 # Plain data needs no link-time optimisation (and MSVC's LTCG has crashed generating it).
 set_target_properties(lattice_binary_data PROPERTIES FOLDER "Dependencies" POSITION_INDEPENDENT_CODE ON
                                                      INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
@@ -304,6 +310,32 @@ endif()
 
 # --- UI (M4, docs/05-m4-ui.md): a library, so the tests can drive the views headless ---------------
 add_library(lattice_ui STATIC
+    src/ui/controllers/LearnWizard.cpp
+    src/ui/controllers/SurfaceLearner.cpp
+    src/ui/controllers/SurfaceManager.cpp
+    src/control/display/DisplayRenderer.cpp
+    src/control/generic/Encoding.cpp
+    src/control/generic/GenericMidiDriver.cpp
+    src/control/push/PushDisplay.cpp
+    src/control/push/PushDriver.cpp
+    src/control/push/PushPalette.cpp
+    src/control/push/PushProtocol.cpp
+    src/control/push/PushUsb.cpp
+    src/control/generic/SurfaceDefinition.cpp
+    src/control/modes/DeviceMode.cpp
+    src/control/modes/MixMode.cpp
+    src/control/modes/StepSequencer.cpp
+    src/control/modes/ClipMode.cpp
+    src/control/modes/BrowseMode.cpp
+    src/control/modes/NoteLayout.cpp
+    src/control/modes/NoteMode.cpp
+    src/control/modes/SessionMode.cpp
+    src/control/surface/EncoderBank.cpp
+    src/control/surface/PadPlayer.cpp
+    src/control/surface/Presets.cpp
+    src/control/surface/Surface.cpp
+    src/control/surface/SurfaceController.cpp
+    src/control/virtual/VirtualPush.cpp
     src/ui/browser/BrowserModel.cpp
     src/ui/browser/BrowserView.cpp
     src/ui/clip/ClipCommands.cpp
@@ -311,6 +343,9 @@ add_library(lattice_ui STATIC
     src/ui/clip/ClipPropertiesPanel.cpp
     src/ui/clip/ClipView.cpp
     src/ui/clip/NoteEdits.cpp
+    src/ui/clip/Steps.cpp
+    src/ui/clip/ClipBindings.cpp
+    src/ui/clip/ClipActions.cpp
     src/ui/clip/NoteGrid.cpp
     src/ui/clip/PianoRoll.cpp
     src/ui/clip/PianoRollLayout.cpp
@@ -352,6 +387,7 @@ add_library(lattice_ui STATIC
     src/ui/find/FindView.cpp
     src/ui/mapping/MapOverlay.cpp
     src/ui/mapping/Mappings.cpp
+    src/ui/mapping/Targets.cpp
     src/ui/prefs/AppSettings.cpp
     src/ui/prefs/PreferencesView.cpp
     src/ui/theme/Theme.cpp
@@ -366,10 +402,15 @@ add_library(lattice_ui STATIC
     src/ui/widgets/Knob.cpp
     src/ui/widgets/Meter.cpp
     src/ui/widgets/NumberBox.cpp
+    src/ui/widgets/Painting.cpp
     src/ui/widgets/Toggle.cpp
     src/ui/widgets/ValueBinding.cpp)
 target_include_directories(lattice_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(lattice_ui PUBLIC lattice_core)
+target_link_libraries(lattice_ui PUBLIC lattice_core PRIVATE lattice_binary_data) # the surface definitions
+if(LATTICE_PUSH_USB)
+    target_link_libraries(lattice_ui PRIVATE lattice_libusb)
+    set_source_files_properties(src/control/push/PushUsb.cpp PROPERTIES COMPILE_DEFINITIONS LATTICE_LIBUSB=1)
+endif()
 lattice_set_warnings(lattice_ui)
 
 # --- The window's content (M4): a library, so the tests can drive the whole app headless ----------

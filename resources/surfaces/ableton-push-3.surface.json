@@ -1,0 +1,14 @@
+{
+  "lattice": "surface",
+  "version": 1,
+  "name": "Ableton Push 3",
+  "manufacturer": "Ableton",
+  "verified": false,
+  "driver": "push3",
+  "source": "Ableton's Push 2 manual (github.com/Ableton/push-interface), taken as Push 3's in controller mode; its USB product ID (0x1969) from community captures.",
+  "notes": "Unverified: Ableton hasn't published Push 3's protocol. Lattice drives it as a Push 2 until a unit shows the differences (its MPE pads, the jog wheel and its new buttons wait for that). The port names are guessed from Push 2's.",
+  "ports": {
+    "input": ["^Ableton Push 3( \d+)?$", "^Ableton Push 3 Live Port", "^Ableton Push 3.*:0$", "^Ableton Push 3 MIDI 1$"],
+    "output": ["^Ableton Push 3( \d+)?$", "^Ableton Push 3 Live Port", "^Ableton Push 3.*:0$", "^Ableton Push 3 MIDI 1$"]
+  }
+}

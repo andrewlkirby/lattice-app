@@ -6,34 +6,32 @@
 namespace lattice
 {
 
-bool MidiInputQueue::push(const juce::MidiMessage& message, std::uint8_t source)
+bool MidiInputQueue::push(const juce::MidiMessage& message, std::uint8_t source, double arrivalSeconds) noexcept
 {
-    RT_ASSERT_NOT_AUDIO_THREAD();
-
-    const int size = message.getRawDataSize();
-    if (size < 1 || size > 3 || message.isSysEx())
+    if (message.isSysEx())
     {
         dropped.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
+    return push(message.getRawData(), message.getRawDataSize(), source, arrivalSeconds);
+}
 
-    TimedMidi event;
-    event.size = static_cast<std::uint8_t>(size);
-    event.source = source;
-    std::copy_n(message.getRawData(), size, event.bytes);
-
-    const double arrival = nowSeconds();
-    const std::scoped_lock lock(producerMutex);
-    const auto scope = fifo.write(1);
-    if (scope.blockSize1 + scope.blockSize2 < 1)
+bool MidiInputQueue::push(const std::uint8_t* bytes, int size, std::uint8_t source, double arrivalSeconds,
+                          std::uint32_t target, std::uint8_t flags) noexcept
+{
+    if (size < 1 || size > 3 || bytes[0] == 0xf0)
     {
         dropped.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
-    const auto index = static_cast<std::size_t>(scope.blockSize1 > 0 ? scope.startIndex1 : scope.startIndex2);
-    buffer[index] = event;
-    arrivals[index] = arrival;
-    return true;
+    Entry entry;
+    entry.event.size = static_cast<std::uint8_t>(size);
+    entry.event.source = source;
+    entry.event.target = target;
+    entry.event.flags = flags;
+    std::copy_n(bytes, size, entry.event.bytes);
+    entry.arrival = arrivalSeconds >= 0.0 ? arrivalSeconds : nowSeconds();
+    return fifo.push(entry);
 }
 
 double MidiInputQueue::nowSeconds() noexcept
@@ -43,18 +41,14 @@ double MidiInputQueue::nowSeconds() noexcept
 
 int MidiInputQueue::popInto(TimedMidi* out, int maxEvents, double* arrivalSeconds) noexcept
 {
-    const auto scope = fifo.read(juce::jmin(maxEvents, fifo.getNumReady()));
     int written = 0;
-    const auto take = [&](int index) {
-        const auto i = static_cast<std::size_t>(index);
+    Entry entry;
+    while (written < maxEvents && fifo.pop(entry))
+    {
         if (arrivalSeconds != nullptr)
-            arrivalSeconds[written] = arrivals[i];
-        out[written++] = buffer[i];
-    };
-    for (int i = 0; i < scope.blockSize1; ++i)
-        take(scope.startIndex1 + i);
-    for (int i = 0; i < scope.blockSize2; ++i)
-        take(scope.startIndex2 + i);
+            arrivalSeconds[written] = entry.arrival;
+        out[written++] = entry.event;
+    }
     return written;
 }
 

@@ -27,6 +27,7 @@ public:
         std::uint8_t status = 0;
         std::uint8_t data1 = 0;
         std::uint8_t data2 = 0;
+        std::uint8_t flags = 0; // TimedMidi's (perNote: an MPE member channel's)
     };
 
     explicit DeviceHarness(StudioDevice& d, int maxBlock = 512) : device(d), blockLimit(maxBlock)
@@ -38,18 +39,24 @@ public:
         right.assign(static_cast<std::size_t>(maxBlock), 0.0f);
     }
 
-    void noteOn(std::int64_t at, int note, int velocity = 100, int channel = 0)
+    void noteOn(std::int64_t at, int note, int velocity = 100, int channel = 0, std::uint8_t flags = 0)
     {
         add({at, static_cast<std::uint8_t>(0x90 | channel), static_cast<std::uint8_t>(note),
-             static_cast<std::uint8_t>(velocity)});
+             static_cast<std::uint8_t>(velocity), flags});
     }
-    void noteOff(std::int64_t at, int note, int channel = 0)
+    void noteOff(std::int64_t at, int note, int channel = 0, std::uint8_t flags = 0)
     {
-        add({at, static_cast<std::uint8_t>(0x80 | channel), static_cast<std::uint8_t>(note), 0});
+        add({at, static_cast<std::uint8_t>(0x80 | channel), static_cast<std::uint8_t>(note), 0, flags});
     }
-    void controller(std::int64_t at, int cc, int value)
+    void controller(std::int64_t at, int cc, int value, int channel = 0, std::uint8_t flags = 0)
     {
-        add({at, 0xb0, static_cast<std::uint8_t>(cc), static_cast<std::uint8_t>(value)});
+        add({at, static_cast<std::uint8_t>(0xb0 | channel), static_cast<std::uint8_t>(cc), static_cast<std::uint8_t>(value), flags});
+    }
+    /** A pitch bend, -1..1. */
+    void bend(std::int64_t at, double amount, int channel = 0, std::uint8_t flags = 0)
+    {
+        const int v = std::clamp(8192 + static_cast<int>(std::lround(amount * 8191.0)), 0, 16383);
+        add({at, static_cast<std::uint8_t>(0xe0 | channel), static_cast<std::uint8_t>(v & 0x7f), static_cast<std::uint8_t>(v >> 7), flags});
     }
     void add(const Event& e)
     {
@@ -70,6 +77,8 @@ public:
             {
                 const auto& e = events[nextEvent++];
                 midiIn.add(static_cast<int>(std::max<std::int64_t>(0, e.sample - position)), e.status, e.data1, e.data2);
+                if (midiIn.count > 0)
+                    midiIn.events[midiIn.count - 1].flags = e.flags;
             }
             float* channels[2] = {left.data(), right.data()};
             if (inputSignal)

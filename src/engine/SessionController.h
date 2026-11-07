@@ -12,6 +12,7 @@
 #include <array>
 #include <deque>
 #include <map>
+#include <optional>
 #include <memory>
 #include <vector>
 
@@ -38,6 +39,8 @@ public:
                       const DeviceRegistry& devices = DeviceRegistry::builtin());
     ~SessionController() override;
 
+    AudioEngine& audioEngine() noexcept { return engine; }
+    TuningRegistry& tunings() noexcept { return registry; }
     LiveSet& set() noexcept { return liveSet; }
     const LiveSet& set() const noexcept { return liveSet; }
     juce::UndoManager& undoManager() noexcept { return undo; }
@@ -71,6 +74,17 @@ public:
     void launchSlot(int trackIndex, int sceneIndex);
     /** Releasing a slot's launch button (Gate clips). */
     void releaseSlot(int trackIndex, int sceneIndex);
+    /** What pressing a slot's launch button sends, when it can go straight to the engine from a
+        controller's input thread (docs/06-m5-controllers.md, "Fast path for pads"): launching a
+        clip (and releasing it, for Gate clips), or the slot's stop button. Nothing when the press
+        needs this controller: a group's slot, or starting or ending a recording. The commands
+        refer to the snapshot published now, so this flushes first. */
+    struct DirectLaunch
+    {
+        EngineCommand down;
+        std::optional<EngineCommand> up;
+    };
+    std::optional<DirectLaunch> directLaunch(int trackIndex, int sceneIndex);
     void launchScene(int sceneIndex);
     void stopTrack(int trackIndex);
     void stopAllClips();

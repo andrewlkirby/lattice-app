@@ -21,7 +21,7 @@ std::vector<ParameterSpec> makeSpecs()
     {
         const juce::String n(i);
         s.push_back(ParameterSpec::continuous("chord.velocity" + n, "Velocity " + n, 0.0f, 2.0f, 1.0f, ParamUnit::Percent)
-                        .withFormatter([](float v) { return juce::String(juce::roundToInt(v * 100.0f)) + " %"; })
+                        .shownAsPercent()
                         .inGroup("Velocities"));
     }
     return s;

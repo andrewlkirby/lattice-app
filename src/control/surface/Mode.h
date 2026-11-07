@@ -1,0 +1,162 @@
+#pragma once
+
+#include "control/surface/EncoderBank.h"
+#include "control/surface/PadPlayer.h"
+#include "control/surface/Surface.h"
+#include "engine/SessionController.h"
+#include "ui/commands/CommandRegistry.h"
+#include "ui/feed/EngineStateFeed.h"
+#include "ui/session/SessionSelectionModel.h"
+
+namespace lattice::control
+{
+
+class BrowseHost;
+
+/** The beat LED animations follow: the transport's while it plays, otherwise the set's tempo on
+    the clock, so a stopped set still blinks in time. Every device and Virtual Push use it, so
+    they move together. Message thread. */
+inline double animationBeat(const ui::EngineStateFeed& feed)
+{
+    const auto& transport = feed.transport();
+    if (transport.playing)
+        return transport.beat;
+    return juce::Time::getMillisecondCounterHiRes() * 0.001 * transport.tempo / 60.0;
+}
+
+/** What the modes act on and read: the same commands, session, selection and live state as the
+    window (docs/06-m5-controllers.md, "SurfaceController and ModeStack"). */
+struct SurfaceContext
+{
+    SessionController& session;
+    ui::CommandRegistry& commands;
+    ui::SessionSelectionModel& selection;
+    ui::EngineStateFeed& feed;
+    /** The device descriptions the window uses (null: the controller keeps its own). */
+    DeviceSpecs* specs = nullptr;
+    /** The window's browser, for Browse mode (null: no Browse mode). */
+    BrowseHost* browser = nullptr;
+};
+
+/** The colours the LEDs use for states (0xRRGGBB): the theme's, so a pad and the Session view
+    agree. Clip, track and scene colours come from the set. */
+struct SurfaceColours
+{
+    std::uint32_t play = 0x3cc85a;
+    std::uint32_t record = 0xe5383b;
+    std::uint32_t white = 0xd8d8d8;
+    std::uint32_t mute = 0xe0b030;  // a track that's on (lit when the track plays)
+    std::uint32_t solo = 0x3d8de0;
+    std::uint32_t arm = 0xe5383b;
+    float dim = 0.3f;               // how bright an available but inactive button is
+    float padDim = 0.22f;           // how bright a note pad outside the key or highlight is
+};
+
+enum class ModeKind : std::uint8_t
+{
+    session,
+    note,
+    device,
+    mix,
+    browse,
+    clip
+};
+
+/** What a mode can ask of the controller it runs in. */
+class ModeHost
+{
+public:
+    virtual ~ModeHost() = default;
+    virtual const SurfaceCapabilities& capabilities() const = 0;
+    virtual SurfaceContext& context() = 0;
+    virtual const SurfaceColours& colours() const = 0;
+    virtual bool isHeld(ButtonId id) const = 0;
+    bool isHeld(Role role) const { return isHeld(ButtonId{role, 0}); }
+    bool shiftHeld() const { return isHeld(Role::shift); }
+    /** Whether this surface moves the shared selection (and follows it), or keeps its own. */
+    virtual bool followsSelection() const = 0;
+    /** Something the LEDs show changed outside the feed and the set (a hold, the box). */
+    virtual void requestRefresh() = 0;
+    /** The track a track button (or a lower display button) selects, from the Session box: -1
+        for none. */
+    virtual int trackOfColumn(int column) const = 0;
+    /** The settings the pads play with (the strip's mode, pressure). */
+    virtual const Expression& expression() const = 0;
+
+    /** The encoders: what each controls, and their gestures (5c). */
+    virtual EncoderBank& encoders() = 0;
+    virtual DeviceSpecs& specs() = 0;
+    /** Up to `count` tracks from the Session box's first column on (as the Session view shows
+        them): the tracks Mix mode's encoders control. */
+    virtual std::vector<int> tracksInView(int count) const = 0;
+    /** Moves the Session box across by a number of tracks (Mix mode's banks). */
+    virtual void scrollTracks(int columns) = 0;
+    /** What a track button does (Session mode's: select, or stop, mute or solo with those held). */
+    virtual void pressTrack(int track) = 0;
+    /** The light of a button that does that. */
+    virtual LedState trackLed(int track) const = 0;
+};
+
+/** One mode (Session, Note, Device...). Modes are plain classes: tests drive them headlessly
+    through FakeSurface. Message thread.
+
+    Session and Note are pad modes: they own the grid. Device and Mix own the encoders, the
+    display and the buttons along it, and leave the grid to the pad mode under them; on a device
+    without encoders they take the grid instead, its columns as faders (docs/06-m5-controllers.md,
+    "Graceful degradation"). */
+class Mode
+{
+public:
+    explicit Mode(ModeHost& h) : host(h) {}
+    virtual ~Mode() = default;
+
+    virtual ModeKind kind() const = 0;
+    /** Input the controller didn't take itself (the global buttons). True if this mode used it. */
+    virtual bool handle(const SurfaceInput& input) = 0;
+    /** Fills in the pads and the buttons this mode uses (the controller has already drawn the
+        global buttons; a mode may draw over them). */
+    virtual void render(LedFrame& frame) = 0;
+
+    virtual void enter() {}
+    virtual void leave() {}
+    /** The shared selection changed (only called while following it). */
+    virtual void selectionChanged() {}
+    /** The feed's aspects this mode's LEDs show (the controller refreshes when any changes). */
+    virtual std::uint32_t aspects() const { return ui::EngineStateFeed::transportAspect | ui::EngineStateFeed::slotsAspect; }
+    /** What the pads do on the fast path (the controller has made it empty and sized; a mode
+        fills in its pads and the buttons that change them). Default: everything goes to handle(). */
+    virtual void padMap(PadNoteMap&) {}
+    /** The pads' labels and the status line. */
+    virtual void describe(SurfaceText&) {}
+    /** What each encoder controls (an address each, ValueBinding::target), worked out on every
+        refresh: the controller's EncoderBank turns them. Default: nothing. */
+    virtual void encoderTargets(std::vector<juce::String>&) {}
+    /** What the display shows (only asked of a device that has one). */
+    virtual void display(DisplayFrame&) {}
+    /** A pad mode that takes the encoders and the display for now (held steps), from the
+        encoder mode: the controller then asks it for their targets and the display. */
+    virtual bool ownsEncoders() const { return false; }
+
+protected:
+    ModeHost& host;
+    SurfaceContext& ctx() { return host.context(); }
+    const SurfaceCapabilities& caps() const { return host.capabilities(); }
+    /** A button's index in the frame, or -1 if the device has none. */
+    int buttonIndex(ButtonId id) const { return caps().indexOf(id); }
+    void setButton(LedFrame& frame, ButtonId id, LedState state) const
+    {
+        if (const int i = buttonIndex(id); i >= 0)
+            frame.buttons[static_cast<std::size_t>(i)] = state;
+    }
+    /** Names what a button does now (a scene button choosing a page, say) for Virtual Push. */
+    void labelButton(SurfaceText& text, ButtonId id, const juce::String& label) const
+    {
+        if (const int i = buttonIndex(id); i >= 0)
+        {
+            text.buttons.resize(caps().buttons.size());
+            text.buttons[static_cast<std::size_t>(i)] = label;
+        }
+    }
+};
+
+} // namespace lattice::control

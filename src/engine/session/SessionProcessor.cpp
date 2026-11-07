@@ -711,28 +711,47 @@ void SessionProcessor::routeLiveInput(const EngineSnapshot& snapshot, const Time
 {
     if (numInput <= 0)
         return;
-    const double beat = clock.beatAt(sample);
 
     for (const auto& t : snapshot.tracks)
     {
         // Heard: monitoring In, or Auto while armed. Recorded: while armed, whatever the
         // monitoring. Either way only what comes from the track's input and channel.
+        // Input meant for one track (a surface keeping its own selection) goes to that track
+        // alone, whatever its input, and is heard unless its monitoring is Off.
         const bool hear = t.monitoring == Monitoring::In || (t.monitoring == Monitoring::Auto && t.arm);
-        if ((!hear && !t.arm) || t.isGroup)
+        if (t.isGroup)
             continue;
+        const auto id = static_cast<std::uint32_t>(t.id);
         auto& sink = t.processor->events();
         auto& st = t.processor->session();
         for (int i = 0; i < numInput; ++i)
         {
             const auto& e = input[i];
-            if (t.inputSource >= 0 && e.source != t.inputSource)
-                continue;
-            if (t.inputChannel > 0 && e.size > 0 && (e.bytes[0] & 0xf0) != 0xf0 && (e.bytes[0] & 0x0f) + 1 != t.inputChannel)
-                continue;
-            if (hear)
-                sink.add(sample, e);
+            bool heard = hear;
+            if (e.target != 0)
+            {
+                if (e.target != id)
+                    continue;
+                heard = t.monitoring != Monitoring::Off;
+            }
+            else
+            {
+                if (!hear && !t.arm)
+                    continue;
+                if (t.inputSource >= 0 && e.source != t.inputSource)
+                    continue;
+                // A per-note message's channel is only where its note is kept: it counts as
+                // channel 1 (MPE's lower zone's master channel), where the rest of it plays.
+                const int channel = (e.flags & TimedMidi::perNote) != 0 ? 1 : (e.bytes[0] & 0x0f) + 1;
+                if (t.inputChannel > 0 && e.size > 0 && (e.bytes[0] & 0xf0) != 0xf0 && channel != t.inputChannel)
+                    continue;
+            }
+            const std::int64_t at = sample + e.sampleOffset; // where it arrived in the chunk
+            if (heard)
+                sink.add(at, e);
             if (!t.arm || st.captureClipId == 0 || e.size < 3)
                 continue;
+            const double beat = clock.beatAt(at);
 
             const auto status = static_cast<std::uint8_t>(e.bytes[0] & statusMask);
             const auto pitch = static_cast<std::uint8_t>(e.bytes[1] & 0x7f);

@@ -10,6 +10,19 @@ add_executable(lattice_tests
     test_main.cpp
     app/HandsOnTests.cpp
     control/ComputerKeyboardTests.cpp
+    control/DeviceMixTests.cpp
+    control/StepSequencerTests.cpp
+    control/ClipBrowseTests.cpp
+    control/FastPathTests.cpp
+    control/MultiSurfaceTests.cpp
+    control/GenericMidiTests.cpp
+    control/SurfaceManagerTests.cpp
+    control/SurfaceLearnerTests.cpp
+    control/NoteModeTests.cpp
+    control/PushTests.cpp
+    control/SessionModeTests.cpp
+    control/VirtualPushTests.cpp
+    control/WalkthroughTests.cpp
     core/AudioCallbackStatsTests.cpp
     core/GroupTrackTests.cpp
     core/JobPoolTests.cpp

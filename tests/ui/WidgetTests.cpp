@@ -7,6 +7,7 @@
 #include "ui/widgets/Fader.h"
 #include "ui/widgets/Knob.h"
 #include "ui/widgets/NumberBox.h"
+#include "ui/widgets/Painting.h"
 #include "ui/widgets/Toggle.h"
 
 #include <catch2/catch_approx.hpp>
@@ -406,6 +407,30 @@ TEST_CASE("Widgets: a gallery of every widget in every theme, for looking at", "
         WARN("Wrote " << file.getFullPathName());
         gallery.setLookAndFeel(nullptr);
     }
+}
+
+TEST_CASE("Widgets: a knob is kept as an image only where that pays: off screen and in software, not on Direct2D",
+          "[ui][widgets]")
+{
+    // docs/06-m5-controllers.md, 5g: each redraw of a cached image costs Direct2D a drawing context
+    // of its own, more than the drawing it saves; the software renderer copies it cheaply.
+    Fixture fx;
+    juce::Component window;
+    window.setSize(200, 200);
+    Knob knob(fx.bind(cutoffSpec()));
+    window.addAndMakeVisible(knob);
+    CHECK(knob.getCachedComponentImage() != nullptr); // off screen: drawn in software
+    CHECK(painting::cachedImagesPay(knob));
+
+    window.addToDesktop(juce::ComponentPeer::windowIsTemporary);
+    auto* peer = window.getPeer();
+    REQUIRE(peer != nullptr);
+    const auto engines = peer->getAvailableRenderingEngines();
+    const bool direct2D = engines[peer->getCurrentRenderingEngine()] == "Direct2D";
+    CHECK(painting::cachedImagesPay(knob) == !direct2D);
+    CHECK((knob.getCachedComponentImage() != nullptr) == !direct2D);
+    painting::paintAtNextRefresh(knob); // marks what's to paint, harmless with nothing to
+    window.removeFromDesktop();
 }
 
 TEST_CASE("Widgets: a knob's arc, filled as an outline, draws as the rounded stroke it replaces", "[ui][widgets]")

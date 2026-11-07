@@ -172,7 +172,11 @@ private:
                                               quit();
                                           });
         if (uiStress != nullptr)
+        {
             soak->setContext([this] { return uiStress->describe(); });
+            soak->setReport([this] { return uiStress->report(); });
+            soak->onMeasuring = [this] { uiStress->resetMeasures(); };
+        }
         soak->start();
     }
 

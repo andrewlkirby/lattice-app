@@ -1,5 +1,7 @@
 #include "devices/framework/ParameterSpec.h"
 
+#include <cmath>
+
 namespace lattice
 {
 namespace
@@ -25,7 +27,57 @@ juce::String significant(double v)
     const int decimals = a >= 100.0 ? 0 : (a >= 10.0 ? 1 : 2);
     return trimmedNumber(v, decimals);
 }
+/** The number typed at the start of `t` (a sign allowed), or nullopt when it doesn't start with one. */
+std::optional<double> leadingNumber(const juce::String& t)
+{
+    const auto first = t.trimCharactersAtStart("+-");
+    if (first.isEmpty() || !(juce::CharacterFunctions::isDigit(first[0]) || first[0] == '.'))
+        return std::nullopt;
+    return t.getDoubleValue();
+}
 } // namespace
+
+ParameterSpec&& ParameterSpec::shownScaled(double scale, juce::String suffix, int decimals, bool withSign,
+                                           double offset) &&
+{
+    formatter = [scale, suffix, decimals, withSign, offset](float plain) {
+        const double factor = std::pow(10.0, decimals);
+        double shown = std::round((plain - offset) * scale * factor) / factor;
+        if (shown == 0.0)
+            shown = 0.0; // never "-0"
+        const auto number = decimals == 0 ? juce::String(juce::roundToInt(shown)) : juce::String(shown, decimals);
+        return (withSign && shown > 0.0 ? "+" : "") + number + suffix;
+    };
+    parser = [scale, offset](const juce::String& text) -> std::optional<float> {
+        if (const auto v = leadingNumber(text))
+            return static_cast<float>(*v / scale + offset);
+        return std::nullopt;
+    };
+    return std::move(*this);
+}
+
+ParameterSpec&& ParameterSpec::shownAsPan() &&
+{
+    formatter = [](float plain) {
+        const int amount = juce::roundToInt(std::abs(plain) * 50.0f);
+        return amount == 0 ? juce::String("C") : juce::String(amount) + (plain < 0.0f ? "L" : "R");
+    };
+    parser = [](const juce::String& text) -> std::optional<float> {
+        const auto t = text.trim().toUpperCase();
+        if (t == "C")
+            return 0.0f;
+        const auto v = leadingNumber(t);
+        if (!v)
+            return std::nullopt;
+        const float amount = static_cast<float>(std::abs(*v)) / 50.0f;
+        if (t.endsWithChar('L'))
+            return -amount;
+        if (t.endsWithChar('R'))
+            return amount;
+        return static_cast<float>(*v) / 50.0f;
+    };
+    return std::move(*this);
+}
 
 juce::String ParameterSpec::format(float plain) const
 {
@@ -47,16 +99,16 @@ juce::String ParameterSpec::format(float plain) const
     }
 
     const double v = plain;
-    switch (unit)
+    switch (unit) // a larger unit from where the smaller one would round to 1000 of it
     {
     case ParamUnit::Hz:
-        return v >= 1000.0 ? significant(v / 1000.0) + " kHz" : significant(v) + " Hz";
+        return v >= 999.5 ? significant(v / 1000.0) + " kHz" : significant(v) + " Hz";
     case ParamUnit::Decibels:
         return v <= -69.95 && minValue <= -70.0f ? juce::String("-inf dB") : significant(v) + " dB";
     case ParamUnit::Milliseconds:
-        return v >= 1000.0 ? significant(v / 1000.0) + " s" : significant(v) + " ms";
+        return v >= 999.5 ? significant(v / 1000.0) + " s" : significant(v) + " ms";
     case ParamUnit::Seconds:
-        return v < 1.0 ? significant(v * 1000.0) + " ms" : significant(v) + " s";
+        return v < 0.9995 ? significant(v * 1000.0) + " ms" : significant(v) + " s";
     case ParamUnit::Percent:
         return trimmedNumber(v, std::abs(v) < 10.0 ? 1 : 0) + " %";
     case ParamUnit::Cents:
@@ -104,12 +156,14 @@ float ParameterSpec::parse(const juce::String& text) const
 
     if (t.containsIgnoreCase("inf") && unit == ParamUnit::Decibels)
         return minValue;
+    if (t.containsIgnoreCase("inf") && unit == ParamUnit::Ratio)
+        return maxValue;
 
     // The leading number; any unit text after it only scales it.
-    const auto first = t.trimCharactersAtStart("+-");
-    if (first.isEmpty() || !(juce::CharacterFunctions::isDigit(first[0]) || first[0] == '.'))
+    const auto number = leadingNumber(t);
+    if (!number)
         return defaultValue;
-    double v = t.getDoubleValue();
+    double v = *number;
 
     const auto lower = t.toLowerCase();
     const bool kilo = lower.contains("k") && !lower.contains("ms");

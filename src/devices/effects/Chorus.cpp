@@ -16,14 +16,13 @@ std::vector<ParameterSpec> makeSpecs()
         spec.group = "Chorus";
         s[static_cast<std::size_t>(index)] = std::move(spec);
     };
-    const auto pct = [](float v) { return juce::String(juce::roundToInt(v * 100.0f)) + " %"; };
     set(P::voices, ParameterSpec::choice("chorus.voices", "Voices", {"2", "3"}, 0));
     set(P::rate, ParameterSpec::continuous("chorus.rate", "Rate", 0.02f, 10.0f, 0.6f, ParamUnit::Hz).withCentre(1.0f));
     set(P::depth, ParameterSpec::continuous("chorus.depth", "Depth", 0.0f, 10.0f, 2.5f, ParamUnit::Milliseconds));
     set(P::delay, ParameterSpec::continuous("chorus.delay", "Delay", 1.0f, 40.0f, 12.0f, ParamUnit::Milliseconds));
-    set(P::feedback, ParameterSpec::continuous("chorus.feedback", "Feedback", -0.9f, 0.9f, 0.0f, ParamUnit::Percent).withFormatter(pct));
-    set(P::width, ParameterSpec::continuous("chorus.width", "Width", 0.0f, 1.0f, 1.0f, ParamUnit::Percent).withFormatter(pct));
-    set(P::mix, ParameterSpec::continuous("chorus.mix", "Dry/Wet", 0.0f, 1.0f, 0.5f, ParamUnit::Percent).withFormatter(pct));
+    set(P::feedback, ParameterSpec::continuous("chorus.feedback", "Feedback", -0.9f, 0.9f, 0.0f, ParamUnit::Percent).shownAsPercent());
+    set(P::width, ParameterSpec::continuous("chorus.width", "Width", 0.0f, 1.0f, 1.0f, ParamUnit::Percent).shownAsPercent());
+    set(P::mix, ParameterSpec::continuous("chorus.mix", "Dry/Wet", 0.0f, 1.0f, 0.5f, ParamUnit::Percent).shownAsPercent());
     return s;
 }
 } // namespace

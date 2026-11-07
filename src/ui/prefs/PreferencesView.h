@@ -14,6 +14,11 @@
 
 namespace lattice::ui
 {
+class SurfaceManager;
+}
+
+namespace lattice::ui
+{
 
 /** The Preferences window's content (docs/05-m4-ui.md, 4g): a list of tabs on the left, the tab on
     the right. Every change applies at once and is saved in the settings file.
@@ -22,7 +27,8 @@ namespace lattice::ui
       driver's and the measured MIDI-to-sound), the audio load, and a test tone.
     - MIDI: each input's Track switch (its notes reach armed tracks) and Remote switch (MIDI Map
       listens to it); clock sync comes in M6.
-    - Controllers: Push and Maschine come in M5.
+    - Controllers: Virtual Push's grid size and pad velocity (docs/06-m5-controllers.md, 5a), and
+      the control surfaces on MIDI ports, with the Surface Monitor (5e).
     - Look & Feel: the theme (built in, or a JSON file in the Themes folder) and the zoom.
     - Library: the browser's places, adding, removing and rescanning them.
     - CPU: multi-threaded audio and the number of worker threads.
@@ -46,10 +52,12 @@ public:
         std::function<const Theme&()> theme = {};
         std::function<void()> keyboardChanged = {}; // the note keys or a range step changed
         std::function<void()> midiChanged = {};     // an input's Track or Remote switch changed
+        std::function<void()> controllersChanged = {}; // Virtual Push's settings changed
         std::function<void(std::function<void(const juce::File&)>)> chooseFolder = {};
         /** A file to import (save false) or export to. */
         std::function<void(const juce::String& title, const juce::String& patterns, bool save, std::function<void(const juce::File&)>)> chooseFile = {};
         juce::File themesFolder = {};
+        SurfaceManager* surfaces = nullptr; // the control surfaces (none in some tests)
         juce::String audioError = {}; // why the audio device didn't open, if it didn't
     };
 

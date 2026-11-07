@@ -125,6 +125,9 @@ public:
 private:
     void selectionChanged(const SessionSelection&) override {}
     void deviceOwnerChanged(const DeviceOwner& now) override;
+    void deviceSelected(std::int64_t id) override;
+    /** Tells the shared selection which device is selected here. */
+    void shareSelection();
     void rebuild();
     void layout();
     void handleAsyncUpdate() override;

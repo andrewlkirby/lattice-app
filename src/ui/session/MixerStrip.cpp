@@ -1,6 +1,7 @@
 #include "ui/session/MixerStrip.h"
 
 #include "ui/theme/LatticeLookAndFeel.h"
+#include "ui/widgets/Painting.h"
 
 #include <cmath>
 
@@ -18,10 +19,7 @@ ParameterSpec MixerStrip::panSpec()
 {
     return ParameterSpec::continuous("pan", "Pan", -1.0f, 1.0f, 0.0f)
         .inGroup("Mixer")
-        .withFormatter([](float v) {
-            const int amount = juce::roundToInt(std::abs(v) * 50.0f);
-            return amount == 0 ? juce::String("C") : juce::String(amount) + (v < 0.0f ? "L" : "R");
-        });
+        .shownAsPan();
 }
 
 ParameterSpec MixerStrip::sendSpec(const juce::String& returnName)
@@ -238,6 +236,14 @@ int MixerStrip::heightFor(const juce::Component& themed, int numReturns, bool wi
     const float sendsHeight = ioHeight + (withSends ? static_cast<float>(numReturns) * (knob * 0.75f) : 0.0f);
     const float main = knob * 0.8f + t.controlHeight * 7.0f + t.controlHeight + t.spacing * 4.0f;
     return juce::roundToInt(sendsHeight + main + t.padding * 2.0f);
+}
+
+void MixerStrip::parentHierarchyChanged()
+{
+    // Kept as an image where that pays (painting::cachedImagesPay): scrolling the grid while it
+    // plays repaints every strip each frame, and only their meters change (a meter's repaint
+    // redraws just its part of the image).
+    painting::bufferWhereItPays(*this);
 }
 
 void MixerStrip::resized()
