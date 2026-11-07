@@ -324,6 +324,16 @@ The checks:
   - `DeviceSpecs::forDevice` describes a plugin device by its pages. The Device view, Device mode, MIDI Map targets, racks' macro lists and Find all use it.
   - Plugins are inserted from the browser by drag or double-click, and hot-swap works.
   - The plugin panel shows its status (loading, or why it's missing), Show/Hide window, Configure, and a Pages menu: every parameter by group, ticked if on the pages, plus saving the pages as the plugin's default, MPE, and plugin windows always on top.
+- **Also in 6b.**
+  - **Per-device CPU** for every device, built-in ones included. It's measured in the chain runner, so a rack includes its devices, and shown on the title bar, in the warning colour past 25 %. A plugin that allocated on the audio thread says so in that tooltip.
+  - **Delay compensation fades to a new value** over 5 ms, so a latency change elsewhere doesn't jump the signal. A test checks a 100 Hz sine across a 936-sample change.
+  - **VST3 presets:** `.vstpreset` load and save, from the Pages menu. A load is one undo step.
+- **Walkthrough with Surge XT 1.3.4** (hidden test, 2026-11-08):
+  - **CLAP:** loads in 0.05 s, with 775 parameters.
+  - **VST3:** loads in 0.54 s, with 2,855 parameters. Most of those are the hidden MIDI-CC parameters JUCE plugins add, and they're left off the pages.
+  - **The window** is 1597 × 995 at a display scale of 1.5 in both formats. So the CLAP scale handling gives the same size as JUCE's VST3 host.
+  - **Save and reload** brings a value back exactly.
+  - **For the hands-on check:** Surge's first 64 automatable parameters include many empty FX slots ("FX A1 -"). Configure, or a saved default, is the way to good pages.
 - **Not done, and why.**
   - **Multi-out routing waits for audio tracks** (M8), since Live sends extra outputs to audio tracks. Until then, the extra outputs are turned off.
   - **Allocations inside a plugin can only be counted on Linux.** On Windows each plugin DLL has its own `operator new`, which Lattice's hooks don't see.
