@@ -597,6 +597,49 @@ void PluginHost::saveDefaultPages(const juce::ValueTree& device)
         storeDefaultPages(identityOf(plugin->description), pagesOf(device).joinIntoString(" "));
 }
 
+bool PluginHost::takesVstPresets(const juce::ValueTree& device) const
+{
+    const auto* d = liveDevice(LiveSet::idOf(device));
+    return d != nullptr && d->plugin().getVST3Client() != nullptr;
+}
+
+bool PluginHost::loadVstPreset(juce::ValueTree device, const juce::File& file)
+{
+    const auto id = LiveSet::idOf(device);
+    auto* d = liveDevice(id);
+    auto* vst3 = d != nullptr ? d->plugin().getVST3Client() : nullptr;
+    juce::MemoryBlock data;
+    if (vst3 == nullptr || !file.loadFileAsData(data) || !vst3->setPreset(data))
+        return false;
+    d->forgetChanges(); // what it announces now is the preset, not edits
+    // The values in the document are the preset's now, as one step.
+    session.beginEdit("Load preset " + file.getFileNameWithoutExtension(), device);
+    const auto values = device.getChildWithName(ids::params);
+    for (int i = 0; i < values.getNumProperties(); ++i)
+    {
+        const auto pid = values.getPropertyName(i).toString();
+        if (const int index = d->parameterIndex(pid); index >= 0)
+        {
+            const float v = d->knownValue(index);
+            d->adoptPluginValue(index, v);
+            session.set().setDeviceParameter(device, pid, v);
+        }
+    }
+    if (const auto it = live.find(id); it != live.end())
+        capture(id, it->second);
+    return true;
+}
+
+bool PluginHost::saveVstPreset(const juce::ValueTree& device, const juce::File& file)
+{
+    const auto* d = liveDevice(LiveSet::idOf(device));
+    const auto* vst3 = d != nullptr ? d->plugin().getVST3Client() : nullptr;
+    if (vst3 == nullptr)
+        return false;
+    const auto data = vst3->getPreset();
+    return data.getSize() > 0 && file.replaceWithData(data.getData(), data.getSize());
+}
+
 bool PluginHost::mpeOf(const juce::ValueTree& device) const
 {
     const int wanted = device.getChildWithName(ids::deviceState).getProperty(pluginTypes::mpe, -1);

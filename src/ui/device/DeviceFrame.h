@@ -25,7 +25,8 @@ class DeviceFrame final : public juce::Component,
                           public juce::DragAndDropTarget,
                           public juce::FileDragAndDropTarget,
                           private juce::ValueTree::Listener,
-                          private juce::AsyncUpdater
+                          private juce::AsyncUpdater,
+                          private juce::Timer
 {
 public:
     DeviceFrame(DeviceContext& context, juce::ValueTree device);
@@ -101,6 +102,8 @@ private:
     IconButton hotSwap{"Hot-Swap", Icon::hotSwap, "Swaps the device for another, or for a preset: the next one you choose replaces it."};
     IconButton save{"Save Preset", Icon::save, "Saves the device, with everything in it, as a preset."};
     IconButton allParams{"Show All Parameters", Icon::allParams, "Shows every parameter instead of the device's own panel."};
+    juce::Label cpu; // its share of each block (docs/07-m6-plugins-external.md, 6b)
+    void timerCallback() override;
     IconButton menu{"Device Menu", Icon::menu, "Rename, presets, copy, duplicate and delete."};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DeviceFrame)

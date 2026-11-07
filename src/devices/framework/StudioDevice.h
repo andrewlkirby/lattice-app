@@ -76,6 +76,16 @@ public:
         device whose latency can change later (a plugin) changes it with changeLatency(). */
     int latencySamples() const noexcept { return latency.load(std::memory_order_relaxed); }
 
+    /** Audio thread (the chain that runs it): one block's processing time, in high-resolution ticks. */
+    void addProcessingTime(std::int64_t ticks, int numSamples) noexcept LATTICE_NONBLOCKING
+    {
+        busyTicks.fetch_add(ticks, std::memory_order_relaxed);
+        processedSamples.fetch_add(numSamples, std::memory_order_relaxed);
+    }
+    /** Message thread: the share of real time its processing took since the last call (0.05 = 5 %),
+        or a negative number if it didn't run. A rack's includes its devices'. */
+    double takeCpuLoad() noexcept;
+
     /** Any thread: the device's on/off switch. */
     void setEnabled(bool on) noexcept { enabled.store(on, std::memory_order_relaxed); }
     bool isEnabled() const noexcept { return enabled.load(std::memory_order_relaxed); }
@@ -180,6 +190,7 @@ private:
     juce::AudioBuffer<float> dryDelay; // ring buffer, latency samples per channel
     int dryDelayPos = 0;
     std::atomic<int> latency{0};
+    std::atomic<std::int64_t> busyTicks{0}, processedSamples{0};
     std::array<std::uint16_t, 128> heldOutput{}; // MIDI effects: a bit per channel for each note
 
     // processBlock() for JUCE hosts

@@ -105,6 +105,11 @@ public:
     void removeFromPages(juce::ValueTree device, const juce::String& parameterId);
     /** The pages new devices of this plugin start with. */
     void saveDefaultPages(const juce::ValueTree& device);
+    /** VST3 preset files (.vstpreset), for a VST3 plugin's device: loading one is one undo step for
+        the values in the document (the plugin's state follows, as always, without one). */
+    bool takesVstPresets(const juce::ValueTree& device) const;
+    bool loadVstPreset(juce::ValueTree device, const juce::File& file);
+    bool saveVstPreset(const juce::ValueTree& device, const juce::File& file);
     /** Whether a device gets MPE, and setting it (one undo step). */
     bool mpeOf(const juce::ValueTree& device) const;
     void setMpe(juce::ValueTree device, bool on);

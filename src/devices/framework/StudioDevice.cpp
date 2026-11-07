@@ -95,6 +95,16 @@ void StudioDevice::applyDocumentValue(int index, const juce::var* documentValue)
     p.setBase(documentValue != nullptr ? static_cast<float>(static_cast<double>(*documentValue)) : p.spec().defaultValue);
 }
 
+double StudioDevice::takeCpuLoad() noexcept
+{
+    const auto ticks = busyTicks.exchange(0, std::memory_order_relaxed);
+    const auto samples = processedSamples.exchange(0, std::memory_order_relaxed);
+    if (samples <= 0 || currentSampleRate <= 0.0)
+        return -1.0;
+    const double busySeconds = static_cast<double>(ticks) / static_cast<double>(juce::Time::getHighResolutionTicksPerSecond());
+    return busySeconds / (static_cast<double>(samples) / currentSampleRate);
+}
+
 void StudioDevice::setLatency(int samples)
 {
     samples = juce::jmax(0, samples);

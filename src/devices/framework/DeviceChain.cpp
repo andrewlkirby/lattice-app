@@ -67,12 +67,16 @@ std::uint32_t ChainRunner::process(const DeviceChainLayout& chain, float* const*
         {
             out->clear();
             io.midiOut = out;
+            const auto started = juce::Time::getHighResolutionTicks();
             device->processInChain(io, time);
+            device->addProcessingTime(juce::Time::getHighResolutionTicks() - started, numSamples);
             std::swap(in, out);
         }
         else
         {
+            const auto started = juce::Time::getHighResolutionTicks();
             device->processInChain(io, time);
+            device->addProcessingTime(juce::Time::getHighResolutionTicks() - started, numSamples);
         }
         if (preFxTap != nullptr && i == lastSource)
             for (int ch = 0; ch < 2; ++ch)

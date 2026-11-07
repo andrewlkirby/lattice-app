@@ -2,6 +2,7 @@
 
 #include "devices/racks/Rack.h"
 #include "devices/racks/RackEditing.h"
+#include "hosting/PluginDevice.h"
 #include "ui/device/DevicePanels.h"
 #include "ui/device/DeviceView.h"
 #include "ui/session/SessionView.h"
@@ -66,6 +67,7 @@ DeviceFrame::DeviceFrame(DeviceContext& c, juce::ValueTree device) : context(c),
     save.onClick = [this] {
         askForText(*this, "Save Preset", context.nameOf(node), [this](const juce::String& name) {
             juce::File written;
+            context.set().flushDeviceState(); // a plugin's state as it is now
             const auto result = context.presets.saveUserPreset(node, name, written);
             if (result.failed())
                 juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Could not save the preset",
@@ -78,6 +80,11 @@ DeviceFrame::DeviceFrame(DeviceContext& c, juce::ValueTree device) : context(c),
     menu.onClick = [this] { showMenu(); };
     for (auto* b : {&power, &fold, &hotSwap, &save, &allParams, &menu})
         addAndMakeVisible(*b);
+    cpu.setTitle("CPU");
+    cpu.setJustificationType(juce::Justification::centredRight);
+    cpu.setTooltip("How much of each audio block this device takes");
+    addAndMakeVisible(cpu);
+    startTimerHz(2);
     allParams.setVisible(!rack && hasOwnPanel(type));
 
     rebuildBody();
@@ -86,6 +93,7 @@ DeviceFrame::DeviceFrame(DeviceContext& c, juce::ValueTree device) : context(c),
 
 DeviceFrame::~DeviceFrame()
 {
+    stopTimer();
     cancelPendingUpdate();
     node.removeListener(this);
     if (content != nullptr)
@@ -195,6 +203,20 @@ int DeviceFrame::preferredWidth(int height) const
     return juce::jmax(titleWidth, bodyWidth + pad * 2);
 }
 
+void DeviceFrame::timerCallback()
+{
+    auto* device = context.session.snapshots().deviceFor(LiveSet::idOf(node));
+    const double load = device != nullptr ? device->takeCpuLoad() : -1.0;
+    const auto& t = themeOf(*this);
+    cpu.setFont(juce::Font(t.font(t.fontSmall)));
+    cpu.setColour(juce::Label::textColourId, load > 0.25 ? t.warning : t.textDim);
+    cpu.setText(load < 0.0 ? juce::String() : juce::String(load * 100.0, load < 0.1 ? 1 : 0) + " %", juce::dontSendNotification);
+    // A plugin's diagnostics: what it did on the audio thread that it shouldn't.
+    if (const auto* plugin = dynamic_cast<const hosting::HostedPluginDevice*>(device); plugin != nullptr && plugin->allocationsInPlugin() > 0)
+        cpu.setTooltip("How much of each audio block this device takes. It has allocated memory on the audio thread " +
+                       juce::String(plugin->allocationsInPlugin()) + " times, which can cause dropouts.");
+}
+
 void DeviceFrame::resized()
 {
     const auto& t = themeOf(*this);
@@ -204,6 +226,7 @@ void DeviceFrame::resized()
         auto strip = getLocalBounds().reduced(juce::roundToInt(t.stroke), 0);
         power.setBounds(strip.removeFromTop(h));
         fold.setBounds(strip.removeFromTop(h));
+        cpu.setBounds({});
         for (auto* b : {&hotSwap, &save, &allParams, &menu})
             b->setBounds({});
         return;
@@ -216,6 +239,7 @@ void DeviceFrame::resized()
         allParams.setBounds(bar.removeFromRight(h));
     save.setBounds(bar.removeFromRight(h));
     hotSwap.setBounds(bar.removeFromRight(h));
+    cpu.setBounds(bar.removeFromRight(h * 2));
     if (content != nullptr)
         content->setBounds(getLocalBounds().withTrimmedTop(h).reduced(juce::roundToInt(t.padding)));
 }
@@ -248,7 +272,7 @@ void DeviceFrame::paint(juce::Graphics& g)
     }
     else
     {
-        auto text = bar.withTrimmedLeft(titleHeight() * 2 + juce::roundToInt(t.spacing)).withRight(hotSwap.getX());
+        auto text = bar.withTrimmedLeft(titleHeight() * 2 + juce::roundToInt(t.spacing)).withRight(cpu.getX());
         g.drawText(name, text, juce::Justification::centredLeft, true);
     }
     g.setColour(t.border);

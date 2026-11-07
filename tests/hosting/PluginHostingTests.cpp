@@ -586,3 +586,87 @@ TEST_CASE("A plugin that allocates on the audio thread is counted, not reported 
         CHECK(device->allocationsInPlugin() > 0); // its operator new is Lattice's here
 #endif
 }
+
+TEST_CASE("Another track's compensation fades to a new latency, without a jump", "[hosting][plugins]")
+{
+    Fixture f(2);
+    const auto latency = f.insert(clapPlugin("Lattice Test Latency"), 0); // silent: a MIDI track's input
+    f.set().insertDevice(f.chain(1), -1, TestSineDevice::typeId);
+    f.load();
+    f.render(4800);
+    REQUIRE(f.session.processorForTrack(1)->latencySamples() == 0);
+
+    f.renderer.captureAudio = true;
+    f.render(4800);
+    f.set().setDeviceParameter(latency, "p1", 0.25); // 1000 samples: track 2 now waits 1000, not 64
+    for (int i = 0; i < 20; ++i)
+    {
+        f.render(256);
+        f.host.finishLoading();
+    }
+    f.render(4800);
+    REQUIRE(f.session.processorForTrack(0)->latencySamples() == 1000);
+
+    // A 100 Hz sine moves at most 2pi * 100 / 48000 of its level per sample; a jump in its delay
+    // would be a step of up to twice its level. The fade keeps every step near the sine's own.
+    const auto& out = f.renderer.audioLeft;
+    float level = 0.0f, step = 0.0f;
+    for (std::size_t i = 1; i < out.size(); ++i)
+    {
+        level = std::max(level, std::abs(out[i]));
+        step = std::max(step, std::abs(out[i] - out[i - 1]));
+    }
+    REQUIRE(level > 0.1f);
+    CHECK(step < 0.03f * level);
+}
+
+TEST_CASE("Each device's share of the audio time is measured", "[hosting][plugins]")
+{
+    Fixture f;
+    const auto device = f.insert(clapPlugin("Lattice Test Plugin"));
+    f.load();
+    addClip(f.set(), 0, 0, 8.0, {NoteData{69, 0.0, 8.0, 127, false}});
+    f.session.launchSlot(0, 0);
+    auto* hosted = f.live(device);
+    REQUIRE(hosted != nullptr);
+    hosted->takeCpuLoad(); // from now
+    f.render(48000);
+    const double load = hosted->takeCpuLoad();
+    CHECK(load > 0.0);
+    CHECK(load < 1.0);
+    CHECK(hosted->takeCpuLoad() < 0.0); // nothing since
+}
+
+TEST_CASE("A VST3 plugin's presets save and load as .vstpreset files, as one undo step", "[hosting][plugins]")
+{
+    Fixture f;
+    TempFolder folder;
+    const auto device = f.insert(vst3Plugin());
+    f.load();
+    REQUIRE(f.host.takesVstPresets(device));
+    auto* hosted = f.live(device);
+    REQUIRE(hosted != nullptr);
+    const auto level = hosted->parameter(0).id();
+
+    f.set().setDeviceParameter(device, level, 0.9);
+    f.render(256);
+    const auto file = folder / "Loud.vstpreset";
+    REQUIRE(f.host.saveVstPreset(device, file));
+    CHECK(file.getSize() > 0);
+
+    f.set().setDeviceParameter(device, level, 0.1);
+    f.render(256);
+    f.session.undoManager().clearUndoHistory();
+    REQUIRE(f.host.loadVstPreset(device, file));
+    CHECK(LiveSet::deviceParameter(device, level, 0.0) == Catch::Approx(0.9).margin(0.001));
+    f.render(256);
+    CHECK(hosted->plugin().getParameters()[0]->getValue() == Catch::Approx(0.9f).margin(0.001f));
+    CHECK(f.session.undoManager().getUndoDescription().startsWith("Load preset Loud"));
+    f.session.undoManager().undo();
+    CHECK(LiveSet::deviceParameter(device, level, 0.0) == Catch::Approx(0.1).margin(0.001));
+
+    CHECK_FALSE(f.host.loadVstPreset(device, folder / "nothing.vstpreset"));
+    const auto clap = f.insert(clapPlugin("Lattice Test Sidechain"));
+    f.load();
+    CHECK_FALSE(f.host.takesVstPresets(clap));
+}

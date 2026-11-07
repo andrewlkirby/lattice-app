@@ -107,7 +107,7 @@ private:
         }
         if (const auto plugin = hosting::PluginHost::pluginOf(node); plugin && text.isEmpty())
             text = plugin->description.pluginFormatName + (plugin->description.manufacturerName.isNotEmpty()
-                                                               ? " \xc2\xb7 " + plugin->description.manufacturerName
+                                                               ? juce::String(juce::CharPointer_UTF8(" \xc2\xb7 ")) + plugin->description.manufacturerName
                                                                : juce::String());
         status.setText(text, juce::dontSendNotification);
         status.setTooltip(text);
@@ -195,6 +195,12 @@ private:
             if (safe != nullptr && safe->context.plugins != nullptr)
                 safe->context.plugins->saveDefaultPages(safe->node);
         });
+        if (host->takesVstPresets(node))
+        {
+            m.addSeparator();
+            m.addItem("Load VST3 Preset...", [this] { chooseVstPreset(true); });
+            m.addItem("Save VST3 Preset...", [this] { chooseVstPreset(false); });
+        }
         m.addSeparator();
         const bool mpe = host->mpeOf(node);
         m.addItem("MPE", true, mpe, [safe = juce::Component::SafePointer<PluginBody>(this), mpe] {
@@ -211,6 +217,30 @@ private:
         m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&pages));
     }
 
+    void chooseVstPreset(bool load)
+    {
+        const auto name = hosting::PluginHost::pluginOf(node) ? hosting::PluginHost::pluginOf(node)->description.name : juce::String("Plugin");
+        chooser = std::make_unique<juce::FileChooser>(load ? "Load VST3 Preset" : "Save VST3 Preset",
+                                                      juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+                                                          .getChildFile("VST3 Presets")
+                                                          .getChildFile(name),
+                                                      "*.vstpreset");
+        const int chooserFlags = load ? juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles
+                                      : juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting;
+        chooser->launchAsync(chooserFlags, [safe = juce::Component::SafePointer<PluginBody>(this), load](const juce::FileChooser& fc) {
+            const auto file = fc.getResult();
+            if (safe == nullptr || safe->context.plugins == nullptr || file == juce::File())
+                return;
+            const bool ok = load ? safe->context.plugins->loadVstPreset(safe->node, file)
+                                 : safe->context.plugins->saveVstPreset(safe->node, file.withFileExtension("vstpreset"));
+            if (!ok && safe->context.confirm)
+                safe->context.confirm(load ? "Couldn't load the preset" : "Couldn't save the preset",
+                                      load ? file.getFileName() + " isn't a preset this plugin reads." : "The plugin gave no preset to save.",
+                                      {}, nullptr);
+        });
+    }
+
+    std::unique_ptr<juce::FileChooser> chooser;
     juce::Label status;
     juce::TextButton window, configure, pages;
     const StudioDevice* shown = nullptr;

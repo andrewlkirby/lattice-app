@@ -215,6 +215,9 @@ juce::StringArray titlesIn(juce::Component& root)
     return titles;
 }
 
+/** The format a walkthrough wants (LATTICE_WALKTHROUGH_FORMAT), or empty: any. */
+juce::String format() { return juce::SystemStats::getEnvironmentVariable("LATTICE_WALKTHROUGH_FORMAT", {}); }
+
 /** Puts the browser's plugin of that name on the selected track, as a double-click does, and lets
     it load. */
 juce::ValueTree insertPlugin(Walk& w, const juce::String& name)
@@ -222,7 +225,8 @@ juce::ValueTree insertPlugin(Walk& w, const juce::String& name)
     juce::String key;
     for (const auto& stored : w.shell->library().index().storedPlugins())
         if (const auto xml = juce::parseXML(stored.xml))
-            if (const auto p = hosting::scan::ScannedPlugin::fromXml(*xml); p && p->description.name == name && key.isEmpty())
+            if (const auto p = hosting::scan::ScannedPlugin::fromXml(*xml); p && p->description.name == name && key.isEmpty() &&
+                (format().isEmpty() || p->description.pluginFormatName == format()))
                 key = stored.key;
     REQUIRE(key.isNotEmpty());
     // An empty track: an instrument where there is one would ask first.
@@ -299,7 +303,10 @@ TEST_CASE("Walkthrough: 6b, a real plugin on a track, its panel and its window",
         REQUIRE(w.shell->pluginDevices().windows().open(*live, device));
         auto* window = w.shell->pluginDevices().windows().windowFor(LiveSet::idOf(device));
         REQUIRE(window != nullptr);
-        WARN("Window " << window->getWidth() << " x " << window->getHeight());
+        WARN("Window " << window->getWidth() << " x " << window->getHeight() << ", its editor "
+                       << window->getContentComponent()->getWidth() << " x " << window->getContentComponent()->getHeight()
+                       << ", display scale " << juce::Desktop::getInstance().getDisplays().getDisplayForRect(window->getBounds())->scale);
+        w.shot(*window->getContentComponent(), "6b-window");
         w.shell->pluginDevices().windows().close(LiveSet::idOf(device));
     }
 

@@ -146,6 +146,7 @@ public:
 
     static constexpr int maxReturns = 12;
     static constexpr double maxCompensationSeconds = 0.5;
+    static constexpr double compensationFadeSeconds = 0.005;
 
     /** Stage 0 (audio thread, serially for every track before stage 1): keeps the chunk's events
         inside the block and reports them to the event tap, which isn't thread-safe. */
@@ -238,6 +239,12 @@ private:
     std::atomic<bool> tapWanted{false};
     std::atomic<int> publishedLatency{0};
     dsp::DelayLine compensationLines[2];
+    // A new compensation fades from the old delay to the new one, so a latency change elsewhere
+    // (a plugin's) doesn't click (docs/07-m6-plugins-external.md, 6b).
+    int compensationNow = -1; // -1: none yet (the first takes effect at once)
+    int compensationBefore = 0;
+    int compensationFade = 0; // samples into the fade
+    int compensationFadeLength = 240;
     juce::SmoothedValue<float> gainLeft;
     juce::SmoothedValue<float> gainRight;
     std::array<float, maxReturns> sendGains{};

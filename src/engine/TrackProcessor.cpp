@@ -68,6 +68,8 @@ void TrackProcessor::prepare(double sampleRate, int maxBlockSize)
         tapChannels[ch] = tapBuffer.getWritePointer(ch);
         groupChannels[ch] = groupBuffer.getWritePointer(ch);
         compensationLines[ch].prepare(static_cast<int>(maxCompensationSeconds * sampleRate) + 4);
+        compensationNow = -1;
+        compensationFadeLength = std::max(1, static_cast<int>(compensationFadeSeconds * sampleRate));
         sendLines[ch].prepare(static_cast<int>(maxCompensationSeconds * sampleRate) + 4);
     }
     for (int ch = 0; ch < 4; ++ch)
@@ -238,17 +240,38 @@ void TrackProcessor::renderChain(int numSamples, const DeviceTimeInfo& time, con
 
     // Delay compensation: line this track up with the slowest one.
     compensation = std::clamp(compensation, 0, compensationLines[0].capacity());
+    if (compensationNow < 0)
+    {
+        compensationNow = compensation;
+        compensationFade = compensationFadeLength;
+    }
+    else if (compensation != compensationNow)
+    {
+        compensationBefore = compensationNow; // (mid-fade, from where it was heading)
+        compensationNow = compensation;
+        compensationFade = 0;
+    }
+    const int fade = compensationFade;
     for (int ch = 0; ch < 2; ++ch)
     {
         auto& line = compensationLines[ch];
         const float* in = chainChannels[ch];
         float* out = outputChannels[ch];
+        int f = fade;
         for (int i = 0; i < numSamples; ++i)
         {
             line.push(in[i]);
-            out[i] = line.tap(compensation);
+            if (f < compensationFadeLength)
+            {
+                const float g = static_cast<float>(f++) / static_cast<float>(compensationFadeLength);
+                const float from = line.tap(compensationBefore);
+                out[i] = from + g * (line.tap(compensationNow) - from);
+            }
+            else
+                out[i] = line.tap(compensationNow);
         }
     }
+    compensationFade = std::min(fade + numSamples, compensationFadeLength);
 }
 
 void TrackProcessor::clearGroupInput(int numSamples) noexcept

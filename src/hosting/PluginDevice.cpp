@@ -182,6 +182,13 @@ juce::MemoryBlock HostedPluginDevice::saveState()
     return state;
 }
 
+void HostedPluginDevice::forgetChanges()
+{
+    for (int i = 0; i < count; ++i)
+        known[static_cast<std::size_t>(i)] = pluginParameters[static_cast<std::size_t>(i)]->getValue();
+    settleUntil = juce::Time::getMillisecondCounter() + settleMs;
+}
+
 void HostedPluginDevice::restoreState(const juce::MemoryBlock& state)
 {
     JUCE_ASSERT_MESSAGE_THREAD

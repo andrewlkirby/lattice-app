@@ -75,6 +75,9 @@ public:
         False if it's more than the dry path can hold: the device must be prepared again. */
     bool followLatency(int samples) { return changeLatency(samples); }
 
+    /** Message thread: the plugin's values as they are now are what's known, and what it announces
+        for a moment is taken as that, not as edits (it loaded a preset of its own). */
+    void forgetChanges();
     /** Message thread: the plugin's state, and putting it back. Restoring doesn't count as the
         plugin changing (takeStateChanged()). */
     juce::MemoryBlock saveState();
