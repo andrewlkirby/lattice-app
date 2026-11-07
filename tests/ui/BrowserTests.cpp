@@ -144,6 +144,11 @@ TEST_CASE("Browser: the Plugins category opens on its groups, and a plugin isn't
     plugin.folder = group.key;
     plugin.detail = "Some Vendor \xc2\xb7 VST3 \xc2\xb7 Instrument";
     f.shell->library().index().setPluginItems({plugin, group});
+    // The library's database is the test process's, which later tests' shells open too.
+    const juce::ScopeGuard cleanUp{[&] {
+        f.shell->library().index().setInCollection(plugin.key, 0, false);
+        f.shell->library().index().setPluginItems({});
+    }};
     f.settle();
 
     f.showSource(BrowserModel::Source::Kind::category, "Plugins");

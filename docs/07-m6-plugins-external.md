@@ -196,14 +196,15 @@ The checks:
 - **The browser:**
   - **Plugins** is a category after MIDI Effects, as in Live. It lists folders that open on their plugins, grouped by vendor (the default), format, or type (Instruments, Audio Effects, MIDI Effects).
   - A plugin's row reads "Vendor · Format · Type".
-  - **One row for each plugin:** the same name and vendor in several formats is one plugin, shown in the preferred format.
+  - **One row for each plugin:** the same name and vendor in several formats is one plugin, shown in the preferred format. Grouped by format, though, each format's folder lists all of its own plugins, since that's where a format is chosen.
+  - **A row's name comes first:** the detail gets what the name leaves (at most half the row), so a narrow browser cuts the detail, not the name. Text widths are cached for each of the two fonts.
   - Plugins are found by search ("plugin", the vendor, the format) and can go in collections, keyed by the description's identifier, so they stay through rescans.
   - **Inserting a plugin** (double-click, drag, Insert) comes with 6b. Its row offers nothing yet.
 - **Preferences → Plugins:**
   - Folders: the standard folders on or off, and more folders added or removed.
   - The preferred format, and the grouping.
   - Scan and Rescan All.
-  - The status: scanning so many of so many files, or how many plugins, with why the last scan stopped if it did.
+  - The status: scanning so many of so many files, or how many plugins (a plugin in several formats counted once) and how many in each format, "2 plugins (CLAP 2, VST3 2)", with why the last scan stopped if it did.
   - Blocked and failed files, each with its format and reason, and Retry or Retry All.
 
   Find finds each setting. The time limit has no setting yet: 30 s, as planned.
@@ -242,6 +243,19 @@ The checks:
   - **Windows:** all 540 fast tests pass in one process, and with `ctest -j 8`, where the 5g failures are gone.
   - **Linux:** all 539 pass with warnings as errors, LV2 included.
   - The scan tests take about 5 s, mostly the two hangs at a 1.5 s limit.
+- **Walkthrough with real plugins (2026-11-07):** `tests/hosting/PluginWalkthroughTests.cpp` (hidden, `[plugins]`) scans the folder in `LATTICE_PLUGIN_FOLDER` through a shell's own plugin library, with the crashing test plugins added. It then works the browser and the Plugins tab as a person would, saving an image at each step to `LATTICE_WALKTHROUGH_DIR`. The scanner is now copied beside the tests too, where a shell looks for it.
+  - **Run over Surge XT 1.3.4** (its plugins-only zip, unpacked in a temporary folder: nothing installed):
+    - 6 files in 2.0 s (0.3 s again with the files cached);
+    - all four plugins found, with the right names, vendor and version: Surge XT and Surge XT Effects in CLAP and VST3;
+    - the CLAP Surge XT read as an instrument taking MPE, with 2 inputs and 6 outputs (its scenes' outputs), and the VST3 with JUCE's default stereo layout;
+    - both crashing test plugins blocked with "access violation";
+    - a rescan with nothing changed scanned nothing, in 0.01 s.
+  - **Found by it, and fixed:**
+    - **Grouping by format showed only the preferred format's folder,** since each plugin was still shown once. Each format's folder now lists all its plugins.
+    - **The status said "4 plugins"** where the browser showed 2: it now counts as the browser does, and gives each format's count.
+    - **In the browser at its default width, "Surge XT Effects" was cut to "Surge XT Ef…"** while the detail kept half the row. The name now comes first.
+    - **The new browser test left its plugin in the test process's library,** in the Favourites, where a later test found it. It now cleans up after itself.
+    - **A "Bad Image" box from Windows.** The CLAP test reads a file that isn't a library in the test process itself, not in the scanner. Started from ctest, the process didn't inherit the error mode that keeps Windows' own boxes away, so the load put up a "Bad Image" box and waited for a click, and the test timed out. A CLAP library is now opened with those boxes off for that call (`SetThreadErrorMode`), wherever it's opened. The scanner already had them off for the whole process. 6b's in-process loading needs the same for every format.
 
 ## 6b: Hosting plugins as devices — `src/hosting/`
 

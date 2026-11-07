@@ -261,8 +261,9 @@ TEST_CASE("The plugin library scans what changed, blocks what crashes, and fills
     CHECK_FALSE(status.scanning);
     CHECK(status.total == 3);
     CHECK(status.done == 3);
-    CHECK(status.plugins == 3); // two in the CLAP file, one VST3
-    CHECK(index.storedPlugins().size() == 3);
+    CHECK(index.storedPlugins().size() == 3); // two in the CLAP file, one VST3
+    CHECK(status.plugins == 2);               // the test plugin, in two formats, counted once
+    CHECK(status.formats == "CLAP 2, VST3 1");
 
     // The crash is blocked, with why.
     const auto problems = lib.problems();
@@ -350,6 +351,11 @@ TEST_CASE("The plugin library scans what changed, blocks what crashes, and fills
         shown = index.find(inside);
         REQUIRE(shown.size() == 1);
         CHECK(shown[0].name == "Lattice Test Plugin");
+        // Grouped by format, each format's folder has all of its own, the preferred or not.
+        inside.folder = folders[0].key;
+        shown = index.find(inside);
+        CHECK(shown.size() == 2);
+        CHECK(itemNamed(shown, "Lattice Test Plugin") != nullptr);
 
         settings.grouping = PluginGrouping::type;
         lib.setSettings(settings);
@@ -358,6 +364,10 @@ TEST_CASE("The plugin library scans what changed, blocks what crashes, and fills
         REQUIRE(folders.size() == 2);
         CHECK(folders[0].name == "Instruments");
         CHECK(folders[1].name == "MIDI Effects");
+        inside.folder = folders[0].key;
+        shown = index.find(inside);
+        REQUIRE(shown.size() == 1); // once again, as the VST3
+        CHECK(shown[0].detail.contains("VST3"));
     }
     SECTION("What's built in being set again leaves the plugins")
     {

@@ -1087,7 +1087,11 @@ public:
             text = st.total > 0 ? "Scanning: " + juce::String(st.done) + " of " + juce::String(st.total) + " files..."
                                 : juce::String("Looking for plugins...");
         else
+        {
             text = juce::String(st.plugins) + (st.plugins == 1 ? " plugin" : " plugins");
+            if (st.formats.isNotEmpty())
+                text << " (" << st.formats << ")";
+        }
         if (st.lastError.isNotEmpty() && !st.scanning)
             text << " (the last scan stopped: " << st.lastError << ")";
         status.setText(text, juce::dontSendNotification);

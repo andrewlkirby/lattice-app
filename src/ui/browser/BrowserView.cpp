@@ -8,6 +8,7 @@
 #include "ui/theme/LatticeLookAndFeel.h"
 #include "ui/widgets/Accessible.h"
 
+#include <array>
 #include <cmath>
 #include <unordered_map>
 
@@ -123,20 +124,29 @@ public:
     int rowHeight() const { return juce::roundToInt(themeOf(*this).controlHeight); }
     int first() const { return static_cast<int>(scroll.getCurrentRangeStart()); }
 
-    /** A detail's width in the font: measured once, as the same few ("0.25 s · 48 kHz", "Audio
-        Effect") recur down the list and measuring costs as much as drawing. */
-    int widthOfDetail(const juce::Font& font, const juce::String& detail)
+    /** A text's width in a font: measured once, as the same details ("0.25 s · 48 kHz", "Audio
+        Effect") recur down the list, the same names come back as it scrolls, and measuring costs
+        as much as drawing. A cache for each of the two fonts rows use. */
+    int widthOfText(const juce::Font& font, const juce::String& text)
     {
-        if (font != detailFont || detailWidths.size() > 4096)
+        auto* cache = &widths[0];
+        for (auto& c : widths)
+            if (c.font == font)
+                cache = &c;
+        if (cache->font != font)
         {
-            detailWidths.clear();
-            detailFont = font;
+            cache = &widths[nextCache];
+            nextCache = (nextCache + 1) % widths.size();
+            cache->font = font;
+            cache->sizes.clear();
         }
-        const auto it = detailWidths.find(detail);
-        if (it != detailWidths.end())
+        if (cache->sizes.size() > 4096)
+            cache->sizes.clear();
+        const auto it = cache->sizes.find(text);
+        if (it != cache->sizes.end())
             return it->second;
-        const int w = juce::GlyphArrangement::getStringWidthInt(font, detail);
-        detailWidths.emplace(detail, w);
+        const int w = juce::GlyphArrangement::getStringWidthInt(font, text);
+        cache->sizes.emplace(text, w);
         return w;
     }
 
@@ -234,7 +244,8 @@ public:
             drawIcon(g, iconFor(row.item), icon.toFloat().reduced(h * 0.28f), row.item.kind == Kind::folder ? t.textDim : t.accent, t);
             content.removeFromLeft(juce::roundToInt(t.spacing));
 
-            // Collection dots on the right, then the detail, then the name gets what's left.
+            // Collection dots on the right, then the detail, in what the name leaves (at most half
+            // the row): the name is what a row is found by, so it's cut last.
             for (int c = library::LibraryIndex::numCollections - 1; c >= 0; --c)
                 if (row.item.inCollection(c))
                 {
@@ -242,8 +253,10 @@ public:
                     g.setColour(collectionColour(c, t));
                     g.fillEllipse(dot);
                 }
+            const auto nameWidth = widthOfText(juce::Font(t.font(t.fontNormal)), row.item.name) + juce::roundToInt(t.spacing * 2.0f);
             g.setFont(juce::Font(t.font(t.fontSmall)));
-            const auto detailWidth = juce::jmin(content.getWidth() / 2, widthOfDetail(g.getCurrentFont(), row.item.detail) + juce::roundToInt(t.spacing));
+            const auto detailWidth = juce::jmin(content.getWidth() / 2, juce::jmax(0, content.getWidth() - nameWidth),
+                                                widthOfText(g.getCurrentFont(), row.item.detail) + juce::roundToInt(t.spacing));
             const auto detail = content.removeFromRight(detailWidth);
             g.setColour(isSelected ? t.text : t.textDim);
             g.drawText(row.item.detail, detail, juce::Justification::centredRight, true);
@@ -419,8 +432,13 @@ private:
 
     BrowserView& owner;
     juce::ScrollBar scroll{true};
-    std::unordered_map<juce::String, int> detailWidths;
-    juce::Font detailFont{juce::FontOptions{}};
+    struct Widths
+    {
+        juce::Font font{juce::FontOptions{}};
+        std::unordered_map<juce::String, int> sizes;
+    };
+    std::array<Widths, 2> widths;
+    std::size_t nextCache = 0;
     int pressedRow = -1;
     bool dragging = false;
 };

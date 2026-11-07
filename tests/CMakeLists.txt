@@ -51,6 +51,7 @@ add_executable(lattice_tests
     engine/TestToneTests.cpp
     engine/TrackTuningSettingsTests.cpp
     hosting/PluginScanTests.cpp
+    hosting/PluginWalkthroughTests.cpp
     library/LibraryTests.cpp
     platform/PathsTests.cpp
     resources/ResourceTests.cpp
@@ -167,6 +168,10 @@ if(TARGET LatticeTestPlugin_LV2)
 endif()
 
 add_dependencies(lattice_tests LatticePluginScanner)
+# Beside the tests too, where a shell's plugin library looks for it (PluginLibrary::scannerBesideApp).
+add_custom_command(TARGET lattice_tests POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:LatticePluginScanner>" "$<TARGET_FILE_DIR:lattice_tests>"
+    VERBATIM)
 target_compile_definitions(lattice_tests PRIVATE "LATTICE_PLUGIN_SCANNER=\"$<TARGET_FILE:LatticePluginScanner>\"")
 
 # Tags become ctest labels. Heavy tags ([slow] [bench] [stress] [hardware] [timing]) are left out

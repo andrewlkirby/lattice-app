@@ -65,7 +65,8 @@ public:
     {
         bool scanning = false;
         int done = 0, total = 0; // files, in this scan
-        int plugins = 0;         // found, in all
+        int plugins = 0;         // found, counting a plugin in several formats once
+        juce::String formats;    // how many in each format: "CLAP 2, VST3 2"
         juce::String lastError;  // why the last scan stopped early, if it did
     };
     Status status() const;

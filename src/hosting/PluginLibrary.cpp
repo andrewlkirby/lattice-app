@@ -51,9 +51,12 @@ PluginFile::Status statusOf(scan::PluginScanner::Outcome outcome)
 PluginLibrary::PluginLibrary(library::LibraryIndex& i, juce::File scanner, juce::File work)
     : juce::Thread("Plugin scan"), index(i), scannerFile(std::move(scanner)), workFolder(std::move(work))
 {
+    // The browser's rows and the counts from what the last session found, on the scan's thread.
+    if (!index.pluginFiles().empty())
     {
-        const std::lock_guard<std::mutex> hold(statusLock);
-        state.plugins = static_cast<int>(index.storedPlugins().size());
+        const std::lock_guard<std::mutex> hold(requestLock);
+        rebuildRequested = true;
+        busy = true;
     }
     startThread(juce::Thread::Priority::low);
 }
@@ -242,7 +245,6 @@ void PluginLibrary::run()
         {
             const std::lock_guard<std::mutex> hold(statusLock);
             state.scanning = false;
-            state.plugins = static_cast<int>(index.storedPlugins().size());
         }
         triggerAsyncUpdate();
     }
@@ -368,8 +370,12 @@ void PluginLibrary::rebuildItems()
         return i >= 0 ? i : order.size();
     };
 
-    // One of each plugin: the same name and vendor in several formats is the same plugin.
+    // One of each plugin: the same name and vendor in several formats is the same plugin. Grouped
+    // by format, though, each format's folder shows all of its own: that's how one is chosen.
+    const bool everyFormat = settings.grouping == PluginGrouping::format;
     std::map<std::pair<juce::String, juce::String>, scan::ScannedPlugin> chosen;
+    std::map<juce::String, int> perFormat;
+    std::set<std::pair<juce::String, juce::String>> distinct;
     for (const auto& stored : index.storedPlugins())
     {
         const auto xml = juce::parseXML(stored.xml);
@@ -379,10 +385,27 @@ void PluginLibrary::rebuildItems()
         if (!plugin)
             continue;
         const auto& d = plugin->description;
-        const std::pair<juce::String, juce::String> same{d.name.toLowerCase(), d.manufacturerName.trim().toLowerCase()};
+        ++perFormat[d.pluginFormatName];
+        std::pair<juce::String, juce::String> same{d.name.toLowerCase(), d.manufacturerName.trim().toLowerCase()};
+        distinct.insert(same);
+        if (everyFormat)
+            same.second << '\t' << d.pluginFormatName; // a tab: in no vendor's name
         const auto at = chosen.find(same);
         if (at == chosen.end() || rank(d.pluginFormatName) < rank(at->second.description.pluginFormatName))
             chosen[same] = std::move(*plugin);
+    }
+    {
+        // "2 plugins (CLAP 2, VST3 2)": what the browser shows, and in which formats.
+        juce::StringArray formats;
+        for (const auto& name : order)
+            if (perFormat.count(name) > 0)
+                formats.add(name + " " + juce::String(perFormat[name]));
+        for (const auto& [name, n] : perFormat)
+            if (!order.contains(name))
+                formats.add(name + " " + juce::String(n));
+        const std::lock_guard<std::mutex> hold(statusLock);
+        state.plugins = static_cast<int>(distinct.size());
+        state.formats = formats.joinIntoString(", ");
     }
 
     std::vector<Item> items;

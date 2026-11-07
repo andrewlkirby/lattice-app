@@ -5,6 +5,11 @@
 #include <cstdint>
 #include <cstring>
 
+#if JUCE_WINDOWS
+// Rather than all of windows.h: the one call used.
+extern "C" __declspec(dllimport) int __stdcall SetThreadErrorMode(unsigned long newMode, unsigned long* oldMode);
+#endif
+
 namespace lattice::hosting
 {
 
@@ -16,6 +21,23 @@ void hostRequest(const clap_host_t*) {}
 
 const clap_host_t scanHost{CLAP_VERSION_INIT, nullptr, "Lattice", "Lattice", "", "0.1",
                            hostExtension,     hostRequest, hostRequest, hostRequest};
+
+/** Opens a plugin's library with no system dialog: on Windows a file that isn't a library, or one
+    whose own libraries are missing, otherwise shows a "Bad Image" box that waits for a click. */
+bool openQuietly(juce::DynamicLibrary& library, const juce::File& file)
+{
+#if JUCE_WINDOWS
+    constexpr unsigned long failCriticalErrors = 0x0001, noOpenFileErrorBox = 0x8000;
+    unsigned long old = 0;
+    const bool set = SetThreadErrorMode(failCriticalErrors | noOpenFileErrorBox, &old) != 0;
+    const bool opened = library.open(file.getFullPathName());
+    if (set)
+        SetThreadErrorMode(old, nullptr);
+    return opened;
+#else
+    return library.open(file.getFullPathName());
+#endif
+}
 
 /** The file the CLAP entry is in: the .clap file itself, or on macOS the bundle's binary. */
 juce::File binaryOf(const juce::File& clap)
@@ -123,7 +145,7 @@ std::vector<scan::ScannedPlugin> ClapPluginFormat::scanFile(const juce::String& 
     std::vector<scan::ScannedPlugin> result;
     const juce::File file(path);
     juce::DynamicLibrary library;
-    if (!library.open(binaryOf(file).getFullPathName()))
+    if (!openQuietly(library, binaryOf(file)))
     {
         error = "couldn't be loaded";
         return result;
