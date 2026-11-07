@@ -16,7 +16,6 @@ std::vector<ParameterSpec> makeSpecs()
         spec.group = group;
         s[static_cast<std::size_t>(index)] = std::move(spec);
     };
-    const auto pct = [](float v) { return juce::String(juce::roundToInt(v * 100.0f)) + " %"; };
     set(P::threshold, ParameterSpec::continuous("comp.threshold", "Threshold", -60.0f, 0.0f, -18.0f, ParamUnit::Decibels),
         "Compressor");
     set(P::ratio, ParameterSpec::continuous("comp.ratio", "Ratio", 1.0f, 100.0f, 4.0f, ParamUnit::Ratio)
@@ -31,7 +30,7 @@ std::vector<ParameterSpec> makeSpecs()
         "Compressor");
     set(P::knee, ParameterSpec::continuous("comp.knee", "Knee", 0.0f, 24.0f, 6.0f, ParamUnit::Decibels), "Compressor");
     set(P::makeup, ParameterSpec::continuous("comp.makeup", "Makeup", -12.0f, 36.0f, 0.0f, ParamUnit::Decibels), "Compressor");
-    set(P::mix, ParameterSpec::continuous("comp.mix", "Dry/Wet", 0.0f, 1.0f, 1.0f, ParamUnit::Percent).withFormatter(pct),
+    set(P::mix, ParameterSpec::continuous("comp.mix", "Dry/Wet", 0.0f, 1.0f, 1.0f, ParamUnit::Percent).shownAsPercent(),
         "Compressor");
     set(P::detection, ParameterSpec::choice("comp.detection", "Detection", {"Peak", "RMS"}, 0), "Compressor");
     set(P::sidechainOn, ParameterSpec::toggle("comp.sidechain", "Sidechain", false), "Sidechain");

@@ -12,26 +12,9 @@ namespace
 {
 using P = SynthDevice::Param;
 
-juce::String percent(float v)
-{
-    return juce::String(juce::roundToInt(v * 100.0f)) + " %";
-}
-
-juce::String signedPercent(float v)
-{
-    const int p = juce::roundToInt(v * 100.0f);
-    return (p > 0 ? "+" : "") + juce::String(p) + " %";
-}
-
 juce::String octaves(float v)
 {
     return (v > 0.0f ? "+" : "") + juce::String(v, 2) + " oct";
-}
-
-juce::String panText(float v)
-{
-    const int p = juce::roundToInt(std::abs(v) * 50.0f);
-    return p == 0 ? juce::String("C") : juce::String(p) + (v < 0.0f ? "L" : "R");
 }
 
 ParameterSpec time(const char* id, const char* name, float def, float max = 20000.0f)
@@ -41,7 +24,7 @@ ParameterSpec time(const char* id, const char* name, float def, float max = 2000
 
 ParameterSpec level01(const char* id, const char* name, float def)
 {
-    return ParameterSpec::continuous(id, name, 0.0f, 1.0f, def, ParamUnit::Percent).withFormatter(percent);
+    return ParameterSpec::continuous(id, name, 0.0f, 1.0f, def, ParamUnit::Percent).shownAsPercent();
 }
 
 std::vector<ParameterSpec> makeSpecs()
@@ -71,7 +54,7 @@ std::vector<ParameterSpec> makeSpecs()
             group);
         set(base + 4,
             ParameterSpec::continuous(id("pw"), "Pulse Width", 0.02f, 0.98f, 0.5f, ParamUnit::Percent)
-                .withFormatter(percent),
+                .shownAsPercent(),
             group);
         set(base + 5, ParameterSpec::choice(id("table"), "Wavetable", tables, 0), group);
         set(base + 6, level01(id("position").toRawUTF8(), "Position", 0.0f), group);
@@ -150,7 +133,7 @@ std::vector<ParameterSpec> makeSpecs()
         set(base + 0, ParameterSpec::choice("mod" + n + ".source", "Source " + n, sources, 0), "Mod Matrix");
         set(base + 1, ParameterSpec::choice("mod" + n + ".dest", "Dest " + n, dests, 0), "Mod Matrix");
         set(base + 2,
-            ParameterSpec::continuous("mod" + n + ".amount", "Amount " + n, -1.0f, 1.0f, 0.0f).withFormatter(signedPercent),
+            ParameterSpec::continuous("mod" + n + ".amount", "Amount " + n, -1.0f, 1.0f, 0.0f).shownAsPercent(0, true),
             "Mod Matrix");
     }
 
@@ -163,7 +146,7 @@ std::vector<ParameterSpec> makeSpecs()
     set(P::outVolume,
         ParameterSpec::continuous("out.volume", "Volume", -70.0f, 6.0f, -6.0f, ParamUnit::Decibels).withCentre(-12.0f),
         "Output");
-    set(P::outPan, ParameterSpec::continuous("out.pan", "Pan", -1.0f, 1.0f, 0.0f).withFormatter(panText), "Output");
+    set(P::outPan, ParameterSpec::continuous("out.pan", "Pan", -1.0f, 1.0f, 0.0f).shownAsPan(), "Output");
     set(P::tuningMode, ParameterSpec::choice("voice.tuning", "Tuning", {"Track", "Fixed (12-TET)", "Nearest Step"}, 0), "Voice");
     return s;
 }

@@ -28,25 +28,6 @@ namespace
 const juce::Identifier macroCountId{"macroCount"};
 const juce::Identifier tunedPadsId{"tunedPads"};
 
-juce::String panText(float v)
-{
-    const int amount = juce::roundToInt(std::abs(v) * 50.0f);
-    return amount == 0 ? juce::String("C") : juce::String(amount) + (v < 0.0f ? "L" : "R");
-}
-
-std::optional<float> parsePan(const juce::String& text)
-{
-    const auto t = text.trim().toUpperCase();
-    if (t == "C" || t.isEmpty())
-        return 0.0f;
-    const float amount = t.getFloatValue() / 50.0f;
-    if (t.endsWithChar('L'))
-        return -amount;
-    if (t.endsWithChar('R'))
-        return amount;
-    return juce::jlimit(-1.0f, 1.0f, t.getFloatValue());
-}
-
 /** A binding to a property of a rack chain (its mix, its choke group, its play note). */
 std::unique_ptr<ValueBinding> chainValue(DeviceContext& c, juce::ValueTree chain, ParameterSpec spec, juce::Identifier id)
 {
@@ -73,7 +54,7 @@ ParameterSpec chainVolumeSpec()
 
 ParameterSpec chainPanSpec()
 {
-    return ParameterSpec::continuous("chain.pan", "Chain Pan", -1.0f, 1.0f, 0.0f).inGroup("Chain").withFormatter(panText).withParser(parsePan);
+    return ParameterSpec::continuous("chain.pan", "Chain Pan", -1.0f, 1.0f, 0.0f).inGroup("Chain").shownAsPan();
 }
 
 int trackIndexOf(DeviceContext& c, const juce::ValueTree& node)
@@ -457,15 +438,22 @@ public:
         if (pad)
         {
             choke = std::make_unique<NumberBox>(chainValue(context, chain,
-                                                           ParameterSpec::integer("pad.choke", "Choke", 0, 16, 0).inGroup("Pad").withFormatter([](float v) {
-                                                               return v < 0.5f ? juce::String("-") : "C" + juce::String(juce::roundToInt(v));
-                                                           }),
+                                                           ParameterSpec::integer("pad.choke", "Choke", 0, 16, 0)
+                                                               .inGroup("Pad")
+                                                               .withFormatter([](float v) {
+                                                                   return v < 0.5f ? juce::String("-") : "C" + juce::String(juce::roundToInt(v));
+                                                               })
+                                                               .withParser([](const juce::String& text) -> std::optional<float> {
+                                                                   const auto t = text.trimCharactersAtStart("cC");
+                                                                   if (t == "-" || t.isEmpty())
+                                                                       return 0.0f;
+                                                                   if (!t.containsOnly("0123456789"))
+                                                                       return std::nullopt;
+                                                                   return static_cast<float>(t.getIntValue());
+                                                               }),
                                                            ids::chokeGroup));
             tune = std::make_unique<NumberBox>(chainValue(context, chain,
-                                                          ParameterSpec::integer("pad.tune", "Tune", 0, 127, 60).inGroup("Pad").withFormatter([](float v) {
-                                                              const int st = juce::roundToInt(v) - 60;
-                                                              return st == 0 ? juce::String("0 st") : (st > 0 ? "+" : "") + juce::String(st) + " st";
-                                                          }),
+                                                          ParameterSpec::integer("pad.tune", "Tune", 0, 127, 60).inGroup("Pad").shownScaled(1.0, " st", 0, true, 60.0),
                                                           ids::playNote));
             choke->setTooltip("The pad's choke group: a pad cuts the others in its group (- for none).");
             tune->setTooltip("The pad's tuning, in semitones (the note its chain plays, from 60).");

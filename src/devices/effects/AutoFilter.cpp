@@ -18,13 +18,12 @@ std::vector<ParameterSpec> makeSpecs()
         spec.group = group;
         s[static_cast<std::size_t>(index)] = std::move(spec);
     };
-    const auto pct = [](float v) { return juce::String(juce::roundToInt(v * 100.0f)) + " %"; };
     const auto oct = [](float v) { return (v > 0.0f ? "+" : "") + juce::String(v, 2) + " oct"; };
     set(P::type,
         ParameterSpec::choice("af.type", "Type", {"Low-pass 12", "Low-pass 24", "High-pass 12", "High-pass 24", "Band-pass", "Notch", "Ladder"}, 1),
         "Filter");
     set(P::cutoff, ParameterSpec::continuous("af.cutoff", "Cutoff", 20.0f, 20000.0f, 1500.0f, ParamUnit::Hz).withCentre(1000.0f), "Filter");
-    set(P::resonance, ParameterSpec::continuous("af.resonance", "Resonance", 0.0f, 1.0f, 0.3f, ParamUnit::Percent).withFormatter(pct), "Filter");
+    set(P::resonance, ParameterSpec::continuous("af.resonance", "Resonance", 0.0f, 1.0f, 0.3f, ParamUnit::Percent).shownAsPercent(), "Filter");
     set(P::drive, ParameterSpec::continuous("af.drive", "Drive", 0.0f, 24.0f, 0.0f, ParamUnit::Decibels), "Filter");
     set(P::lfoAmount, ParameterSpec::continuous("af.lfoAmount", "LFO Amount", 0.0f, 6.0f, 1.0f).withFormatter(oct), "LFO");
     set(P::lfoShape, ParameterSpec::choice("af.lfoShape", "Shape", {"Sine", "Triangle", "Saw Up", "Saw Down", "Square", "S&H"}, 0), "LFO");
@@ -37,7 +36,7 @@ std::vector<ParameterSpec> makeSpecs()
     set(P::envAmount, ParameterSpec::continuous("af.envAmount", "Env Amount", -6.0f, 6.0f, 0.0f).withFormatter(oct), "Envelope");
     set(P::envAttack, ParameterSpec::continuous("af.envAttack", "Attack", 0.1f, 300.0f, 6.0f, ParamUnit::Milliseconds).withCentre(20.0f), "Envelope");
     set(P::envRelease, ParameterSpec::continuous("af.envRelease", "Release", 1.0f, 3000.0f, 200.0f, ParamUnit::Milliseconds).withCentre(200.0f), "Envelope");
-    set(P::mix, ParameterSpec::continuous("af.mix", "Dry/Wet", 0.0f, 1.0f, 1.0f, ParamUnit::Percent).withFormatter(pct), "Envelope");
+    set(P::mix, ParameterSpec::continuous("af.mix", "Dry/Wet", 0.0f, 1.0f, 1.0f, ParamUnit::Percent).shownAsPercent(), "Envelope");
     return s;
 }
 } // namespace

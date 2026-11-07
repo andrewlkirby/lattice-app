@@ -16,7 +16,7 @@ std::vector<ParameterSpec> specs()
     std::vector<ParameterSpec> s;
     s.push_back(ParameterSpec::continuous("sawMix", "Saw Mix", 0.0f, 1.0f, 0.35f, ParamUnit::Percent)
                     .inGroup("Sound")
-                    .withFormatter([](float v) { return juce::String(juce::roundToInt(v * 100.0f)) + " %"; }));
+                    .shownAsPercent());
     return s;
 }
 } // namespace

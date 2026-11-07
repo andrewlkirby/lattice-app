@@ -25,9 +25,7 @@ std::vector<ParameterSpec> makeSpecs()
     set(P::drive, ParameterSpec::continuous("sat.drive", "Drive", 0.0f, 36.0f, 6.0f, ParamUnit::Decibels));
     set(P::output, ParameterSpec::continuous("sat.output", "Output", -36.0f, 6.0f, -3.0f, ParamUnit::Decibels));
     set(P::oversampling, ParameterSpec::choice("sat.oversampling", "Oversampling", {"2x", "4x"}, 0));
-    set(P::mix, ParameterSpec::continuous("sat.mix", "Dry/Wet", 0.0f, 1.0f, 1.0f, ParamUnit::Percent).withFormatter([](float v) {
-        return juce::String(juce::roundToInt(v * 100.0f)) + " %";
-    }));
+    set(P::mix, ParameterSpec::continuous("sat.mix", "Dry/Wet", 0.0f, 1.0f, 1.0f, ParamUnit::Percent).shownAsPercent());
     return s;
 }
 } // namespace

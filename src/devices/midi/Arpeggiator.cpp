@@ -24,9 +24,7 @@ std::vector<ParameterSpec> makeSpecs()
     set(P::rate, ParameterSpec::choice("arp.rate", "Rate", dsp::SyncRates::names(), dsp::SyncRates::indexOf("1/16")),
         "Arpeggiator");
     set(P::gate,
-        ParameterSpec::continuous("arp.gate", "Gate", 0.01f, 2.0f, 0.5f, ParamUnit::Percent).withFormatter([](float v) {
-            return juce::String(juce::roundToInt(v * 100.0f)) + " %";
-        }),
+        ParameterSpec::continuous("arp.gate", "Gate", 0.01f, 2.0f, 0.5f, ParamUnit::Percent).shownAsPercent(),
         "Arpeggiator");
     set(P::range, ParameterSpec::integer("arp.range", "Ranges", 1, 8, 1), "Arpeggiator");
     set(P::distance, ParameterSpec::integer("arp.distance", "Distance", -48, 48, 12, ParamUnit::TableSteps),

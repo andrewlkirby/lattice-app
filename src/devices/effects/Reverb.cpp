@@ -27,9 +27,8 @@ std::vector<ParameterSpec> makeSpecs()
         spec.group = group;
         s[static_cast<std::size_t>(index)] = std::move(spec);
     };
-    const auto pct = [](float v) { return juce::String(juce::roundToInt(v * 100.0f)) + " %"; };
     const auto times = [](float v) { return juce::String(v, 2) + " x"; };
-    set(P::size, ParameterSpec::continuous("reverb.size", "Size", 0.0f, 1.0f, 0.6f, ParamUnit::Percent).withFormatter(pct), "Reverb");
+    set(P::size, ParameterSpec::continuous("reverb.size", "Size", 0.0f, 1.0f, 0.6f, ParamUnit::Percent).shownAsPercent(), "Reverb");
     set(P::decay, ParameterSpec::continuous("reverb.decay", "Decay", 0.2f, 60.0f, 2.5f, ParamUnit::Seconds).withCentre(3.0f), "Reverb");
     set(P::lowDecay, ParameterSpec::continuous("reverb.lowDecay", "Low Decay", 0.25f, 4.0f, 1.2f).withCentre(1.0f).withFormatter(times), "Decay");
     set(P::highDecay, ParameterSpec::continuous("reverb.highDecay", "High Decay", 0.1f, 2.0f, 0.5f).withCentre(1.0f).withFormatter(times), "Decay");
@@ -38,17 +37,17 @@ std::vector<ParameterSpec> makeSpecs()
     set(P::predelay, ParameterSpec::continuous("reverb.predelay", "Pre-Delay", 0.0f, 500.0f, 10.0f, ParamUnit::Milliseconds).withCentre(50.0f), "Reverb");
     set(P::predelaySync, ParameterSpec::toggle("reverb.predelaySync", "Pre-Delay Sync", false), "Reverb");
     set(P::predelayBeats, ParameterSpec::choice("reverb.predelayBeats", "Synced Pre-Delay", dsp::SyncRates::names(), dsp::SyncRates::indexOf("1/32")), "Reverb");
-    set(P::diffusion, ParameterSpec::continuous("reverb.diffusion", "Diffusion", 0.0f, 1.0f, 0.7f, ParamUnit::Percent).withFormatter(pct), "Character");
+    set(P::diffusion, ParameterSpec::continuous("reverb.diffusion", "Diffusion", 0.0f, 1.0f, 0.7f, ParamUnit::Percent).shownAsPercent(), "Character");
     set(P::shape, ParameterSpec::choice("reverb.shape", "Shape", {"Room", "Hall", "Chamber", "Plate"}, 1), "Character");
     set(P::earlyLevel, ParameterSpec::continuous("reverb.early", "Early", -70.0f, 6.0f, -6.0f, ParamUnit::Decibels).withCentre(-12.0f), "Character");
     set(P::lateLevel, ParameterSpec::continuous("reverb.late", "Late", -70.0f, 6.0f, 0.0f, ParamUnit::Decibels).withCentre(-12.0f), "Character");
-    set(P::modulation, ParameterSpec::continuous("reverb.modulation", "Modulation", 0.0f, 1.0f, 0.3f, ParamUnit::Percent).withFormatter(pct), "Character");
-    set(P::width, ParameterSpec::continuous("reverb.width", "Width", 0.0f, 1.5f, 1.0f, ParamUnit::Percent).withFormatter(pct), "Output");
+    set(P::modulation, ParameterSpec::continuous("reverb.modulation", "Modulation", 0.0f, 1.0f, 0.3f, ParamUnit::Percent).shownAsPercent(), "Character");
+    set(P::width, ParameterSpec::continuous("reverb.width", "Width", 0.0f, 1.5f, 1.0f, ParamUnit::Percent).shownAsPercent(), "Output");
     set(P::lowCut, ParameterSpec::continuous("reverb.lowCut", "Low Cut", 20.0f, 2000.0f, 60.0f, ParamUnit::Hz).withCentre(200.0f), "Output");
     set(P::highCut, ParameterSpec::continuous("reverb.highCut", "High Cut", 1000.0f, 20000.0f, 16000.0f, ParamUnit::Hz).withCentre(6000.0f), "Output");
     set(P::freeze, ParameterSpec::toggle("reverb.freeze", "Freeze", false), "Output");
     set(P::quality, ParameterSpec::choice("reverb.quality", "Quality", {"Eco", "High", "Ultra"}, 1), "Output");
-    set(P::mix, ParameterSpec::continuous("reverb.mix", "Dry/Wet", 0.0f, 1.0f, 0.3f, ParamUnit::Percent).withFormatter(pct), "Output");
+    set(P::mix, ParameterSpec::continuous("reverb.mix", "Dry/Wet", 0.0f, 1.0f, 0.3f, ParamUnit::Percent).shownAsPercent(), "Output");
     return s;
 }
 

@@ -19,20 +19,9 @@ namespace
 {
 using P = SamplerDevice::Param;
 
-juce::String percent(float v)
-{
-    return juce::String(v * 100.0f, 1) + " %";
-}
-
-juce::String panText(float v)
-{
-    const int p = juce::roundToInt(std::abs(v) * 50.0f);
-    return p == 0 ? juce::String("C") : juce::String(p) + (v < 0.0f ? "L" : "R");
-}
-
 ParameterSpec level01(const char* id, const char* name, float def)
 {
-    return ParameterSpec::continuous(id, name, 0.0f, 1.0f, def, ParamUnit::Percent).withFormatter(percent);
+    return ParameterSpec::continuous(id, name, 0.0f, 1.0f, def, ParamUnit::Percent).shownAsPercent(1);
 }
 
 ParameterSpec time(const char* id, const char* name, float def, float max = 20000.0f)
@@ -102,7 +91,7 @@ std::vector<ParameterSpec> makeSpecs()
     set(P::outVolume,
         ParameterSpec::continuous("out.volume", "Volume", -70.0f, 6.0f, -6.0f, ParamUnit::Decibels).withCentre(-12.0f),
         "Output");
-    set(P::outPan, ParameterSpec::continuous("out.pan", "Pan", -1.0f, 1.0f, 0.0f).withFormatter(panText), "Output");
+    set(P::outPan, ParameterSpec::continuous("out.pan", "Pan", -1.0f, 1.0f, 0.0f).shownAsPan(), "Output");
     return s;
 }
 

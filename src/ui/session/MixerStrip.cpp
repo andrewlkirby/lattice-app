@@ -19,10 +19,7 @@ ParameterSpec MixerStrip::panSpec()
 {
     return ParameterSpec::continuous("pan", "Pan", -1.0f, 1.0f, 0.0f)
         .inGroup("Mixer")
-        .withFormatter([](float v) {
-            const int amount = juce::roundToInt(std::abs(v) * 50.0f);
-            return amount == 0 ? juce::String("C") : juce::String(amount) + (v < 0.0f ? "L" : "R");
-        });
+        .shownAsPan();
 }
 
 ParameterSpec MixerStrip::sendSpec(const juce::String& returnName)

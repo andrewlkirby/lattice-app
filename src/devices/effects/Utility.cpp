@@ -16,13 +16,10 @@ std::vector<ParameterSpec> makeSpecs()
         s[static_cast<std::size_t>(index)] = std::move(spec);
     };
     set(P::gain, ParameterSpec::continuous("utility.gain", "Gain", -70.0f, 35.0f, 0.0f, ParamUnit::Decibels).withCentre(0.0f));
-    set(P::balance, ParameterSpec::continuous("utility.balance", "Balance", -1.0f, 1.0f, 0.0f).withFormatter([](float v) {
-        const int p = juce::roundToInt(std::abs(v) * 50.0f);
-        return p == 0 ? juce::String("C") : juce::String(p) + (v < 0.0f ? "L" : "R");
-    }));
+    set(P::balance, ParameterSpec::continuous("utility.balance", "Balance", -1.0f, 1.0f, 0.0f).shownAsPan());
     set(P::width, ParameterSpec::continuous("utility.width", "Width", 0.0f, 4.0f, 1.0f, ParamUnit::Percent)
                       .withCentre(1.0f)
-                      .withFormatter([](float v) { return juce::String(juce::roundToInt(v * 100.0f)) + " %"; }));
+                      .shownAsPercent());
     set(P::mono, ParameterSpec::toggle("utility.mono", "Mono", false));
     set(P::invertLeft, ParameterSpec::toggle("utility.invertLeft", "Invert L", false));
     set(P::invertRight, ParameterSpec::toggle("utility.invertRight", "Invert R", false));

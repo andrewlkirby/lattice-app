@@ -133,6 +133,19 @@ struct ParameterSpec
         parser = std::move(p);
         return std::move(*this);
     }
+    /** For a value kept in other units than it's shown in: shows (plain - offset) * scale, with
+        `decimals` decimals, a "+" on positive numbers if `withSign`, then `suffix`; and reads a typed
+        number the same way, so what's typed means what's shown (typing "60" where a fraction shows
+        as a percentage sets 0.6, not 60). */
+    ParameterSpec&& shownScaled(double scale, juce::String suffix, int decimals = 0, bool withSign = false,
+                                double offset = 0.0) &&;
+    /** A fraction of 1 shown as a percentage: 0.6 is "60 %" (or "+60 %" with the sign). */
+    ParameterSpec&& shownAsPercent(int decimals = 0, bool withSign = false) &&
+    {
+        return std::move(*this).shownScaled(100.0, " %", decimals, withSign);
+    }
+    /** -1..1 shown as a pan: "50L", "C", "50R". A bare number is read on the same scale ("-20" is 20L). */
+    ParameterSpec&& shownAsPan() &&;
     ParameterSpec&& notModulatable() &&
     {
         modulatable = false;

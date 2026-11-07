@@ -124,12 +124,12 @@ std::unique_ptr<ValueBinding> binding(LiveSet& set, juce::UndoManager* undo, con
             return ParameterSpec::continuous("stepLength", "Length", static_cast<float>(notes::minLength), static_cast<float>(stepLength * 64.0),
                                              static_cast<float>(stepLength), ParamUnit::Beats)
                 .withCentre(static_cast<float>(stepLength * 4.0))
-                .withFormatter([stepLength](float v) { return juce::String(v / stepLength, 2) + " steps"; })
+                .shownScaled(1.0 / stepLength, " steps", 2)
                 .inGroup("Step");
         case Field::nudge:
             return ParameterSpec::continuous("stepNudge", "Nudge", static_cast<float>(-0.5 * stepLength), static_cast<float>(nudgeReach * stepLength),
                                              0.0f, ParamUnit::Beats)
-                .withFormatter([stepLength](float v) { return juce::String(juce::roundToInt(v / stepLength * 100.0)) + " %"; })
+                .shownScaled(100.0 / stepLength, " %")
                 .inGroup("Step");
         case Field::velocity: break;
         }
