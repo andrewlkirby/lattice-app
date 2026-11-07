@@ -10,6 +10,10 @@
 #include <numeric>
 #include <variant>
 
+#if JUCE_LINUX || JUCE_BSD
+#include <poll.h>
+#endif
+
 namespace lattice::hosting
 {
 
@@ -42,10 +46,13 @@ juce::AudioChannelSet channelSetFor(std::uint32_t channels)
 
 #if JUCE_WINDOWS
 constexpr const char* windowApi = CLAP_WINDOW_API_WIN32;
+constexpr bool hasWindowApi = true;
 #elif JUCE_LINUX || JUCE_BSD
 constexpr const char* windowApi = CLAP_WINDOW_API_X11;
+constexpr bool hasWindowApi = true;
 #else
 constexpr const char* windowApi = nullptr; // macOS windows come with the macOS port
+constexpr bool hasWindowApi = false;
 #endif
 } // namespace
 
@@ -1182,7 +1189,7 @@ bool ClapPluginInstance::unwatchFd(int fd)
 
 bool ClapPluginInstance::hasEditor() const
 {
-    return gui != nullptr && windowApi != nullptr && gui->is_api_supported(plugin, windowApi, false);
+    return hasWindowApi && gui != nullptr && gui->is_api_supported(plugin, windowApi, false);
 }
 
 juce::AudioProcessorEditor* ClapPluginInstance::createEditor()

@@ -117,14 +117,6 @@ struct Fixture
     std::uint64_t violationsBefore = 0;
 };
 
-float peakOf(const std::vector<float>& signal, std::size_t from = 0)
-{
-    float p = 0.0f;
-    for (std::size_t i = from; i < signal.size(); ++i)
-        p = std::max(p, std::abs(signal[i]));
-    return p;
-}
-
 /** Runs a device alone, as a chain does, for `samples`, and returns its left output. */
 std::vector<float> runAlone(StudioDevice& device, int samples, const std::vector<TimedMidi>& firstBlockMidi = {},
                             float input = 0.0f, const float* sidechainLevel = nullptr, std::vector<TimedMidi>* midiOut = nullptr)

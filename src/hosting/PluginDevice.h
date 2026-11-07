@@ -186,8 +186,8 @@ private:
 class PluginSpecDevice final : public StudioDevice
 {
 public:
-    PluginSpecDevice(const juce::String& typeId, const juce::String& name, std::vector<ParameterSpec> specs)
-        : StudioDevice(typeId, name, pluginTypes::kindOf(typeId), std::move(specs))
+    PluginSpecDevice(const juce::String& typeId, const juce::String& displayName, std::vector<ParameterSpec> specs)
+        : StudioDevice(typeId, displayName, pluginTypes::kindOf(typeId), std::move(specs))
     {
     }
 

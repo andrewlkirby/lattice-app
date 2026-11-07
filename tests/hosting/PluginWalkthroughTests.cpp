@@ -112,7 +112,11 @@ TEST_CASE("Walkthrough: 6a's plugin scan over real plugins, the browser and the 
 {
     const juce::File folder(juce::SystemStats::getEnvironmentVariable("LATTICE_PLUGIN_FOLDER", {}));
     if (!folder.isDirectory())
-        SKIP("Set LATTICE_PLUGIN_FOLDER to a folder of plugins");
+    {
+        // Not SKIP: its exception crashed while unwinding in some MSVC Release layouts (2026-11-08).
+        WARN("Set LATTICE_PLUGIN_FOLDER to a folder of plugins");
+        return;
+    }
     Walk w;
 
     // Preferences > Plugins, as a person sets it: the folder added, the standard folders off (so
@@ -279,7 +283,11 @@ TEST_CASE("Walkthrough: 6b, a real plugin on a track, its panel and its window",
     const juce::File folder(juce::SystemStats::getEnvironmentVariable("LATTICE_PLUGIN_FOLDER", {}));
     const auto name = juce::SystemStats::getEnvironmentVariable("LATTICE_WALKTHROUGH_PLUGIN", "Surge XT");
     if (!folder.isDirectory())
-        SKIP("Set LATTICE_PLUGIN_FOLDER to a folder of plugins");
+    {
+        // Not SKIP: its exception crashed while unwinding in some MSVC Release layouts (2026-11-08).
+        WARN("Set LATTICE_PLUGIN_FOLDER to a folder of plugins");
+        return;
+    }
     Walk w;
     hosting::PluginSettings s;
     s.useDefaultFolders = false;
