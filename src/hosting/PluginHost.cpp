@@ -51,6 +51,7 @@ PluginHost::PluginHost(SessionController& s, PluginLibrary* l) : session(s), lib
 {
     addHostedFormats(formatManager);
     pluginWindows = std::make_unique<PluginWindows>();
+    pluginWindows->onChange = [this] { sendChangeMessage(); };
     for (const auto* type : {pluginTypes::instrument, pluginTypes::audioEffect, pluginTypes::midiEffect})
         noParameters[kindIndex(type)] = std::make_unique<PluginSpecDevice>(type, "Plugin", std::vector<ParameterSpec>{});
     session.snapshots().setDeviceSource(this);
@@ -107,6 +108,11 @@ void PluginHost::describeDevice(LiveSet& set, juce::ValueTree device, const scan
         state.removeChild(old, undo);
     if (const auto xml = plugin.toXml())
         state.appendChild(juce::ValueTree::fromXml(*xml), undo);
+}
+
+std::optional<scan::ScannedPlugin> PluginHost::installedPlugin(const juce::String& key) const
+{
+    return library != nullptr ? library->plugin(key) : std::nullopt;
 }
 
 std::optional<scan::ScannedPlugin> PluginHost::pluginOf(const juce::ValueTree& device)
@@ -285,6 +291,7 @@ void PluginHost::loadNext()
 
 void PluginHost::finishLoading()
 {
+    session.flush(); // chains not yet built ask for their plugins now
     for (int guard = 0; guard < 1000 && (!queue.empty() || !ready.empty()); ++guard)
     {
         loadNext();

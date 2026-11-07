@@ -83,6 +83,8 @@ public:
     /** Makes a device node (just inserted, of typeFor()'s type) this plugin's: its name and
         description, as part of the edit under way. */
     static void describeDevice(LiveSet& set, juce::ValueTree device, const scan::ScannedPlugin& plugin);
+    /** An installed plugin by its key (a browser item's, after "plugin:"), if the library knows it. */
+    std::optional<scan::ScannedPlugin> installedPlugin(const juce::String& key) const;
     /** The plugin a device node is (from its STATE), if it is one. */
     static std::optional<scan::ScannedPlugin> pluginOf(const juce::ValueTree& device);
 

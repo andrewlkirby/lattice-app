@@ -292,6 +292,43 @@ The checks:
   - Windows open and close quickly, and a closed window frees its GUI resources.
 - **Changing sample rate or buffer size:** devices are re-prepared on the message thread, as with built-in devices, without rebuilding the set.
 
+### As built (6b, 2026-11-08)
+- **Plugin device types.** A plugin goes on a track as one of three types, which say only what it does in a chain: `plugin.instrument`, `plugin.effect` and `plugin.midi`. So the chain rules apply to plugins unchanged. Which plugin it is lives in the device's STATE:
+  - `PLUGIN`: its scan's description, as XML;
+  - `data`: its own state, base64;
+  - `configured`: the IDs of the parameters on its pages;
+  - `mpe`: whether it gets MPE.
+
+  The device node is named after the plugin, and `pluginWindow` remembers where its window was.
+- **The CLAP host** (`hosting/clap/ClapInstance`, `ClapEditor`) is a `juce::AudioPluginInstance`, so every format is hosted the same way.
+  - It has one bus per audio port, all always on.
+  - Parameters are grouped by module path.
+  - Notes go as CLAP note events with IDs when the plugin takes them, and as MIDI otherwise. MPE member channels become note expressions: tuning, pressure and brightness.
+  - Transport comes from the play head. Timers and thread checks are provided, plus fd callbacks on Linux.
+  - A latency change while the plugin is active becomes a restart, as CLAP requires.
+  - A library is shared per file, with `init`/`deinit` once per load, and opened with Windows' error boxes off. Every format's in-process loading now goes through `withoutErrorBoxes`.
+  - Its window is embedded in a child HWND (Windows) or an XEmbed window (Linux). It follows the monitor's scale, through `set_scale` and physical pixels. macOS waits for the macOS port.
+- **`HostedPluginDevice`.**
+  - Every plugin parameter is a `DeviceParameter`, but only those with a document value are the document's. Those values are watched by the audio thread and sent to the plugin when they change, including from a macro.
+  - The plugin's own changes and gestures are collected lock-free for the message thread.
+  - A device's document values reach it through the new `StudioDevice::applyDocumentValue`. A plugin stops watching a value that leaves the document, rather than resetting it.
+- **`PluginHost`** is the snapshot build's new `DeviceSource`.
+  - **Loading.** A plugin's first build gets a `PluginStandIn`. Plugins then load one per message-loop turn, with the stand-in swapped out once each is ready.
+  - **Missing or failed.** These stay stand-ins with the document untouched, and are retried after a scan.
+  - **New devices** start with the pages saved for that plugin, or its first 64 automatable parameters, written without an undo step as part of the insert.
+  - **The plugin's changes** to values in the document are written there. A gesture is one undo step, renamed as the value moves.
+  - **Configure** adds a parameter touched in the plugin's window to the pages.
+  - **State** is written into `data` a second after it settles, before the set is read whole or a device is copied (`LiveSet::flushDeviceState`), and when the device goes. Writing it into the node even after the node has left the set means undo brings the plugin back as it was.
+  - **Latency.** A reported change is followed within a reserve of half a second in the dry path (`StudioDevice::changeLatency`). The chain is published again even with the same devices (`SnapshotBuilder::refreshDevice`), so delay compensation follows. A CLAP restart hands the same plugin to a new device.
+- **The UI.**
+  - `DeviceSpecs::forDevice` describes a plugin device by its pages. The Device view, Device mode, MIDI Map targets, racks' macro lists and Find all use it.
+  - Plugins are inserted from the browser by drag or double-click, and hot-swap works.
+  - The plugin panel shows its status (loading, or why it's missing), Show/Hide window, Configure, and a Pages menu: every parameter by group, ticked if on the pages, plus saving the pages as the plugin's default, MPE, and plugin windows always on top.
+- **Not done, and why.**
+  - **Multi-out routing waits for audio tracks** (M8), since Live sends extra outputs to audio tracks. Until then, the extra outputs are turned off.
+  - **Allocations inside a plugin can only be counted on Linux.** On Windows each plugin DLL has its own `operator new`, which Lattice's hooks don't see.
+  - **Lock waits inside a plugin** can't be seen from outside on any OS.
+
 ## 6c: Tuning for plugins — `src/tuning/external/`
 
 ### MTS-ESP master

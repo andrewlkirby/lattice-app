@@ -1,3 +1,4 @@
+#include "devices/framework/PluginTypes.h"
 #include "devices/racks/Rack.h"
 #include "ui/device/DevicePanels.h"
 
@@ -25,6 +26,9 @@ Factory factoryFor(const juce::String& typeId)
         {"lattice.limiter", &limiter},
         {"lattice.arpeggiator", &arpeggiator},
         {"lattice.chord", &chord},
+        {pluginTypes::instrument, &plugin},
+        {pluginTypes::audioEffect, &plugin},
+        {pluginTypes::midiEffect, &plugin},
     };
     const auto it = factories.find(typeId);
     return it != factories.end() ? it->second : nullptr;

@@ -3,6 +3,7 @@
 #include "devices/ChainEditing.h"
 #include "devices/racks/Rack.h"
 #include "devices/racks/RackEditing.h"
+#include "hosting/PluginHost.h"
 #include "ui/device/DevicePanels.h"
 #include "ui/mapping/Targets.h"
 #include "ui/session/SessionView.h"
@@ -26,6 +27,8 @@ void forEachFrame(juce::Component& root, const std::function<void(DeviceFrame&)>
         forEachFrame(*child, fn);
     }
 }
+
+std::optional<hosting::scan::ScannedPlugin> pluginFor(const DeviceContext& context, const juce::String& description);
 
 /** The device type a description would insert ("" for a move or something unreadable). */
 juce::String typeOfDescription(const DeviceContext& context, const juce::String& description, presets::Preset* preset)
@@ -52,7 +55,30 @@ juce::String typeOfDescription(const DeviceContext& context, const juce::String&
     }
     if (drag::is(description, "move"))
         return context.set().deviceById(payload.getLargeIntValue())[ids::deviceType].toString();
+    if (drag::is(description, "plugin"))
+        if (const auto plugin = pluginFor(context, description))
+            return hosting::PluginHost::typeFor(*plugin);
     return {};
+}
+
+/** What the description names, if it's an installed plugin. */
+std::optional<hosting::scan::ScannedPlugin> pluginFor(const DeviceContext& context, const juce::String& description)
+{
+    if (!drag::is(description, "plugin") || context.plugins == nullptr)
+        return std::nullopt;
+    return context.plugins->installedPlugin(drag::payload(description));
+}
+
+/** Puts a plugin's device in a chain (the edit under way), or returns an invalid tree. */
+juce::ValueTree insertPlugin(DeviceContext& context, const juce::ValueTree& chain, const juce::String& description, int index)
+{
+    const auto plugin = pluginFor(context, description);
+    if (!plugin)
+        return {};
+    auto added = chains::insert(context.set(), chain, hosting::PluginHost::typeFor(*plugin), index, context.registry());
+    if (added.isValid())
+        hosting::PluginHost::describeDevice(context.set(), added, *plugin);
+    return added;
 }
 } // namespace
 
@@ -409,9 +435,10 @@ bool DeviceView::insert(const juce::String& description, const juce::ValueTree& 
     {
         // Never replace an instrument silently (M3 hands-on finding 4).
         const auto question = "This chain already has " + context.nameOf(placement.replaces) + ". Replace it with " +
-                              (drag::is(description, "move") ? context.nameOf(moving) : context.registry().find(type) != nullptr
-                                                                                             ? context.registry().find(type)->name
-                                                                                             : type) +
+                              (drag::is(description, "move")         ? context.nameOf(moving)
+                               : pluginFor(context, description)     ? pluginFor(context, description)->description.name
+                               : context.registry().find(type) != nullptr ? context.registry().find(type)->name
+                                                                          : type) +
                               "? (Hot-swap replaces a device without asking.)";
         juce::Component::SafePointer<DeviceView> safe(this);
         if (context.confirm)
@@ -463,6 +490,11 @@ bool DeviceView::insertNow(const juce::String& description, const juce::ValueTre
         if (chains::move(set, device, chain, index, registry))
             added = device;
     }
+    else if (const auto plugin = pluginFor(context, description))
+    {
+        context.beginEdit("Insert " + plugin->description.name, chain);
+        added = insertPlugin(context, chain, description, index);
+    }
     if (!added.isValid())
         return false;
     flushUpdates();
@@ -489,6 +521,8 @@ bool DeviceView::replaceDevice(const juce::ValueTree& target, const juce::String
     juce::ValueTree added;
     if (drag::is(description, "preset"))
         added = chains::insertCopy(set, chain, preset.device, index, registry);
+    else if (drag::is(description, "plugin"))
+        added = insertPlugin(context, chain, description, index);
     else
     {
         added = chains::insert(set, chain, type, index, registry);

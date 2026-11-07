@@ -194,12 +194,21 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
         libraryService->index(), hosting::PluginLibrary::scannerBesideApp(),
         juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("Lattice plugin scan"));
     pluginLibrary->setSettings(prefs::pluginSettings(settings), false);
+    pluginHost = std::make_unique<hosting::PluginHost>(session, pluginLibrary.get());
+    pluginHost->loadDefaultPages = [this](const juce::String& key) { return settings.getValue(prefs::pluginPagesKey + key); };
+    pluginHost->storeDefaultPages = [this](const juce::String& key, const juce::String& pages) {
+        settings.setValue(prefs::pluginPagesKey + key, pages);
+    };
+    pluginHost->windows().setAlwaysOnTop(settings.getBoolValue(prefs::pluginWindowsOnTopKey, false));
+    pluginHost->windows().onAlwaysOnTopChanged = [this](bool on) { settings.setValue(prefs::pluginWindowsOnTopKey, on); };
+    deviceSpecs.setDescriber([host = pluginHost.get()](const juce::ValueTree& device) { return host->describe(device); });
     deviceShared = std::make_unique<DeviceContext>(DeviceContext{.session = session,
                                                                  .feed = stateFeed,
                                                                  .specs = deviceSpecs,
                                                                  .presets = *presetLibrary,
                                                                  .tunings = tunings,
                                                                  .jobs = jobPool});
+    deviceShared->plugins = pluginHost.get();
     deviceShared->chooseFile = [this](const juce::String& title, const juce::String& patterns,
                                       std::function<void(const juce::File&)> chosen) {
         chooser = std::make_unique<juce::FileChooser>(title, juce::File::getSpecialLocation(juce::File::userMusicDirectory), patterns);

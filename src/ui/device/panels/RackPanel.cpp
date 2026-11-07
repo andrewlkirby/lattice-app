@@ -99,7 +99,7 @@ public:
     {
         knobs.clear();
         const int n = racks::macroCount(rack);
-        const auto* proto = context.specs.forType(rack[ids::deviceType].toString());
+        const auto* proto = context.specs.forDevice(rack);
         for (int m = 0; m < n; ++m)
         {
             const auto* p = proto->findParameter("macro" + juce::String(m + 1));
@@ -319,7 +319,7 @@ public:
                 Row row;
                 row.mapping = mapping;
                 const auto target = context.set().deviceById(static_cast<juce::int64>(mapping[ids::targetDevice]));
-                const auto* proto = context.specs.forType(target[ids::deviceType].toString());
+                const auto* proto = context.specs.forDevice(target);
                 const auto* p = proto != nullptr ? proto->findParameter(mapping[ids::parameter].toString()) : nullptr;
                 row.label = context.nameOf(target) + juce::String::fromUTF8(" \xe2\x80\xba ") + (p != nullptr ? p->spec().name : mapping[ids::parameter].toString());
                 for (const auto& [id, name] : {std::pair{ids::minimum, "Min"}, std::pair{ids::maximum, "Max"}})

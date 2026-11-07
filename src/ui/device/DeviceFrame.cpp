@@ -418,7 +418,7 @@ void DeviceFrame::showMenu()
 
 juce::Component* DeviceFrame::revealParameter(const juce::String& parameterId)
 {
-    if (context.specs.forType(node[ids::deviceType].toString())->findParameter(parameterId) == nullptr)
+    if (context.specs.forDevice(node)->findParameter(parameterId) == nullptr)
         return nullptr;
     if (isFolded())
         LiveSet::setDeviceFolded(node, false);
@@ -457,7 +457,7 @@ void DeviceFrame::loadSample(const juce::File& file)
 bool DeviceFrame::dropReplaces(const SourceDetails& details) const
 {
     const auto& d = details.description;
-    return (drag::is(d, "device") || drag::is(d, "preset")) && titleBar().contains(details.localPosition);
+    return (drag::is(d, "device") || drag::is(d, "preset") || drag::is(d, "plugin")) && titleBar().contains(details.localPosition);
 }
 
 bool DeviceFrame::isInterestedInDragSource(const SourceDetails& details)

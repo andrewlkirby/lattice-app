@@ -1,7 +1,9 @@
 #pragma once
 
 #include "core/JobPool.h"
+#include "hosting/PluginHost.h"
 #include "hosting/PluginLibrary.h"
+#include "hosting/PluginWindows.h"
 #include "library/Library.h"
 #include "ui/browser/BrowserView.h"
 #include "ui/device/DeviceView.h"
@@ -164,6 +166,7 @@ public:
         at construction, so the tests' shells never scan the machine's plugins. */
     void startPluginScan();
     hosting::PluginLibrary& plugins() noexcept { return *pluginLibrary; }
+    hosting::PluginHost& pluginDevices() noexcept { return *pluginHost; }
     SurfaceManager* surfaceManager() noexcept { return surfaces.get(); }
     /** How the pads play, and Virtual Push's own settings, as the Preferences have them. */
     control::Expression expressionSettings() const;
@@ -277,6 +280,7 @@ private:
     std::unique_ptr<presets::PresetLibrary> presetLibrary;
     std::unique_ptr<library::Library> libraryService; // after the presets and the job pool it uses
     std::unique_ptr<hosting::PluginLibrary> pluginLibrary; // after the library, whose index it keeps
+    std::unique_ptr<hosting::PluginHost> pluginHost;       // after the plugin library it finds plugins in
     std::unique_ptr<BrowserView> browser;
     class ShellBrowseHost;
     std::unique_ptr<ShellBrowseHost> browseAccess; // the browser and the Device view, for Browse mode

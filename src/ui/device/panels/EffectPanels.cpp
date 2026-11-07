@@ -354,7 +354,7 @@ public:
         shown = band;
         const juce::String n(band + 1);
         section = std::make_unique<ParameterSection>("Band " + n);
-        section->addParameters(context.set(), device, *context.specs.forType(device[ids::deviceType].toString()),
+        section->addParameters(context.set(), device, *context.specs.forDevice(device),
                                {"band" + n + ".shape", "band" + n + ".frequency", "band" + n + ".gain", "band" + n + ".q",
                                 "band" + n + ".target"});
         addAndMakeVisible(*section);

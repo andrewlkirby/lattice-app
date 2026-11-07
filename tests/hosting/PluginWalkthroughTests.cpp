@@ -10,6 +10,7 @@
 #include "ui/prefs/AppSettings.h"
 #include "ui/shell/MainShell.h"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 using namespace lattice;
@@ -197,4 +198,120 @@ TEST_CASE("Walkthrough: 6a's plugin scan over real plugins, the browser and the 
     WARN("Second scan: " << w.shell->plugins().status().total << " files scanned, in "
                          << juce::String((juce::Time::getMillisecondCounterHiRes() - again) / 1000.0, 2) << " s");
     CHECK(w.shell->plugins().status().total == 0);
+}
+
+namespace
+{
+/** Every control's title in a component, for what a panel shows. */
+juce::StringArray titlesIn(juce::Component& root)
+{
+    juce::StringArray titles;
+    for (auto* c : root.getChildren())
+    {
+        if (c->getTitle().isNotEmpty())
+            titles.add(c->getTitle());
+        titles.addArray(titlesIn(*c));
+    }
+    return titles;
+}
+
+/** Puts the browser's plugin of that name on the selected track, as a double-click does, and lets
+    it load. */
+juce::ValueTree insertPlugin(Walk& w, const juce::String& name)
+{
+    juce::String key;
+    for (const auto& stored : w.shell->library().index().storedPlugins())
+        if (const auto xml = juce::parseXML(stored.xml))
+            if (const auto p = hosting::scan::ScannedPlugin::fromXml(*xml); p && p->description.name == name && key.isEmpty())
+                key = stored.key;
+    REQUIRE(key.isNotEmpty());
+    // An empty track: an instrument where there is one would ask first.
+    for (auto chain = LiveSet::chainOf(w.session.set().track(0)); chain.getNumChildren() > 0;)
+        w.session.set().removeDevice(chain.getChild(0));
+    w.session.flush();
+    REQUIRE(w.shell->insertFromBrowser("plugin:" + key));
+    w.shell->pluginDevices().finishLoading();
+    w.shell->deviceView().flushUpdates();
+    const auto chain = LiveSet::chainOf(w.session.set().track(0));
+    for (const auto& d : chain)
+        if (d[ids::name].toString() == name)
+            return d;
+    FAIL("not inserted");
+    return {};
+}
+} // namespace
+
+TEST_CASE("A plugin from the browser goes on the track, and its panel shows its pages", "[ui][plugins]")
+{
+    Walk w;
+    hosting::PluginSettings s;
+    s.useDefaultFolders = false;
+    s.extraFolders = {juce::File(LATTICE_TEST_CLAP).getParentDirectory().getFullPathName()};
+    w.shell->plugins().setSettings(s, false);
+    w.shell->startPluginScan();
+    w.settle();
+
+    const auto device = insertPlugin(w, "Lattice Test Plugin");
+    CHECK(device[ids::deviceType].toString() == pluginTypes::instrument);
+    REQUIRE(w.shell->pluginDevices().liveDevice(LiveSet::idOf(device)) != nullptr);
+    auto* frame = w.shell->deviceView().frameFor(device);
+    REQUIRE(frame != nullptr);
+    REQUIRE(frame->body() != nullptr);
+    const auto titles = titlesIn(*frame->body());
+    CHECK(titles.contains("Level"));
+    CHECK(titles.contains("Wave"));
+    CHECK_FALSE(titles.contains("Hidden"));
+    CHECK(titles.contains("Configure"));
+
+    // Taken off its pages, its knob goes.
+    w.shell->pluginDevices().removeFromPages(device, "p20");
+    w.shell->deviceView().flushUpdates();
+    CHECK_FALSE(titlesIn(*frame->body()).contains("Wave"));
+    w.shot(*w.shell, "6b-panel");
+}
+
+TEST_CASE("Walkthrough: 6b, a real plugin on a track, its panel and its window", "[.walkthrough][plugins]")
+{
+    const juce::File folder(juce::SystemStats::getEnvironmentVariable("LATTICE_PLUGIN_FOLDER", {}));
+    const auto name = juce::SystemStats::getEnvironmentVariable("LATTICE_WALKTHROUGH_PLUGIN", "Surge XT");
+    if (!folder.isDirectory())
+        SKIP("Set LATTICE_PLUGIN_FOLDER to a folder of plugins");
+    Walk w;
+    hosting::PluginSettings s;
+    s.useDefaultFolders = false;
+    s.extraFolders = {folder.getFullPathName()};
+    w.shell->plugins().setSettings(s, false);
+    w.shell->startPluginScan();
+    w.settle();
+
+    const auto started = juce::Time::getMillisecondCounterHiRes();
+    const auto device = insertPlugin(w, name);
+    WARN(name << " loaded in " << juce::String((juce::Time::getMillisecondCounterHiRes() - started) / 1000.0, 2) << " s");
+    auto* live = w.shell->pluginDevices().liveDevice(LiveSet::idOf(device));
+    REQUIRE(live != nullptr);
+    WARN(live->numParameters() << " parameters; on its pages: "
+                               << device.getChildWithName(ids::deviceState)[pluginTypes::configured].toString().length() << " characters of IDs; latency "
+                               << live->latencySamples());
+    w.shell->showDeviceView();
+    w.shot(*w.shell, "6b-device");
+    if (live->plugin().hasEditor())
+    {
+        REQUIRE(w.shell->pluginDevices().windows().open(*live, device));
+        auto* window = w.shell->pluginDevices().windows().windowFor(LiveSet::idOf(device));
+        REQUIRE(window != nullptr);
+        WARN("Window " << window->getWidth() << " x " << window->getHeight());
+        w.shell->pluginDevices().windows().close(LiveSet::idOf(device));
+    }
+
+    // Saved and loaded again, it's as it was.
+    w.session.set().setDeviceParameter(device, live->parameter(0).id(), 0.123);
+    const auto file = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("lattice-walk-" + juce::Uuid().toString() + ".lset");
+    REQUIRE(w.session.saveSet(file).wasOk());
+    REQUIRE(w.session.loadSet(file).wasOk());
+    w.shell->pluginDevices().finishLoading();
+    const auto again = LiveSet::chainOf(w.session.set().track(0)).getChild(LiveSet::chainOf(w.session.set().track(0)).getNumChildren() - 1);
+    auto* back = w.shell->pluginDevices().liveDevice(LiveSet::idOf(again));
+    REQUIRE(back != nullptr);
+    CHECK(back->plugin().getParameters()[0]->getValue() == Catch::Approx(0.123f).margin(0.001f));
+    file.deleteFile();
 }

@@ -94,7 +94,7 @@ std::vector<ParameterGroup> DeviceMode::pages() const
     const auto type = d[ids::deviceType].toString();
     if (RackDevice::isRackType(type))
         return RackDevice::macroPages(racks::macroCount(d), controls());
-    if (const auto* spec = host.specs().forType(type))
+    if (const auto* spec = host.specs().forDevice(d))
         return ParameterPager::pagesFor(*spec, controls());
     return {};
 }
@@ -119,7 +119,7 @@ void DeviceMode::setPage(int p)
 
 juce::String DeviceMode::parameterId(const juce::ValueTree& d, int index) const
 {
-    const auto* spec = host.specs().forType(d[ids::deviceType].toString());
+    const auto* spec = host.specs().forDevice(d);
     return spec != nullptr && index >= 0 && index < spec->numParameters() ? spec->parameter(index).spec().id : juce::String();
 }
 

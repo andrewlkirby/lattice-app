@@ -129,6 +129,8 @@ juce::DocumentWindow* PluginWindows::windowFor(std::int64_t deviceId) const
 
 void PluginWindows::setAlwaysOnTop(bool on)
 {
+    if (onTop != on && onAlwaysOnTopChanged)
+        onAlwaysOnTopChanged(on);
     onTop = on;
     for (auto& [id, w] : windows)
         w->setAlwaysOnTop(on);

@@ -50,6 +50,8 @@ constexpr auto pluginDefaultFoldersKey = "plugins.defaultFolders"; // bool: each
 constexpr auto pluginFoldersKey = "plugins.folders";               // more folders, one per line
 constexpr auto pluginFormatKey = "plugins.preferredFormat";        // a format's name; empty: CLAP, then VST3...
 constexpr auto pluginGroupingKey = "plugins.grouping";             // 0 vendor, 1 format, 2 type
+constexpr auto pluginPagesKey = "plugins.pages.";                    // + a plugin's key: its devices' default pages
+constexpr auto pluginWindowsOnTopKey = "plugins.windowsOnTop";      // bool: plugin windows stay above the app
 
 constexpr double minZoom = 0.5, maxZoom = 2.5;
 

@@ -12,7 +12,7 @@ namespace lattice::ui::panels
 
 std::unique_ptr<ValueBinding> bind(DeviceContext& context, const juce::ValueTree& device, const juce::String& parameterId)
 {
-    const auto* proto = context.specs.forType(device[ids::deviceType].toString());
+    const auto* proto = context.specs.forDevice(device);
     const auto* p = proto != nullptr ? proto->findParameter(parameterId) : nullptr;
     jassert(p != nullptr);
     if (p == nullptr)

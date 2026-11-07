@@ -80,11 +80,13 @@ private:
         juce::String id, name, group;
         juce::StringArray words; // of the name and the group
     };
-    const std::vector<ParameterEntry>& parametersOf(const juce::String& typeId) const;
+    /** A device's parameters, as its type describes them (a plugin: as its pages do, asked each time). */
+    const std::vector<ParameterEntry>& parametersOf(const juce::ValueTree& device) const;
 
     DeviceContext& context;
     CommandRegistry& commands;
     mutable std::map<juce::String, std::vector<ParameterEntry>> byType;
+    mutable std::map<std::int64_t, std::vector<ParameterEntry>> byDevice;
 };
 
 } // namespace lattice::ui

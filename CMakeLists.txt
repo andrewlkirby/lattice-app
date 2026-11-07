@@ -389,6 +389,7 @@ add_library(lattice_ui STATIC
     src/ui/device/panels/EffectPanels.cpp
     src/ui/device/panels/MidiPanels.cpp
     src/ui/device/panels/PanelFactory.cpp
+    src/ui/device/panels/PluginPanel.cpp
     src/ui/device/panels/PanelKit.cpp
     src/ui/device/panels/RackPanel.cpp
     src/ui/device/panels/SampleLoading.cpp

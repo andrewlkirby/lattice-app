@@ -11,6 +11,11 @@
 
 #include <functional>
 
+namespace lattice::hosting
+{
+class PluginHost;
+}
+
 namespace lattice::library
 {
 class PeakCache;
@@ -81,6 +86,9 @@ struct DeviceContext
     std::function<void()> presetsChanged = {};
     /** Waveform peaks kept on disk (none in tests that don't ask). */
     const library::PeakCache* peaks = nullptr;
+    /** The plugin host (docs/07-m6-plugins-external.md, 6b): plugin devices' status, windows and
+        pages. Null where there is none (most tests). */
+    hosting::PluginHost* plugins = nullptr;
     /** The view the panels are in: the selection, the inserting point, hot-swap and map mode. */
     DeviceView* view = nullptr;
 

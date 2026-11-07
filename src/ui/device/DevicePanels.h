@@ -33,5 +33,6 @@ std::unique_ptr<DeviceBody> utility(DeviceContext&, const juce::ValueTree&);
 std::unique_ptr<DeviceBody> limiter(DeviceContext&, const juce::ValueTree&);
 std::unique_ptr<DeviceBody> arpeggiator(DeviceContext&, const juce::ValueTree&);
 std::unique_ptr<DeviceBody> chord(DeviceContext&, const juce::ValueTree&);
+std::unique_ptr<DeviceBody> plugin(DeviceContext&, const juce::ValueTree&);
 
 } // namespace lattice::ui::panels

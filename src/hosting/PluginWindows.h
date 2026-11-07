@@ -34,6 +34,8 @@ public:
     void setAlwaysOnTop(bool on);
     bool alwaysOnTop() const noexcept { return onTop; }
 
+    /** Called when always-on-top changes (the app keeps it). */
+    std::function<void(bool)> onAlwaysOnTopChanged;
     /** Called when a window opens or closes. */
     std::function<void()> onChange;
 

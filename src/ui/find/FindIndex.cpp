@@ -1,6 +1,7 @@
 #include "ui/find/FindIndex.h"
 
 #include "core/model/UndoNames.h"
+#include "devices/framework/PluginTypes.h"
 
 #include <algorithm>
 #include <functional>
@@ -92,12 +93,16 @@ bool FindIndex::matches(const juce::StringArray& words, const juce::String& hays
     return true;
 }
 
-const std::vector<FindIndex::ParameterEntry>& FindIndex::parametersOf(const juce::String& typeId) const
+const std::vector<FindIndex::ParameterEntry>& FindIndex::parametersOf(const juce::ValueTree& device) const
 {
-    auto& entries = byType[typeId];
-    if (!entries.empty())
+    const auto typeId = device[ids::deviceType].toString();
+    const bool own = pluginTypes::isPlugin(typeId); // a plugin's: its pages, which change
+    auto& entries = own ? byDevice[LiveSet::idOf(device)] : byType[typeId];
+    if (own)
+        entries.clear();
+    else if (!entries.empty())
         return entries;
-    const auto* spec = context.specs.forType(typeId);
+    const auto* spec = context.specs.forDevice(device);
     if (spec == nullptr)
         return entries;
     // Each parameter's group: the device's own grouping (what its panel shows), else its spec's.
@@ -137,7 +142,7 @@ std::vector<FindIndex::Result> FindIndex::search(const juce::String& text, int s
                 const auto deviceWords = wordsOf(deviceName);
                 // What it's in: a rack's chain and the rack, then the track (undoNames::locationOf).
                 const auto outer = undoNames::locationOf(node.getParent(), context.registry());
-                for (const auto& p : parametersOf(node[ids::deviceType].toString()))
+                for (const auto& p : parametersOf(node))
                 {
                     bool all = true;
                     for (const auto& w : words)

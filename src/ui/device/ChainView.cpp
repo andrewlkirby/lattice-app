@@ -154,7 +154,7 @@ bool ChainView::isInterestedInDragSource(const SourceDetails& details)
         const auto device = context.set().deviceById(drag::payload(d).getLargeIntValue());
         return device.isValid() && !devices.isAChildOf(device);
     }
-    return drag::is(d, "device") || drag::is(d, "preset") || drag::is(d, "sample");
+    return drag::is(d, "device") || drag::is(d, "preset") || drag::is(d, "sample") || drag::is(d, "plugin");
 }
 
 void ChainView::itemDragMove(const SourceDetails& details)

@@ -34,7 +34,7 @@ std::unique_ptr<ValueBinding> bindingForTarget(LiveSet& set, DeviceSpecs& specs,
     if (target.startsWith("device:"))
     {
         const auto device = findDeviceById(set.state(), id);
-        if (const auto* spec = device.isValid() ? specs.forType(device[ids::deviceType].toString()) : nullptr)
+        if (const auto* spec = device.isValid() ? specs.forDevice(device) : nullptr)
             if (const auto* parameter = spec->findParameter(what))
                 made = ValueBinding::deviceParameter(set, device, parameter->spec());
     }

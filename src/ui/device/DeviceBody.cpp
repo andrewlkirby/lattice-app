@@ -15,7 +15,7 @@ DeviceBody::DeviceBody(DeviceContext& c, juce::ValueTree device) : context(c), n
 
 const StudioDevice& DeviceBody::prototype() const
 {
-    return *context.specs.forType(node[ids::deviceType].toString());
+    return *context.specs.forDevice(node);
 }
 
 bool DeviceBody::reveal(const juce::String& parameterId)

@@ -568,7 +568,8 @@ void SessionView::importMidiFiles(const juce::StringArray& files, const Hit& at)
 bool SessionView::isInterestedInDragSource(const SourceDetails& details)
 {
     const auto& d = details.description;
-    return drag::is(d, "device") || drag::is(d, "preset") || drag::is(d, "sample") || drag::is(d, "tuning");
+    return drag::is(d, "device") || drag::is(d, "preset") || drag::is(d, "sample") || drag::is(d, "tuning") ||
+           drag::is(d, "plugin");
 }
 
 SessionView::Hit SessionView::browserDropAt(juce::Point<int> local, const juce::String& description) const

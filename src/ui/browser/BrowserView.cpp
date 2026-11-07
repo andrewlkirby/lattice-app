@@ -69,8 +69,9 @@ juce::String BrowserView::descriptionFor(const Item& item)
         return drag::sample(juce::File(item.key));
     case Kind::tuning:
         return drag::tuning(item.place.isEmpty() ? item.key.fromFirstOccurrenceOf("tuning:", false, false) : item.key);
+    case Kind::plugin:
+        return item.key; // "plugin:<its key>"
     case Kind::folder:
-    case Kind::plugin: // inserting a plugin comes with hosting (docs/07-m6-plugins-external.md, 6b)
         break;
     }
     return {};
