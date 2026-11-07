@@ -55,6 +55,27 @@ private:
     bool previous;
 };
 
+/** Marks code that isn't Lattice's, run on the audio thread (a plugin's processing), for the
+    guard's lifetime: allocations and deallocations made in it aren't violations, since they can't
+    be fixed here, but they are counted (foreignAllocationsOnThisThread()), so a plugin that
+    allocates can be shown (docs/07-m6-plugins-external.md, 6b). Only what goes through Lattice's
+    allocator is seen: on Windows a plugin has its own. Nests correctly. */
+class ScopedForeignCode
+{
+public:
+    ScopedForeignCode() noexcept;
+    ~ScopedForeignCode() noexcept;
+    ScopedForeignCode(const ScopedForeignCode&) = delete;
+    ScopedForeignCode& operator=(const ScopedForeignCode&) = delete;
+
+private:
+    bool previous;
+};
+
+/** Allocations and deallocations made on this thread inside ScopedForeignCode while it was marked
+    as the audio thread. */
+std::uint64_t foreignAllocationsOnThisThread() noexcept;
+
 /** Per-thread allocation counters, updated by the allocation hooks. All zero if the hooks are not
     linked into this binary (see hooksInstalled()). */
 struct AllocationCounters

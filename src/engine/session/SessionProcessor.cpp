@@ -300,6 +300,10 @@ void SessionProcessor::process(const EngineSnapshot* snapshot, const EngineComma
     time.playing = clock.isPlaying();
     time.beatAtStart = time.playing ? clock.beatAt(s0) : freeRunningBeat;
     time.blockStartSample = s0;
+    time.timeSigNumerator = clock.timeSigNumerator();
+    time.timeSigDenominator = clock.timeSigDenominator();
+    time.barStartBeat = clock.barStartAt(time.beatAtStart);
+    time.barIndex = clock.positionOf(time.beatAtStart).bar - 1;
     freeRunningBeat = time.beatAtStart + numSamples / time.samplesPerBeat;
 
     // Walk the chunk from one scheduled action to the next.

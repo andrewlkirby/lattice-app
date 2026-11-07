@@ -117,6 +117,10 @@ struct DeviceTimeInfo
     double samplesPerBeat = 24000.0;
     double beatAtStart = 0.0;
     std::int64_t blockStartSample = 0;
+    int timeSigNumerator = 4;
+    int timeSigDenominator = 4;
+    double barStartBeat = 0.0; // where the bar at beatAtStart began
+    int barIndex = 0;          // that bar, from 0
     bool playing = false;
     const SidechainLookup* sidechains = nullptr; // the engine's; null outside it
     int sidechainOffset = 0;                     // where this block starts in the sources' buffers

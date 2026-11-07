@@ -143,6 +143,7 @@ juce::Result LiveSet::loadFromXml(const juce::XmlElement& xml)
 
 std::unique_ptr<juce::XmlElement> LiveSet::toXml() const
 {
+    flushDeviceState();
     return root.createXml();
 }
 
@@ -467,6 +468,7 @@ juce::ValueTree LiveSet::insertDevice(juce::ValueTree chain, int index, const ju
 juce::ValueTree LiveSet::insertDeviceCopy(juce::ValueTree chain, int index, const juce::ValueTree& device)
 {
     jassert(chain.hasType(ids::devices) && device.hasType(ids::device));
+    flushDeviceState(); // a device in the set being copied: its plugin's state as it is now
     auto copy = device.createCopy();
     reassignIds(copy);
     if (!copy.getChildWithName(ids::params).isValid())

@@ -5,6 +5,7 @@
 #include <juce_data_structures/juce_data_structures.h>
 
 #include <cstdint>
+#include <functional>
 #include <utility>
 #include <vector>
 
@@ -221,6 +222,16 @@ public:
     void resetToDefault(int numTracks = defaultTracks, int numScenes = defaultScenes);
     juce::Result loadFromXml(const juce::XmlElement& xml);
     std::unique_ptr<juce::XmlElement> toXml() const;
+    /** Brings what devices keep outside the document into it (a plugin's own state), before the
+        document is read whole or a device in it is copied: toXml() and insertDeviceCopy() call it,
+        and so does anything else that copies devices (a preset, the clipboard). Set by the plugin
+        host (docs/07-m6-plugins-external.md, 6b); unset, it does nothing. */
+    std::function<void()> onFlushDeviceState;
+    void flushDeviceState() const
+    {
+        if (onFlushDeviceState)
+            onFlushDeviceState();
+    }
     /** relativePaths: files inside the set's folder are named relative to it (setfiles); a
         recovery copy, kept elsewhere, names them in full. */
     juce::Result saveToFile(const juce::File& file, bool relativePaths = true) const;

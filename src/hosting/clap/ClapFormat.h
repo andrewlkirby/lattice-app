@@ -14,9 +14,8 @@ namespace lattice::hosting
     plugins; each is described from its descriptor, and briefly instantiated for its audio and
     note ports (which the descriptor doesn't give), as JUCE's VST3 scan does.
 
-    Scanning loads the plugin's code, so the app scans only in LatticePluginScanner. Loading a CLAP
-    plugin as a device comes in 6b: until then createPluginInstance() reports that it can't.
-    Message thread (CLAP's main thread). */
+    Scanning loads the plugin's code, so the app scans only in LatticePluginScanner. Instances are
+    ClapPluginInstance (6b). Message thread (CLAP's main thread). */
 class ClapPluginFormat final : public juce::AudioPluginFormat
 {
 public:

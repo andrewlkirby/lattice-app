@@ -150,6 +150,10 @@ public:
         and re-prepared whenever they change. */
     std::shared_ptr<TrackProcessor> createTrackProcessor(std::int64_t trackId);
 
+    /** The sample rate and block size devices are prepared for (message thread). */
+    double deviceSampleRate() const noexcept { return preparedSampleRate; }
+    int deviceBlockSize() const noexcept { return preparedBlockSize; }
+
     /** Message thread. Prepares the new devices for the current device settings and publishes the
         chain to the track, both under the prepare lock, so a device restart on another thread can
         never see a half-prepared device. Fills in the chain's latency once its devices are prepared. */

@@ -2,6 +2,7 @@
 
 #include "core/model/LiveSet.h"
 #include "devices/framework/DeviceRegistry.h"
+#include "devices/framework/DeviceSource.h"
 #include "devices/racks/RackLayout.h"
 #include "engine/EngineSnapshot.h"
 #include "tuning/TuningTable.h"
@@ -62,6 +63,13 @@ public:
     /** The processor of a track, or nullptr if the track is not in the last snapshot. */
     std::shared_ptr<TrackProcessor> processorFor(std::int64_t trackId) const;
 
+    /** Where devices come from that the registry can't make on the spot (plugins; null: none).
+        Set before the first rebuild; it outlives this builder. */
+    void setDeviceSource(DeviceSource* source) { deviceSource = source; }
+    /** A device's chain is built again on the next turn, and published even if its devices are
+        the same: its source has a new device for it (a plugin finished loading, or restarts), or
+        its latency changed. */
+    void refreshDevice(std::int64_t deviceId);
     /** The instance of a device (by its document ID) in the last rebuild, or nullptr. */
     StudioDevice* deviceFor(std::int64_t deviceId) const;
     const DeviceRegistry& devices() const noexcept { return registry; }
@@ -126,6 +134,8 @@ private:
     std::unordered_map<std::int64_t, TuningPtr> tuningOverrides; // by track ID
     bool allChainsDirty = true;
     std::unordered_set<std::int64_t> dirtyChains; // IDs of chain owners (tracks)
+    std::unordered_set<std::int64_t> forcedChains; // chain owners published even if nothing changed
+    DeviceSource* deviceSource = nullptr;
     std::unordered_map<std::int64_t, StudioDevice*> deviceIndex;
     /** Each chain owner's sidechain sources (by owner ID), from its last chain build. */
     std::unordered_map<std::int64_t, std::vector<SidechainRoute>> trackSidechains;

@@ -50,6 +50,7 @@ add_executable(lattice_tests
     engine/SnapshotStressTests.cpp
     engine/TestToneTests.cpp
     engine/TrackTuningSettingsTests.cpp
+    hosting/PluginHostingTests.cpp
     hosting/PluginScanTests.cpp
     hosting/PluginWalkthroughTests.cpp
     library/LibraryTests.cpp

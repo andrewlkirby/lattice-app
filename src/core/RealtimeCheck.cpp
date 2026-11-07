@@ -12,6 +12,8 @@ namespace
 constinit thread_local bool tlsInAudioThread = false;
 constinit thread_local bool tlsInViolationHandler = false;
 constinit thread_local AllocationCounters tlsCounters{};
+constinit thread_local bool tlsInForeignCode = false;
+constinit thread_local std::uint64_t tlsForeign = 0;
 
 std::atomic<bool> gHooksInstalled{false};
 std::atomic<std::uint64_t> gViolations{0};
@@ -40,6 +42,21 @@ ScopedAudioThread::ScopedAudioThread() noexcept : previous(tlsInAudioThread)
 ScopedAudioThread::~ScopedAudioThread() noexcept
 {
     tlsInAudioThread = previous;
+}
+
+ScopedForeignCode::ScopedForeignCode() noexcept : previous(tlsInForeignCode)
+{
+    tlsInForeignCode = true;
+}
+
+ScopedForeignCode::~ScopedForeignCode() noexcept
+{
+    tlsInForeignCode = previous;
+}
+
+std::uint64_t foreignAllocationsOnThisThread() noexcept
+{
+    return tlsForeign;
 }
 
 AllocationCounters countersForThisThread() noexcept
@@ -89,14 +106,18 @@ void noteAllocation(std::size_t bytes) noexcept
 {
     ++tlsCounters.allocations;
     tlsCounters.bytesAllocated += bytes;
-    if (tlsInAudioThread)
+    if (tlsInAudioThread && tlsInForeignCode)
+        ++tlsForeign;
+    else if (tlsInAudioThread)
         reportViolation("allocation on the audio thread", bytes);
 }
 
 void noteDeallocation() noexcept
 {
     ++tlsCounters.deallocations;
-    if (tlsInAudioThread)
+    if (tlsInAudioThread && tlsInForeignCode)
+        ++tlsForeign;
+    else if (tlsInAudioThread)
         reportViolation("deallocation on the audio thread");
 }
 } // namespace detail

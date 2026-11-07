@@ -1,5 +1,6 @@
 #include "engine/SnapshotBuilder.h"
 
+#include "devices/framework/PluginTypes.h"
 #include "devices/racks/Rack.h"
 #include "engine/AudioEngine.h"
 
@@ -101,6 +102,7 @@ void SnapshotBuilder::valueTreePropertyChanged(juce::ValueTree& tree, const juce
     }
     // Names and the Device view's state don't change the sound.
     if ((tree.hasType(ids::device) && (property == ids::name || property == ids::folded || property == ids::showAll ||
+                                       property == pluginTypes::window ||
                                        property == ids::padStart || property == ids::padPage)) ||
         (tree.hasType(ids::rackChain) && property == ids::name) ||
         (tree.hasType(ids::track) && property == ids::noteLayout) ||
@@ -171,11 +173,8 @@ void SnapshotBuilder::forwardParameter(const juce::ValueTree& values, const juce
     auto* device = deviceFor(LiveSet::idOf(values.getParent()));
     if (device == nullptr)
         return; // not built yet: it reads the document when it is
-    if (auto* p = device->findParameter(parameterId.toString()))
-    {
-        const auto* v = values.getPropertyPointer(parameterId);
-        p->setBase(v != nullptr ? static_cast<float>(static_cast<double>(*v)) : p->spec().defaultValue);
-    }
+    if (const int index = device->parameterIndex(parameterId.toString()); index >= 0)
+        device->applyDocumentValue(index, values.getPropertyPointer(parameterId));
 }
 
 void SnapshotBuilder::forwardState(const juce::ValueTree& stateNode)
@@ -186,13 +185,21 @@ void SnapshotBuilder::forwardState(const juce::ValueTree& stateNode)
 
 void SnapshotBuilder::applyDocument(const juce::ValueTree& deviceNode, StudioDevice& device)
 {
+    const auto values = deviceNode.getChildWithName(ids::params);
     for (int i = 0; i < device.numParameters(); ++i)
-    {
-        auto& p = device.parameter(i);
-        p.setBase(static_cast<float>(LiveSet::deviceParameter(deviceNode, p.id(), p.spec().defaultValue)));
-    }
+        device.applyDocumentValue(i, values.getPropertyPointer(juce::Identifier(device.parameter(i).id())));
     device.setEnabled(deviceNode.getProperty(ids::enabled, true));
     device.setState(deviceNode.getChildWithName(ids::deviceState));
+}
+
+void SnapshotBuilder::refreshDevice(std::int64_t deviceId)
+{
+    const auto node = set.deviceById(deviceId);
+    if (!node.isValid())
+        return;
+    if (const auto owner = LiveSet::chainOwnerOf(node); owner.isValid())
+        forcedChains.insert(LiveSet::idOf(owner));
+    markDirty(node);
 }
 
 StudioDevice* SnapshotBuilder::deviceFor(std::int64_t deviceId) const
@@ -214,12 +221,15 @@ void SnapshotBuilder::buildChain(const juce::ValueTree& devicesNode, DeviceChain
         if (isRack && depth >= RackDevice::maxDepth)
             continue; // racks nest at most maxDepth deep (the editor refuses deeper ones)
 
+        const bool sourced = deviceSource != nullptr && deviceSource->makes(type);
         DevicePtr device;
         if (const auto it = build.cache->devices.find(deviceId); it != build.cache->devices.end() && it->second->typeId() == type)
             device = it->second;
+        if (device != nullptr && sourced && deviceSource->isStale(*device, node))
+            device = nullptr; // its plugin is ready (or restarts): the new one takes its place
         if (device == nullptr || build.kept.contains(deviceId)) // a duplicated ID gets its own instance
         {
-            device = DevicePtr(registry.create(type, build.context));
+            device = DevicePtr(sourced ? deviceSource->create(node, build.context) : registry.create(type, build.context));
             applyDocument(node, *device);
             build.fresh.push_back(device);
         }
@@ -324,7 +334,8 @@ void SnapshotBuilder::rebuildChain(const juce::ValueTree& owner, TrackCache& cac
     // A new sidechain route with the same devices is a change (the track switches to it at once).
     const auto current = cache.processor->chain();
     const bool hasRacks = std::any_of(layout->racks.begin(), layout->racks.end(), [](const auto& r) { return r != nullptr; });
-    if (current != nullptr && build.fresh.empty() && build.freshChains.empty() && !hasRacks &&
+    const bool forced = forcedChains.erase(LiveSet::idOf(owner)) > 0; // a device's latency changed, say
+    if (current != nullptr && !forced && build.fresh.empty() && build.freshChains.empty() && !hasRacks &&
         current->devices == layout->devices && current->sidechains == layout->sidechains)
         return;
 

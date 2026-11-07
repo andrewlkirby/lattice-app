@@ -68,8 +68,7 @@ void StudioDevice::prepareDevice(double newSampleRate, int maxBlockSize)
     midiEffectWasOn = isEnabled();
     dryBuffer.setSize(2, maxBlockSize, false, true, false);
     dryBuffer.clear();
-    const int latency = latencySamples();
-    dryDelay.setSize(2, std::max(latency, 1), false, true, false);
+    dryDelay.setSize(2, std::max(latencySamples() + latencyReserve(), 1) + 1, false, true, false);
     dryDelay.clear();
     dryDelayPos = 0;
     heldOutput.fill(0);
@@ -88,6 +87,30 @@ void StudioDevice::setState(const juce::ValueTree& newState)
 
 void StudioDevice::stateChanged(const juce::ValueTree&)
 {
+}
+
+void StudioDevice::applyDocumentValue(int index, const juce::var* documentValue)
+{
+    auto& p = parameter(index);
+    p.setBase(documentValue != nullptr ? static_cast<float>(static_cast<double>(*documentValue)) : p.spec().defaultValue);
+}
+
+void StudioDevice::setLatency(int samples)
+{
+    samples = juce::jmax(0, samples);
+    latency.store(samples, std::memory_order_relaxed);
+    setLatencySamples(samples);
+}
+
+bool StudioDevice::changeLatency(int samples)
+{
+    RT_ASSERT_NOT_AUDIO_THREAD();
+    samples = juce::jmax(0, samples);
+    if (isPrepared() && samples >= dryDelay.getNumSamples())
+        return false;
+    latency.store(samples, std::memory_order_relaxed);
+    setLatencySamples(samples);
+    return true;
 }
 
 void StudioDevice::prepareToPlay(double newSampleRate, int maximumExpectedSamplesPerBlock)
@@ -122,28 +145,39 @@ void StudioDevice::processInChain(DeviceBuffers& io, const DeviceTimeInfo& time)
 void StudioDevice::delayDry(const DeviceBuffers& io) noexcept
 {
     const int n = io.numSamples;
-    const int latency = latencySamples();
+    const int size = dryDelay.getNumSamples();
+    const int delay = std::min(latencySamples(), size - 1);
     for (int ch = 0; ch < 2; ++ch)
     {
         const float* in = io.channels[std::min(ch, io.numChannels - 1)];
         float* out = dryBuffer.getWritePointer(ch);
-        if (latency == 0)
-        {
-            std::copy_n(in, n, out);
-            continue;
-        }
         float* ring = dryDelay.getWritePointer(ch);
         int pos = dryDelayPos;
+        if (delay == 0)
+        {
+            std::copy_n(in, n, out);
+            for (int i = 0; i < n; ++i) // kept going, so a later latency has its history
+            {
+                ring[pos] = in[i];
+                if (++pos == size)
+                    pos = 0;
+            }
+            continue;
+        }
+        int read = pos - delay;
+        if (read < 0)
+            read += size;
         for (int i = 0; i < n; ++i)
         {
-            out[i] = ring[pos];
             ring[pos] = in[i];
-            if (++pos == latency)
+            out[i] = ring[read];
+            if (++pos == size)
                 pos = 0;
+            if (++read == size)
+                read = 0;
         }
     }
-    if (latency > 0)
-        dryDelayPos = static_cast<int>((dryDelayPos + n) % latency);
+    dryDelayPos = (dryDelayPos + n) % size;
 }
 
 void StudioDevice::processAudioEffect(DeviceBuffers& io, const DeviceTimeInfo& time, float target) noexcept

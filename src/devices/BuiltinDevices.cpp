@@ -8,12 +8,15 @@
 #include "devices/effects/Saturator.h"
 #include "devices/effects/Utility.h"
 #include "devices/framework/DeviceRegistry.h"
+#include "devices/framework/PluginTypes.h"
 #include "devices/instruments/Sampler.h"
 #include "devices/instruments/Synth.h"
 #include "devices/midi/Arpeggiator.h"
 #include "devices/midi/Chord.h"
 #include "devices/racks/Rack.h"
 #include "devices/test/TestSynthDevice.h"
+
+#include <utility>
 
 namespace lattice
 {
@@ -74,6 +77,19 @@ void registerBuiltinDevices(DeviceRegistry& registry)
                       jassert(c.tuning != nullptr);
                       return std::make_unique<TestSynthDevice>(*c.tuning);
                   }});
+
+    // Plugins (docs/07-m6-plugins-external.md, 6b): put on a track from the browser's Plugins, and
+    // made by the plugin host (a DeviceSource). Made here, with no host, they're stand-ins.
+    for (const auto& [id, name] : {std::pair{pluginTypes::instrument, "Plugin Instrument"},
+                                   std::pair{pluginTypes::audioEffect, "Plugin Effect"},
+                                   std::pair{pluginTypes::midiEffect, "Plugin MIDI Effect"}})
+    {
+        const juce::String type(id);
+        registry.add({type, name, "Plugins", pluginTypes::kindOf(type), true,
+                      [type](const DeviceCreateContext&) -> std::unique_ptr<StudioDevice> {
+                          return std::make_unique<PluginStandIn>(type, PluginStandIn::Why::missing);
+                      }});
+    }
 }
 
 } // namespace lattice

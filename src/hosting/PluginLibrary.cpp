@@ -449,4 +449,35 @@ void PluginLibrary::handleAsyncUpdate()
     sendChangeMessage();
 }
 
+
+std::optional<scan::ScannedPlugin> PluginLibrary::plugin(const juce::String& key) const
+{
+    for (const auto& stored : index.storedPlugins())
+        if (stored.key == key)
+            if (const auto xml = juce::parseXML(stored.xml))
+                return scan::ScannedPlugin::fromXml(*xml);
+    return std::nullopt;
+}
+
+std::optional<scan::ScannedPlugin> PluginLibrary::find(const juce::PluginDescription& saved) const
+{
+    std::optional<scan::ScannedPlugin> elsewhere;
+    for (const auto& stored : index.storedPlugins())
+    {
+        if (stored.format != saved.pluginFormatName)
+            continue;
+        const auto xml = juce::parseXML(stored.xml);
+        if (xml == nullptr)
+            continue;
+        auto p = scan::ScannedPlugin::fromXml(*xml);
+        if (!p || p->description.uniqueId != saved.uniqueId)
+            continue;
+        if (p->description.fileOrIdentifier == saved.fileOrIdentifier)
+            return p;
+        if (!elsewhere)
+            elsewhere = std::move(p);
+    }
+    return elsewhere;
+}
+
 } // namespace lattice::hosting

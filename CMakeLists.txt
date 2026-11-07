@@ -272,9 +272,16 @@ add_library(lattice_core STATIC
     src/engine/session/ClipData.cpp
     src/engine/session/ClipPlayer.cpp
     src/engine/session/SessionProcessor.cpp
+    src/hosting/PluginDevice.cpp
     src/hosting/PluginFormats.cpp
+    src/hosting/PluginHost.cpp
     src/hosting/PluginLibrary.cpp
+    src/hosting/PluginWindows.cpp
+    src/hosting/clap/ClapEditor.cpp
     src/hosting/clap/ClapFormat.cpp
+    src/hosting/clap/ClapInstance.cpp
+    src/hosting/clap/ClapLibrary.cpp
+    src/hosting/clap/ClapNativeHost.cpp
     src/hosting/scan/PluginScanner.cpp
     src/hosting/scan/ScanProtocol.cpp
     src/library/Library.cpp
@@ -300,7 +307,7 @@ else()
     target_sources(lattice_core PRIVATE src/platform/linux/PlatformLinux.cpp src/platform/linux/FileWatcherLinux.cpp)
 endif()
 target_include_directories(lattice_core PUBLIC src)
-target_link_libraries(lattice_core PUBLIC lattice_juce PRIVATE lattice_binary_data lattice_sqlite lattice_clap)
+target_link_libraries(lattice_core PUBLIC lattice_juce lattice_clap PRIVATE lattice_binary_data lattice_sqlite)
 target_compile_definitions(lattice_core PUBLIC LATTICE_PROFILE=$<BOOL:${LATTICE_PROFILE}>)
 if(LATTICE_PROFILE)
     target_link_libraries(lattice_core PUBLIC Tracy::TracyClient)

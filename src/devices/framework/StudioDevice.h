@@ -72,8 +72,9 @@ public:
     void setState(const juce::ValueTree& state);
     const juce::ValueTree& state() const noexcept { return stateCopy; }
 
-    /** Latency in samples, as reported to delay compensation. Fixed between prepares. */
-    int latencySamples() const noexcept { return getLatencySamples(); }
+    /** Latency in samples, as reported to delay compensation (any thread). Set in prepare(); a
+        device whose latency can change later (a plugin) changes it with changeLatency(). */
+    int latencySamples() const noexcept { return latency.load(std::memory_order_relaxed); }
 
     /** Any thread: the device's on/off switch. */
     void setEnabled(bool on) noexcept { enabled.store(on, std::memory_order_relaxed); }
@@ -95,6 +96,11 @@ public:
     /** Audio thread: clears internal state (delay lines, voices, filters). (Also
         juce::AudioProcessor's reset().) */
     void reset() noexcept LATTICE_NONBLOCKING override {}
+
+    /** Message thread: the document's value for a parameter (null: it has none, the default
+        applies). Built-in devices take it as the parameter's base value. A device whose values
+        mostly live elsewhere (a plugin's, in its own state) overrides it. */
+    virtual void applyDocumentValue(int index, const juce::var* documentValue);
 
     /** How the on/off switch treats the device: racks act as an instrument or an audio effect. */
     virtual DeviceKind switchKind() const noexcept { return deviceKind; }
@@ -130,7 +136,14 @@ protected:
     virtual void stateChanged(const juce::ValueTree& state);
 
     /** Message thread, in prepare(): the device's latency at this sample rate. */
-    void setLatency(int samples) { setLatencySamples(juce::jmax(0, samples)); }
+    void setLatency(int samples);
+    /** Message thread, outside prepare(): the latency changed (a plugin said so). Works up to
+        latencyReserve() samples, the most the dry path holds; false beyond that. The caller has
+        delay compensation follow. */
+    bool changeLatency(int samples);
+    /** The latency the dry path is sized for in prepare(), beyond the latency then: 0 for a device
+        whose latency only changes in prepare(). */
+    virtual int latencyReserve() const noexcept { return 0; }
 
     float value(int index) const noexcept LATTICE_NONBLOCKING
     {
@@ -166,6 +179,7 @@ private:
     juce::AudioBuffer<float> dryBuffer;
     juce::AudioBuffer<float> dryDelay; // ring buffer, latency samples per channel
     int dryDelayPos = 0;
+    std::atomic<int> latency{0};
     std::array<std::uint16_t, 128> heldOutput{}; // MIDI effects: a bit per channel for each note
 
     // processBlock() for JUCE hosts

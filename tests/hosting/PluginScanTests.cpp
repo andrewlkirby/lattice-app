@@ -119,7 +119,7 @@ TEST_CASE("A CLAP file's plugins are described from their descriptors and ports"
     juce::String error;
     const auto plugins = ClapPluginFormat::scanFile(testClap.getFullPathName(), error);
     INFO(error);
-    REQUIRE(plugins.size() == 2);
+    REQUIRE(plugins.size() == 5);
 
     const auto* synth = named(plugins, "Lattice Test Plugin");
     REQUIRE(synth != nullptr);
@@ -127,7 +127,7 @@ TEST_CASE("A CLAP file's plugins are described from their descriptors and ports"
     CHECK(s.pluginFormatName == "CLAP");
     CHECK(s.manufacturerName == "Lattice Tests");
     CHECK(s.version == "1.2.3");
-    CHECK(s.descriptiveName == "A CLAP synth that makes no sound");
+    CHECK(s.descriptiveName == "A CLAP sine synth");
     CHECK(s.category == "Instrument|Synthesizer|Stereo");
     CHECK(s.isInstrument);
     CHECK(s.numInputChannels == 0);
@@ -196,7 +196,7 @@ TEST_CASE("A plugin that crashes or hangs the scanner is caught, and the scan go
 
     using O = PluginScanner::Outcome;
     CHECK(results[0].outcome == O::found);
-    CHECK(results[0].plugins.size() == 2);
+    CHECK(results[0].plugins.size() == 5);
     CHECK(results[1].outcome == O::crashed);
     CHECK(results[2].outcome == O::found);
     REQUIRE(results[2].plugins.size() == 1);
@@ -261,9 +261,9 @@ TEST_CASE("The plugin library scans what changed, blocks what crashes, and fills
     CHECK_FALSE(status.scanning);
     CHECK(status.total == 3);
     CHECK(status.done == 3);
-    CHECK(index.storedPlugins().size() == 3); // two in the CLAP file, one VST3
-    CHECK(status.plugins == 2);               // the test plugin, in two formats, counted once
-    CHECK(status.formats == "CLAP 2, VST3 1");
+    CHECK(index.storedPlugins().size() == 6); // five in the CLAP file, one VST3
+    CHECK(status.plugins == 5);               // the test plugin, in two formats, counted once
+    CHECK(status.formats == "CLAP 5, VST3 1");
 
     // The crash is blocked, with why.
     const auto problems = lib.problems();
@@ -283,7 +283,7 @@ TEST_CASE("The plugin library scans what changed, blocks what crashes, and fills
     library::Query inside;
     inside.folder = folders[0].key;
     auto shown = index.find(inside);
-    CHECK(shown.size() == 2);
+    CHECK(shown.size() == 5);
     const auto* plugin = itemNamed(shown, "Lattice Test Plugin");
     REQUIRE(plugin != nullptr);
     CHECK(plugin->kind == Kind::plugin);
@@ -301,7 +301,7 @@ TEST_CASE("The plugin library scans what changed, blocks what crashes, and fills
         lib.scan();
         REQUIRE(lib.waitForTests(30000));
         CHECK(lib.status().total == 0);
-        CHECK(index.storedPlugins().size() == 3);
+        CHECK(index.storedPlugins().size() == 6);
         CHECK(lib.problems().size() == 1); // still blocked, and not tried again
     }
     SECTION("A changed file is scanned again, alone")
@@ -310,7 +310,7 @@ TEST_CASE("The plugin library scans what changed, blocks what crashes, and fills
         lib.scan();
         REQUIRE(lib.waitForTests(30000));
         CHECK(lib.status().total == 1);
-        CHECK(index.storedPlugins().size() == 3);
+        CHECK(index.storedPlugins().size() == 6);
     }
     SECTION("Rescanning everything leaves out what's blocked; a retry doesn't")
     {
@@ -354,17 +354,18 @@ TEST_CASE("The plugin library scans what changed, blocks what crashes, and fills
         // Grouped by format, each format's folder has all of its own, the preferred or not.
         inside.folder = folders[0].key;
         shown = index.find(inside);
-        CHECK(shown.size() == 2);
+        CHECK(shown.size() == 5);
         CHECK(itemNamed(shown, "Lattice Test Plugin") != nullptr);
 
         settings.grouping = PluginGrouping::type;
         lib.setSettings(settings);
         REQUIRE(lib.waitForTests(30000));
         folders = index.find(groups);
-        REQUIRE(folders.size() == 2);
-        CHECK(folders[0].name == "Instruments");
-        CHECK(folders[1].name == "MIDI Effects");
-        inside.folder = folders[0].key;
+        REQUIRE(folders.size() == 3);
+        CHECK(folders[0].name == "Audio Effects");
+        CHECK(folders[1].name == "Instruments");
+        CHECK(folders[2].name == "MIDI Effects");
+        inside.folder = folders[1].key;
         shown = index.find(inside);
         REQUIRE(shown.size() == 1); // once again, as the VST3
         CHECK(shown[0].detail.contains("VST3"));

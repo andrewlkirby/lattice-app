@@ -71,6 +71,12 @@ public:
     };
     Status status() const;
 
+    /** A plugin by its key (the browser item's, without "plugin:"), as its scan found it. */
+    std::optional<scan::ScannedPlugin> plugin(const juce::String& key) const;
+    /** Where a saved plugin is installed now: the same format and ID, wherever its file went.
+        Its own file first, if it's still there. */
+    std::optional<scan::ScannedPlugin> find(const juce::PluginDescription& saved) const;
+
     /** Files that are blocked or that failed, with why. */
     std::vector<library::PluginFile> problems() const;
 

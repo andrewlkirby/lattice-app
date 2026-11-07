@@ -1,14 +1,12 @@
 #include "hosting/clap/ClapFormat.h"
 
+#include "hosting/clap/ClapInstance.h"
+#include "hosting/clap/ClapLibrary.h"
+
 #include <clap/clap.h>
 
 #include <cstdint>
 #include <cstring>
-
-#if JUCE_WINDOWS
-// Rather than all of windows.h: the one call used.
-extern "C" __declspec(dllimport) int __stdcall SetThreadErrorMode(unsigned long newMode, unsigned long* oldMode);
-#endif
 
 namespace lattice::hosting
 {
@@ -21,33 +19,6 @@ void hostRequest(const clap_host_t*) {}
 
 const clap_host_t scanHost{CLAP_VERSION_INIT, nullptr, "Lattice", "Lattice", "", "0.1",
                            hostExtension,     hostRequest, hostRequest, hostRequest};
-
-/** Opens a plugin's library with no system dialog: on Windows a file that isn't a library, or one
-    whose own libraries are missing, otherwise shows a "Bad Image" box that waits for a click. */
-bool openQuietly(juce::DynamicLibrary& library, const juce::File& file)
-{
-#if JUCE_WINDOWS
-    constexpr unsigned long failCriticalErrors = 0x0001, noOpenFileErrorBox = 0x8000;
-    unsigned long old = 0;
-    const bool set = SetThreadErrorMode(failCriticalErrors | noOpenFileErrorBox, &old) != 0;
-    const bool opened = library.open(file.getFullPathName());
-    if (set)
-        SetThreadErrorMode(old, nullptr);
-    return opened;
-#else
-    return library.open(file.getFullPathName());
-#endif
-}
-
-/** The file the CLAP entry is in: the .clap file itself, or on macOS the bundle's binary. */
-juce::File binaryOf(const juce::File& clap)
-{
-#if JUCE_MAC
-    if (clap.isDirectory())
-        return clap.getChildFile("Contents/MacOS").getChildFile(clap.getFileNameWithoutExtension());
-#endif
-    return clap;
-}
 
 juce::String categoryOf(const char* const* features, bool& instrument)
 {
@@ -145,7 +116,7 @@ std::vector<scan::ScannedPlugin> ClapPluginFormat::scanFile(const juce::String& 
     std::vector<scan::ScannedPlugin> result;
     const juce::File file(path);
     juce::DynamicLibrary library;
-    if (!openQuietly(library, binaryOf(file)))
+    if (!openLibraryQuietly(library, clapBinaryOf(file)))
     {
         error = "couldn't be loaded";
         return result;
@@ -286,9 +257,12 @@ juce::FileSearchPath ClapPluginFormat::getDefaultLocationsToSearch()
     return paths;
 }
 
-void ClapPluginFormat::createPluginInstance(const juce::PluginDescription&, double, int, PluginCreationCallback callback)
+void ClapPluginFormat::createPluginInstance(const juce::PluginDescription& description, double sampleRate,
+                                            int blockSize, PluginCreationCallback callback)
 {
-    callback(nullptr, "CLAP plugins can't be loaded as devices yet (docs/07-m6-plugins-external.md, 6b)");
+    juce::String error;
+    auto instance = ClapPluginInstance::create(description, sampleRate, blockSize, error);
+    callback(std::move(instance), error);
 }
 
 } // namespace lattice::hosting
