@@ -38,9 +38,97 @@ Depends on:
 - routing MIDI from one track's plugin to another track (post-MVP)
 - recording MPE into clips (post-MVP, as stated in M5)
 
-## Phases
-6a scanning and the plugin library → 6b hosting as devices → 6c crash isolation → 6d tuning for plugins (MTS-ESP and exports) → 6e MIDI out, retuning hardware, External Instrument → 6f clock sync and the Tuning Verifier.
-6d can be built alongside 6b and 6c.
+## Starting point (updated 2026-11-07, after M5)
+
+### What M2–M5 leave to build on
+- **Used as they are:**
+  - `StudioDevice`, a `juce::AudioProcessor`. Its `processInChain` gives a plugin wrapper the on/off crossfade and the latency-aligned dry path for free.
+  - Parameter groups and `customPages`, which feed `ParameterPager`. So Device mode on Virtual Push and Push pages a plugin with no new controller code.
+  - `ParameterSpec`'s text, both ways (5g's fix). MIDI Map's targets (`ui/mapping/Targets`) and the macros, which reach any `DeviceParameter`.
+  - Delay compensation:
+    - `DeviceChain::latencySamples`;
+    - the delays of the sends and returns in the snapshot;
+    - the sidechain routes (`SidechainRoute`).
+  - The parallel `WorkerPool`, on real-time threads in Windows' Pro Audio (MMCSS) class. Plugins run there.
+  - **MIDI:**
+    - the lock-free live MIDI queue, with each event placed at its timestamp's sample (5b);
+    - `TimedMidi::perNote` with `PerNoteExpression` (5g): the per-note expression that now also goes out to plugins and hardware.
+  - **The library:** its SQLite index (`items`, full-text search, collections), and `JobPool` for background work. Scan results and the browser's Plugins category go there.
+  - **Tunings:**
+    - `TuningRegistry` and `TrackTuning`;
+    - M1's parsers (Colundi text, Scala), which read the exports back in the tests;
+    - the M4 tuning editor, which gets the exports.
+  - **Preferences → MIDI:** the inputs' rows, whose Sync switch is waiting for 6e.
+  - **Measuring:** `AudioCallbackStats`, the `lattice_bench` baselines, and `scripts\perf-check.ps1 -Soak`, for per-device CPU and long runs.
+- **What has to change:**
+  - **Devices are created inside the snapshot build.** `SnapshotBuilder::buildChain` calls `DeviceRegistry::create` synchronously on the message thread.
+    - That suits built-in devices, which are built in microseconds. A plugin can take seconds, and a set with 30 of them must not freeze the window.
+    - So plugins are instantiated ahead of the build by a `PluginInstancePool`. The build puts in a **Loading** placeholder, which is silent for an instrument and passes audio through for an effect. When the instance is ready, the next build swaps it in with the usual crossfade.
+    - **Loading a set** starts every plugin first, in parallel wherever the format and plugin allow it (many VST3s must be created on the message thread). This is measured against the charter's load-time targets.
+  - **A device's latency is fixed between prepares** (`setLatency` only works inside `prepare`). A plugin can report a new latency at any time, so a change has to recompute the snapshot's delays on the message thread without preparing the device again, as 6b describes.
+  - **Parameter values only flow one way,** from the document to the engine. A plugin's own window changes them too, from any thread.
+    - Its changes reach the message thread through a lock-free queue. The plugin's gesture begin and end marks each undo step.
+    - **Only some parameters are kept in the document as values:** the ones chosen in Configure, mapped in MIDI Map, or on a macro. The rest live in the plugin's state, as in Live. So a plugin with 2,000 parameters doesn't add 2,000 nodes to the set.
+  - **A device's parameter list is fixed when it's built.** A plugin's is only known once it's instantiated, and some plugins rename or regroup their parameters later. The wrapper refreshes its names and groups on the message thread, and its pages follow.
+  - **JUCE's plugin hosting is off:** `CMakeLists.txt` sets no `JUCE_PLUGINHOST_*`.
+    - 6a turns on VST3, plus AU on macOS and LV2 on Linux.
+    - It also adds the test plugins (`tests/fixtures/plugins/`, built with `juce_add_plugin`). Every phase uses them. The Linux run in Docker hosts them with no window.
+  - **JUCE 8.0.15 can't host CLAP.** At 6a's start, check whether a newer JUCE can. If not, we write our own CLAP host from the CLAP headers, as planned, behind the same format interface.
+  - **MIDI only comes in.** Tracks can't send MIDI out yet; controllers send through `SurfaceManager`'s own ports on the message thread.
+    - 6d adds the engine's timed MIDI out.
+    - Ports get one owner, shared with the controllers, so a port can't be opened twice. A port a controller uses isn't offered as a track output.
+  - **The transport only follows its own tempo.** 6e adds following an external clock.
+  - **Tracks can't pass live audio input through yet.** The External Instrument needs it: monitoring the input, with delay compensation (6d).
+  - **Test isolation:** in 5g, two tests failed when run in parallel (`-j 8`). They share the user library's files across test processes. 6a fixes that first, since the scanner's tests add more shared files (a scan database for each test).
+- **Hardware here: none yet.** There's no external synth and no audio interface (as of 2026-11-07). Until there is:
+  - a test plugin that decodes MPE bend and MTS sysex into pitch stands in for a hardware synth, and so does a free synth listening on a loopback MIDI port (see "Hands-on checks");
+  - MIDI timing is measured on a loopback port. Windows MIDI Services' loopback is used if it's installed. Otherwise a virtual-port driver is needed; that's the user's choice to install;
+  - the External Instrument's latency measurement is tested on a simulated delay, and later with a cable from an output to an input.
+
+  These checks are listed for a second run when hardware arrives, as Push 3's MPE was.
+
+### Order of work
+- **Changed from the first draft:**
+  - Crash isolation moves to the end, as its Risks entry allowed, because it's the most complex part.
+  - Tuning for plugins moves up right after hosting, because it's the milestone's main Colundi result.
+  - A quality pass is added at the end.
+- **Phases:** 6a → 6b → 6c → 6d → 6e → 6f → 6g.
+  - **6a:** scanning and the plugin library;
+  - **6b:** hosting plugins as devices;
+  - **6c:** tuning for plugins (MTS-ESP and exports);
+  - **6d:** MIDI out, retuning hardware, and the External Instrument;
+  - **6e:** clock sync and the Tuning Verifier;
+  - **6f:** crash isolation;
+  - **6g:** the quality pass.
+
+  6c's exports (`.tun`, `.scl`/`.kbm`, MTS sysex) depend on nothing else, so they can fill any gap. 6d's hardware half needs only the engine; plugins that send MIDI out need 6b.
+- **Each phase** ends as M5's did:
+  - its tests pass on Windows and on Linux, with warnings as errors;
+  - the performance targets it touches are checked;
+  - the user does a short hands-on check.
+
+  None of the checks need hardware.
+
+#### Hands-on checks
+These use free plugins, which the user installs before the phase that needs them:
+- Surge XT: VST3 and CLAP, an MTS-ESP client, MPE, and a standalone app;
+- ODDSound's MTS-ESP Mini, which installs the system library MTS-ESP needs.
+
+The checks:
+- **6a:** scan the plugin folders; find Surge XT in the browser. The test plugins that crash or hang end up on the blocklist.
+- **6b:** check these with Surge XT:
+  - it plays on a track;
+  - its pages show on Virtual Push and Configure works;
+  - its window opens;
+  - it comes back as it was after save and reload;
+  - it survives being removed and reinstalled as a placeholder.
+- **6c:** Surge XT plays Colundi through MTS-ESP. Two tracks with different tunings each play their own.
+- **6d:**
+  - **Hardware stand-in:** Surge XT's standalone app, listening on a loopback port, plays a Colundi clip retuned with MPE bend.
+  - **External Instrument:** its audio return is tested on the laptop's input.
+- **6e:** the Tuning Verifier reports Surge XT (over MTS-ESP) and a built-in Synth within tolerance.
+- **6f:** the crash test plugin in a sandbox; the set keeps playing.
+- **6g:** none. Its numbers come from a quiet-machine session, which is arranged with the user first.
 
 ## 6a: Scanning and the plugin library — `src/hosting/scan/`
 - **Formats:**
@@ -58,7 +146,7 @@ Depends on:
   - A "Plugins" category in the M4 browser, grouped by vendor, format, or category, with search.
   - Favorites and collections work for plugins too.
   - Dragging a plugin in works like a built-in device.
-- **Preferences → Plugins:** folders, rescan, the blocklist, the default isolation mode (6c), and the preferred format when a plugin exists in several formats.
+- **Preferences → Plugins:** folders, rescan, the blocklist, the default isolation mode (6f), and the preferred format when a plugin exists in several formats.
 
 ## 6b: Hosting plugins as devices — `src/hosting/`
 
@@ -95,27 +183,7 @@ Depends on:
   - Windows open and close quickly, and a closed window frees its GUI resources.
 - **Changing sample rate or buffer size:** devices are re-prepared on the message thread, as with built-in devices, without rebuilding the set.
 
-## 6c: Crash isolation (sandboxing) — `src/hosting/sandbox/`
-Running a plugin in the app's own process is fastest, but a crash in the plugin takes down the whole app. So isolation is **user-selectable**, as in Bitwig.
-- **Modes** (set as a default in Preferences, and per device):
-  - **In-process:** the default, and the fastest.
-  - **Shared sandbox:** all isolated plugins run in one helper process.
-  - **Per vendor:** one helper process per plugin maker.
-  - **Per plugin:** one helper process per plugin.
-- **How audio crosses between processes:**
-  - Audio and MIDI pass through a **shared-memory ring buffer**, and the two processes wake each other with OS events.
-  - **Same-block mode (default):** the plugin's output comes back in the same audio block, so there's no added latency. The cost is extra CPU for the handoff.
-  - **Pipelined mode:** adds one block of latency, which is reported to delay compensation. Use it for heavy plugins or when CPU is under pressure.
-  - The helper's audio thread runs at real-time priority through `platform::RealtimeThread` (MMCSS on Windows, rtkit `SCHED_FIFO` on Linux, the audio workgroup on macOS).
-  - **Cross-process signaling** goes through `platform::IpcSignal`: named events on Windows, futex or POSIX semaphores on Linux, with shared memory from `shm_open`.
-  - The plugin's window still opens from the helper process, as a normal window.
-- **If a plugin crashes:**
-  - Only that device goes silent and shows an error badge. The app and every other track keep playing.
-  - You can reload the device with its last saved state.
-  - The crash is logged with the plugin's name and version, and the plugin can be added to the blocklist.
-- **Cost:** the extra CPU per isolated plugin, and per process, is benchmarked in `lattice_bench`. It's shown in the UI so you can choose a mode knowing the cost.
-
-## 6d: Tuning for plugins — `src/tuning/external/`
+## 6c: Tuning for plugins — `src/tuning/external/`
 
 ### MTS-ESP master
 - Uses ODDSound's MTS-ESP SDK as the **tuning master**. Check the SDK's license terms before release.
@@ -145,9 +213,9 @@ Running a plugin in the app's own process is fastest, but a crash in the plugin 
   - **Bulk tuning dump** (all 128 notes).
   - **Single-note tuning change** (real-time), so a change can be sent while notes are held.
   - Each frequency is encoded as a semitone plus a 14-bit fraction: about 0.006 cent resolution.
-  - Can be saved as a `.syx` file or sent straight to a hardware port (6e).
+  - Can be saved as a `.syx` file or sent straight to a hardware port (6d).
 
-## 6e: MIDI out, retuning hardware, External Instrument — `src/engine/midiout/`, `src/devices/external/`
+## 6d: MIDI out, retuning hardware, External Instrument — `src/engine/midiout/`, `src/devices/external/`
 
 ### Sending MIDI to hardware with accurate timing
 - **Routing:** a MIDI track without an instrument can send to any MIDI output port and channel (the M4 mixer I/O already shows this).
@@ -176,7 +244,7 @@ Running a plugin in the app's own process is fastest, but a crash in the plugin 
 - **Profile wizard:**
   1. Choose the method.
   2. Play test notes.
-  3. Optionally run the Tuning Verifier (6f), which **checks the bend range automatically**: it plays a known bend and measures the result.
+  3. Optionally run the Tuning Verifier (6e), which **checks the bend range automatically**: it plays a known bend and measures the result.
 
   Profiles can be saved and reused, and they're shared through the library.
 
@@ -188,7 +256,7 @@ Running a plugin in the app's own process is fastest, but a crash in the plugin 
 - **Engine addition:** live audio input is passed through the track, with monitoring and delay compensation. This is also the base for audio tracks after the MVP.
 - **External Audio Effect device:** sends audio to interface outputs and returns from inputs, with latency measurement, for outboard effects.
 
-## 6f: Clock sync and the Tuning Verifier
+## 6e: Clock sync and the Tuning Verifier
 
 ### MIDI clock
 - **Clock out:**
@@ -209,6 +277,42 @@ Running a plugin in the app's own process is fastest, but a crash in the plugin 
 - **Latency check:** the same tool sends a click and measures how long it takes to come back. That sets the External Instrument's latency setting.
 - **Bend-range check:** the tool sends a known bend and measures the result. A mismatch with the profile's range is flagged.
 - It works on plugins too, internally with no audio interface. This gives a way to check whether an MTS-ESP-aware plugin follows the tuning.
+
+## 6f: Crash isolation (sandboxing) — `src/hosting/sandbox/`
+Running a plugin in the app's own process is fastest, but a crash in the plugin takes down the whole app. So isolation is **user-selectable**, as in Bitwig.
+- **Modes** (set as a default in Preferences, and per device):
+  - **In-process:** the default, and the fastest.
+  - **Shared sandbox:** all isolated plugins run in one helper process.
+  - **Per vendor:** one helper process per plugin maker.
+  - **Per plugin:** one helper process per plugin.
+- **How audio crosses between processes:**
+  - Audio and MIDI pass through a **shared-memory ring buffer**, and the two processes wake each other with OS events.
+  - **Same-block mode (default):** the plugin's output comes back in the same audio block, so there's no added latency. The cost is extra CPU for the handoff.
+  - **Pipelined mode:** adds one block of latency, which is reported to delay compensation. Use it for heavy plugins or when CPU is under pressure.
+  - The helper's audio thread runs at real-time priority, as the engine's `WorkerPool` threads do: `juce::Thread::startRealtimeThread`, plus `platform::joinProAudioClass` (MMCSS on Windows). On Linux it uses rtkit or `SCHED_FIFO`; on macOS, the audio workgroup.
+  - **Cross-process signaling** goes through a new `platform::IpcSignal`: named events on Windows, futex or POSIX semaphores on Linux, with shared memory from `shm_open`.
+  - The plugin's window still opens from the helper process, as a normal window.
+- **If a plugin crashes:**
+  - Only that device goes silent and shows an error badge. The app and every other track keep playing.
+  - You can reload the device with its last saved state.
+  - The crash is logged with the plugin's name and version, and the plugin can be added to the blocklist.
+- **Cost:** the extra CPU per isolated plugin, and per process, is benchmarked in `lattice_bench`. It's shown in the UI so you can choose a mode knowing the cost.
+
+## 6g: The quality pass
+- **Per-device CPU:** every device's time per block, built-in ones included, shown on its title bar and in the CPU meter's hover panel. Its cost goes into the bench baselines.
+- **The reference set** gets six test plugins, as the charter asks. That includes the latency-changing plugin and the multi-out plugin, so delay compensation and the extra outputs are part of every measurement.
+- **The soak** (`perf-check.ps1 -Soak`) gets plugins:
+  - plugin windows open and closed during the UI stress;
+  - a plugin's latency changed every few seconds;
+  - MIDI out to a loopback port, with its jitter in the result lines.
+- **The quiet-machine session** (arranged with the user first). It measures:
+  - hosting overhead;
+  - the sandbox handoff in each mode;
+  - MIDI-out jitter at p99 over 10 minutes;
+  - loading the reference set with its plugins.
+
+  The results go into `perf/reference-machine.md`.
+- **Callgrind** on Linux for the hosting path and the MPE retuner, so later changes can be compared by instruction count.
 
 ## Tests
 1. **Scanner**, using test plugins built in the repo with JUCE (in `tests/fixtures/plugins/`):
