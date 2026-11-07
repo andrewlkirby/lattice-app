@@ -25,7 +25,8 @@ enum class Kind
     preset = 1, // a factory preset (built in) or a .lpreset file
     sample = 2, // an audio file
     tuning = 3, // a built-in tuning, or a .scl or Colundi-format .txt file
-    folder = 4, // a folder inside a place
+    folder = 4, // a folder inside a place, or a group of plugins
+    plugin = 5, // a plugin found by the plugin scan (docs/07-m6-plugins-external.md, 6a)
 };
 
 /** The browser's categories (docs/05-m4-ui.md, 4e). Every item has one. */
@@ -37,8 +38,42 @@ inline constexpr const char* audioEffects = "Audio Effects";
 inline constexpr const char* midiEffects = "MIDI Effects";
 inline constexpr const char* samples = "Samples";
 inline constexpr const char* tunings = "Tunings";
+inline constexpr const char* plugins = "Plugins";
 inline constexpr const char* folders = "Folders";
 } // namespace category
+
+/** A plugin file (or, for formats without files, an identifier) as the plugin scan last saw it
+    (docs/07-m6-plugins-external.md, 6a). */
+struct PluginFile
+{
+    enum class Status
+    {
+        ok = 0,        // scanned: its plugins are in the index
+        noPlugins = 1, // scanned, but it holds no plugin this format can load
+        failed = 2,    // the format couldn't read it
+        crashed = 3,   // blocked: the scanner crashed on it
+        hung = 4,      // blocked: the scanner gave up waiting for it
+    };
+    juce::String format;
+    juce::String identifier;
+    std::int64_t size = 0;     // what a change is seen by (0 for formats without files)
+    std::int64_t modified = 0; // ms since 1970
+    Status status = Status::ok;
+    juce::String reason; // why it failed or is blocked
+    std::int64_t scanned = 0; // when, ms since 1970
+
+    bool blocked() const noexcept { return status == Status::crashed || status == Status::hung; }
+};
+
+/** A plugin the scan found: its file, and its description (juce::PluginDescription's XML, with what
+    Lattice adds), which is what loading it needs. */
+struct StoredPlugin
+{
+    juce::String key; // the description's identifier string: unique, and stable across scans
+    juce::String format;
+    juce::String identifier; // its file
+    juce::String xml;
+};
 
 /** One row of the index. */
 struct Item
@@ -130,6 +165,20 @@ public:
 
     /** Collections. */
     void setInCollection(const juce::String& key, int collection, bool in);
+
+    // --- Plugins (docs/07-m6-plugins-external.md, 6a) ---------------------------------------------
+    // What the plugin scan found, kept apart from the browser's rows: the scan's own record, which
+    // a new schema version doesn't clear (rescanning every plugin takes minutes), and from which
+    // the browser's Plugins rows are made (setPluginItems). Any thread.
+
+    std::vector<PluginFile> pluginFiles() const;
+    /** Records a file's scan, replacing the plugins it held. */
+    void recordPluginFile(const PluginFile& file, const std::vector<StoredPlugin>& plugins);
+    /** Forgets files (and their plugins): gone from the disk, or to be scanned again. */
+    void removePluginFiles(const std::vector<std::pair<juce::String, juce::String>>& formatAndIdentifier);
+    std::vector<StoredPlugin> storedPlugins() const;
+    /** Replaces every row of the Plugins category (the plugins, and the folders grouping them). */
+    void setPluginItems(const std::vector<Item>& items);
 
     /** Increases on every change (scans, collections, places, built-ins). Any thread. */
     std::uint64_t generation() const noexcept { return changes.load(); }

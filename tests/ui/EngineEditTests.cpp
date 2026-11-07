@@ -27,7 +27,7 @@ struct Fixture
 {
     explicit Fixture(int tracks = 2)
     {
-        settingsFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("lattice-engine-edits", ".settings");
+        settingsFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("lattice-engine-edits-" + juce::Uuid().toString() + ".settings");
         juce::PropertiesFile::Options options;
         options.applicationName = "LatticeTests";
         settings = std::make_unique<juce::PropertiesFile>(settingsFile, options);

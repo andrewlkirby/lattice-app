@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/JobPool.h"
+#include "hosting/PluginLibrary.h"
 #include "library/Library.h"
 #include "ui/browser/BrowserView.h"
 #include "ui/device/DeviceView.h"
@@ -159,6 +160,10 @@ public:
         the system's ports; tests with their own (or not at all, so the machine's devices stay
         out of them). Recognised devices are offered from then on. */
     void startControlSurfaces(std::unique_ptr<MidiPorts> ports);
+    /** Starts the plugin scan (docs/07-m6-plugins-external.md, 6a): the app, once it's ready. Not
+        at construction, so the tests' shells never scan the machine's plugins. */
+    void startPluginScan();
+    hosting::PluginLibrary& plugins() noexcept { return *pluginLibrary; }
     SurfaceManager* surfaceManager() noexcept { return surfaces.get(); }
     /** How the pads play, and Virtual Push's own settings, as the Preferences have them. */
     control::Expression expressionSettings() const;
@@ -271,6 +276,7 @@ private:
     DeviceSpecs deviceSpecs;
     std::unique_ptr<presets::PresetLibrary> presetLibrary;
     std::unique_ptr<library::Library> libraryService; // after the presets and the job pool it uses
+    std::unique_ptr<hosting::PluginLibrary> pluginLibrary; // after the library, whose index it keeps
     std::unique_ptr<BrowserView> browser;
     class ShellBrowseHost;
     std::unique_ptr<ShellBrowseHost> browseAccess; // the browser and the Device view, for Browse mode

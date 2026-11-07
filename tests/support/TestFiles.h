@@ -11,11 +11,13 @@
 namespace lattice::test
 {
 
-/** A temporary folder, deleted (with everything in it) when it goes. */
+/** A temporary folder, deleted (with everything in it) when it goes. Its name is unique to it, so
+    test processes run in parallel (ctest -j) never share one: a name that's merely free when asked
+    for could be taken by another process before it's made. */
 struct TempFolder
 {
     explicit TempFolder(const juce::String& name = "lattice-test")
-        : folder(juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile(name, ""))
+        : folder(juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile(name + "-" + juce::Uuid().toString()))
     {
         folder.createDirectory();
     }

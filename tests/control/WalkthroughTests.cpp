@@ -35,7 +35,7 @@ struct Walk
 {
     explicit Walk(int encoders)
     {
-        settingsFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("lattice-walk", ".settings");
+        settingsFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("lattice-walk-" + juce::Uuid().toString() + ".settings");
         juce::PropertiesFile::Options options;
         options.applicationName = "LatticeTests";
         settings = std::make_unique<juce::PropertiesFile>(settingsFile, options);

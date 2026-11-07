@@ -736,7 +736,7 @@ TEST_CASE("Push in the app: its Live port is recognised and offered, the User po
     for (const auto& name : {juce::String("Ableton Push 2"), juce::String("MIDIOUT2 (Ableton Push 2)")})
         ports.outs.add({name, "out:" + name});
 
-    const auto settingsFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("lattice-push", ".settings");
+    const auto settingsFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("lattice-push-" + juce::Uuid().toString() + ".settings");
     juce::PropertiesFile::Options options;
     options.applicationName = "LatticeTests";
     juce::PropertiesFile settings(settingsFile, options);

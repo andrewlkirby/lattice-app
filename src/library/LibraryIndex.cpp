@@ -162,6 +162,21 @@ juce::Result LibraryIndex::createSchema()
             name, tags, category, words, tokenize = 'unicode61 remove_diacritics 2', prefix = '1 2 3');
         CREATE TABLE IF NOT EXISTS places(path TEXT PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS collections(key TEXT NOT NULL, colour INTEGER NOT NULL, PRIMARY KEY(key, colour));
+        CREATE TABLE IF NOT EXISTS plugin_files(
+            format TEXT NOT NULL,
+            identifier TEXT NOT NULL,
+            size INTEGER NOT NULL DEFAULT 0,
+            modified INTEGER NOT NULL DEFAULT 0,
+            status INTEGER NOT NULL,
+            reason TEXT NOT NULL DEFAULT '',
+            scanned INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(format, identifier));
+        CREATE TABLE IF NOT EXISTS plugins(
+            key TEXT PRIMARY KEY,
+            format TEXT NOT NULL,
+            identifier TEXT NOT NULL,
+            xml TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS plugins_by_file ON plugins(format, identifier);
     )sql");
     if (r.failed())
         return r;
@@ -210,6 +225,8 @@ juce::String LibraryIndex::searchWords(const Item& item) const
         words << " preset";
     if (item.kind == Kind::tuning)
         words << " tuning";
+    if (item.kind == Kind::plugin)
+        words << " plugin";
     if (item.rootHz > 0.0)
         words << " root " << juce::String(item.rootHz, 2) << " Hz";
     return words;
@@ -278,7 +295,9 @@ void LibraryIndex::setBuiltIns(const std::vector<Item>& items)
         SqliteDb::Transaction t(db);
         std::vector<std::int64_t> old;
         {
-            SqliteDb::Statement s(db, "SELECT id FROM items WHERE place = ''");
+            // The plugins aren't built in: the plugin scan sets them (setPluginItems).
+            SqliteDb::Statement s(db, ("SELECT id FROM items WHERE place = '' AND category <> '" + juce::String(category::plugins) +
+                                       "'").toRawUTF8());
             while (s.step())
                 old.push_back(s.integer(0));
         }
@@ -614,6 +633,110 @@ void LibraryIndex::setInCollection(const juce::String& key, int collection, bool
         {
             SqliteDb::Statement u(db, "UPDATE items_fts SET tags = ?2 WHERE rowid = ?1");
             u.bind(1, ids.integer(0)).bind(2, tags).run();
+        }
+        t.commit();
+    }
+    changed();
+}
+
+// --- Plugins -----------------------------------------------------------------------------------------
+
+std::vector<PluginFile> LibraryIndex::pluginFiles() const
+{
+    const std::lock_guard<std::mutex> hold(lock);
+    std::vector<PluginFile> result;
+    SqliteDb::Statement s(db, "SELECT format, identifier, size, modified, status, reason, scanned FROM plugin_files "
+                              "ORDER BY format, identifier");
+    while (s.step())
+    {
+        PluginFile f;
+        f.format = s.text(0);
+        f.identifier = s.text(1);
+        f.size = s.integer(2);
+        f.modified = s.integer(3);
+        f.status = static_cast<PluginFile::Status>(juce::jlimit(0, 4, static_cast<int>(s.integer(4))));
+        f.reason = s.text(5);
+        f.scanned = s.integer(6);
+        result.push_back(std::move(f));
+    }
+    return result;
+}
+
+void LibraryIndex::recordPluginFile(const PluginFile& file, const std::vector<StoredPlugin>& plugins)
+{
+    {
+        const std::lock_guard<std::mutex> hold(lock);
+        SqliteDb::Transaction t(db);
+        SqliteDb::Statement w(db, "INSERT OR REPLACE INTO plugin_files(format, identifier, size, modified, status, reason, scanned) "
+                                  "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)");
+        w.bind(1, file.format)
+            .bind(2, file.identifier)
+            .bind(3, file.size)
+            .bind(4, file.modified)
+            .bind(5, static_cast<int>(file.status))
+            .bind(6, file.reason)
+            .bind(7, file.scanned)
+            .run();
+        SqliteDb::Statement drop(db, "DELETE FROM plugins WHERE format = ?1 AND identifier = ?2");
+        drop.bind(1, file.format).bind(2, file.identifier).run();
+        for (const auto& p : plugins)
+        {
+            SqliteDb::Statement add(db, "INSERT OR REPLACE INTO plugins(key, format, identifier, xml) VALUES(?1, ?2, ?3, ?4)");
+            add.bind(1, p.key).bind(2, file.format).bind(3, file.identifier).bind(4, p.xml).run();
+        }
+        t.commit();
+    }
+    ++changes;
+}
+
+void LibraryIndex::removePluginFiles(const std::vector<std::pair<juce::String, juce::String>>& formatAndIdentifier)
+{
+    if (formatAndIdentifier.empty())
+        return;
+    {
+        const std::lock_guard<std::mutex> hold(lock);
+        SqliteDb::Transaction t(db);
+        for (const auto& [format, identifier] : formatAndIdentifier)
+        {
+            SqliteDb::Statement a(db, "DELETE FROM plugin_files WHERE format = ?1 AND identifier = ?2");
+            a.bind(1, format).bind(2, identifier).run();
+            SqliteDb::Statement b(db, "DELETE FROM plugins WHERE format = ?1 AND identifier = ?2");
+            b.bind(1, format).bind(2, identifier).run();
+        }
+        t.commit();
+    }
+    ++changes;
+}
+
+std::vector<StoredPlugin> LibraryIndex::storedPlugins() const
+{
+    const std::lock_guard<std::mutex> hold(lock);
+    std::vector<StoredPlugin> result;
+    SqliteDb::Statement s(db, "SELECT key, format, identifier, xml FROM plugins ORDER BY key");
+    while (s.step())
+        result.push_back({s.text(0), s.text(1), s.text(2), s.text(3)});
+    return result;
+}
+
+void LibraryIndex::setPluginItems(const std::vector<Item>& items)
+{
+    {
+        const std::lock_guard<std::mutex> hold(lock);
+        SqliteDb::Transaction t(db);
+        std::vector<std::int64_t> old;
+        {
+            SqliteDb::Statement s(db, "SELECT id FROM items WHERE category = ?1");
+            s.bind(1, juce::String(category::plugins));
+            while (s.step())
+                old.push_back(s.integer(0));
+        }
+        for (const auto id : old)
+            removeItem(id);
+        for (auto item : items)
+        {
+            item.category = category::plugins;
+            item.place.clear();
+            writeItem(item);
         }
         t.commit();
     }

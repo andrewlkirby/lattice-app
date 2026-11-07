@@ -20,7 +20,7 @@ struct Settings
 {
     Settings()
     {
-        file = juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("lattice-prefs", ".settings");
+        file = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("lattice-prefs-" + juce::Uuid().toString() + ".settings");
         juce::PropertiesFile::Options options;
         options.applicationName = "LatticeTests";
         props = std::make_unique<juce::PropertiesFile>(file, options);
@@ -155,7 +155,7 @@ TEST_CASE("Preferences: shortcuts are saved, restored at startup, exported and i
     prefs::saveShortcuts(*f.props, commands);
 
     // Exported, then imported over the defaults.
-    const auto exported = juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("shortcuts", ".xml");
+    const auto exported = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("shortcuts-" + juce::Uuid().toString() + ".xml");
     REQUIRE(commands.shortcutsToXml()->writeTo(exported));
     commands.resetShortcutsToDefaults();
     CHECK(commands.shortcutsFor("transport.metronome").isEmpty());
@@ -216,6 +216,30 @@ TEST_CASE("Preferences: every tab opens; the tabs apply what's chosen", "[ui][pr
         CHECK(LiveSet::newTrackDefaults().tuningId == TuningRegistry::colundiId);
         f.session.newSet(1, 1);
         CHECK(f.session.set().track(0)[ids::tuningId].toString() == TuningRegistry::colundiId);
+    }
+    SECTION("Plugins: the grouping, the format and the folders are saved and given to the scan")
+    {
+        v->show(PreferencesView::Page::plugins);
+        auto* grouping = childTitled<juce::ComboBox>(*v->pageComponent(), "Browser groups by");
+        REQUIRE(grouping != nullptr);
+        grouping->setSelectedId(2, juce::sendNotificationSync); // Format
+        CHECK(f.props->getIntValue(prefs::pluginGroupingKey) == 1);
+        CHECK(f.shell->plugins().settings().grouping == hosting::PluginGrouping::format);
+        auto* format = childTitled<juce::ComboBox>(*v->pageComponent(), "Preferred format");
+        REQUIRE(format != nullptr);
+        format->setText("VST3", juce::sendNotificationSync);
+        CHECK(f.props->getValue(prefs::pluginFormatKey) == "VST3");
+        CHECK(prefs::pluginSettings(*f.props).preferredFormat == "VST3");
+        auto* status = childTitled<juce::Label>(*v->pageComponent(), "Plugin Scan");
+        REQUIRE(status != nullptr);
+        CHECK(status->getText().endsWith("plugins"));
+        // Saved folders come back, one per line.
+        hosting::PluginSettings s;
+        s.extraFolders = {"C:/One", "D:/Two"};
+        s.useDefaultFolders = false;
+        prefs::savePluginSettings(*f.props, s);
+        CHECK(prefs::pluginSettings(*f.props).extraFolders == s.extraFolders);
+        CHECK_FALSE(prefs::pluginSettings(*f.props).useDefaultFolders);
     }
     SECTION("CPU: the worker threads")
     {

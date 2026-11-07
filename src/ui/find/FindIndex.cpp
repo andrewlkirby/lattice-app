@@ -47,11 +47,16 @@ const std::vector<FindIndex::Setting>& FindIndex::settings()
         {"Theme", "Look & Feel", 3},           {"Zoom", "Look & Feel", 3},
         {"Colours", "Look & Feel", 3},         {"Places", "Library", 4},
         {"Library Folders", "Library", 4},     {"Rescan Library", "Library", 4},
-        {"Multi-threaded Audio", "CPU", 5},    {"Worker Threads", "CPU", 5},
-        {"New Tracks' Tuning", "Tuning", 6},   {"Default Tuning", "Tuning", 6},
-        {"New Tracks' High Notes", "Tuning", 6}, {"Computer Keyboard Keys", "Computer Keyboard", 7},
-        {"Note Keys", "Computer Keyboard", 7}, {"Range Step", "Computer Keyboard", 7},
-        {"Shortcuts", "Shortcuts", 8},         {"Key Commands", "Shortcuts", 8},
+        {"Plugins", "Plugins", 5},             {"Plugin Folders", "Plugins", 5},
+        {"Rescan Plugins", "Plugins", 5},      {"VST3", "Plugins", 5},
+        {"CLAP", "Plugins", 5},                {"Blocked Plugins", "Plugins", 5},
+        {"Preferred Format", "Plugins", 5},    {"Browser Groups By", "Plugins", 5},
+        {"Plugin Scan", "Plugins", 5},
+        {"Multi-threaded Audio", "CPU", 6},    {"Worker Threads", "CPU", 6},
+        {"New Tracks' Tuning", "Tuning", 7},   {"Default Tuning", "Tuning", 7},
+        {"New Tracks' High Notes", "Tuning", 7}, {"Computer Keyboard Keys", "Computer Keyboard", 8},
+        {"Note Keys", "Computer Keyboard", 8}, {"Range Step", "Computer Keyboard", 8},
+        {"Shortcuts", "Shortcuts", 9},         {"Key Commands", "Shortcuts", 9},
     };
     return list;
 }

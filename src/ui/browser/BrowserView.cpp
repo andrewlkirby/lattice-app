@@ -35,6 +35,7 @@ Icon iconFor(const Item& item)
     case Kind::device:
     case Kind::preset:
     case Kind::tuning:
+    case Kind::plugin:
         break;
     }
     return Icon::allParams;
@@ -68,6 +69,7 @@ juce::String BrowserView::descriptionFor(const Item& item)
     case Kind::tuning:
         return drag::tuning(item.place.isEmpty() ? item.key.fromFirstOccurrenceOf("tuning:", false, false) : item.key);
     case Kind::folder:
+    case Kind::plugin: // inserting a plugin comes with hosting (docs/07-m6-plugins-external.md, 6b)
         break;
     }
     return {};

@@ -190,6 +190,10 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
     libraryService = std::make_unique<library::Library>(platform::userDataFolder(),
                                                          library::Library::defaultDatabaseFile(platform::userDataFolder()),
                                                          session.deviceRegistry(), *presetLibrary, tunings, jobPool);
+    pluginLibrary = std::make_unique<hosting::PluginLibrary>(
+        libraryService->index(), hosting::PluginLibrary::scannerBesideApp(),
+        juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("Lattice plugin scan"));
+    pluginLibrary->setSettings(prefs::pluginSettings(settings), false);
     deviceShared = std::make_unique<DeviceContext>(DeviceContext{.session = session,
                                                                  .feed = stateFeed,
                                                                  .specs = deviceSpecs,
@@ -806,6 +810,7 @@ PreferencesView::Context MainShell::preferencesContext()
                                .library = *libraryService,
                                .keyboard = computerKeyboard,
                                .audioError = audioError};
+    c.plugins = pluginLibrary.get();
     c.setTheme = [this](const Theme& t) { setTheme(t); };
     c.controllersChanged = [this] { applyVirtualPushSettings(); };
     c.theme = [this]() -> const Theme& { return theme(); };
@@ -1499,6 +1504,11 @@ control::VirtualPush::Settings MainShell::virtualPushSettings() const
     s.fixedVelocity = juce::jlimit(0, 127, settings.getIntValue(prefs::virtualVelocityKey, 0));
     s.encoders = control::VirtualPush::encoderCountFor(settings.getIntValue(prefs::virtualEncodersKey, 8));
     return s;
+}
+
+void MainShell::startPluginScan()
+{
+    pluginLibrary->scan();
 }
 
 void MainShell::startControlSurfaces(std::unique_ptr<MidiPorts> ports)

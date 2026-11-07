@@ -53,7 +53,7 @@ struct Fixture
 /** A scratch folder, removed afterwards. */
 struct TempFolder
 {
-    TempFolder() : dir(juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("lattice-presets", ""))
+    TempFolder() : dir(juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("lattice-presets-" + juce::Uuid().toString()))
     {
         dir.createDirectory();
     }

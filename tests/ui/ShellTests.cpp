@@ -22,7 +22,7 @@ struct Fixture
 {
     Fixture()
     {
-        settingsFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("lattice-shell", ".settings");
+        settingsFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("lattice-shell-" + juce::Uuid().toString() + ".settings");
         juce::PropertiesFile::Options options;
         options.applicationName = "LatticeTests";
         settings = std::make_unique<juce::PropertiesFile>(settingsFile, options);

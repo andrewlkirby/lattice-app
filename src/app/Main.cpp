@@ -143,7 +143,11 @@ private:
         else if (quitWhenReady)
             quit();
         else
+        {
             mainWindow->content().shell().files().offerRecovery(); // after a crash
+            // New and changed plugins, in the background, once everything else has started.
+            mainWindow->content().shell().startPluginScan();
+        }
     }
 
     void startSoak()

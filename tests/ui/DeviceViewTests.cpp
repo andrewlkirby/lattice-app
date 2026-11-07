@@ -56,7 +56,7 @@ struct Fixture
 {
     Fixture()
     {
-        presetsDir = juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("lattice-presets", "");
+        presetsDir = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("lattice-presets-" + juce::Uuid().toString());
         library = std::make_unique<presets::PresetLibrary>(presetsDir, session.deviceRegistry());
         session.newSet(2, 1);
         for (int t = 0; t < 2; ++t)
@@ -444,7 +444,7 @@ TEST_CASE("Device panels: a sample's root note from the file sets the Sampler's 
 {
     // M3 hands-on finding 6: a 440 Hz sample whose file says A4 plays at 440 Hz without typing.
     Fixture f;
-    const auto file = juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("a440", ".wav");
+    const auto file = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("a440-" + juce::Uuid().toString() + ".wav");
     {
         auto writer = wavWithRootA4(file);
         REQUIRE(writer != nullptr);

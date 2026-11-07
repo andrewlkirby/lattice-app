@@ -118,6 +118,16 @@ if(LATTICE_PUSH_USB)
     include(Libusb)
 endif()
 
+# CLAP's headers (MIT), for hosting CLAP plugins: JUCE 8 has no CLAP host
+# (docs/07-m6-plugins-external.md, 6a). Headers only.
+CPMAddPackage(
+    NAME clap
+    GITHUB_REPOSITORY free-audio/clap
+    GIT_TAG 1.2.9
+    DOWNLOAD_ONLY YES)
+add_library(lattice_clap INTERFACE)
+target_include_directories(lattice_clap SYSTEM INTERFACE "${clap_SOURCE_DIR}/include")
+
 # --- lattice_juce: every JUCE module, compiled exactly once ---------------------------------------
 # JUCE modules are INTERFACE libraries that add their sources to whatever links them. Linking them
 # PRIVATE here and re-exporting only their include paths and definitions means the app and the
@@ -148,6 +158,10 @@ target_compile_definitions(lattice_juce
         JUCE_STRICT_REFCOUNTEDPOINTER=1
         JUCE_DISABLE_JUCE_VERSION_PRINTING=1
         JUCE_MODAL_LOOPS_PERMITTED=0
+        # Plugin hosting (docs/07-m6-plugins-external.md): VST3 everywhere, and each OS's own.
+        JUCE_PLUGINHOST_VST3=1
+        JUCE_PLUGINHOST_AU=$<PLATFORM_ID:Darwin>
+        JUCE_PLUGINHOST_LV2=$<PLATFORM_ID:Linux>
         JUCE_ASIO=$<BOOL:${LATTICE_ENABLE_ASIO}>)
 if(MSVC)
     target_compile_options(lattice_juce PRIVATE /bigobj)
@@ -258,6 +272,11 @@ add_library(lattice_core STATIC
     src/engine/session/ClipData.cpp
     src/engine/session/ClipPlayer.cpp
     src/engine/session/SessionProcessor.cpp
+    src/hosting/PluginFormats.cpp
+    src/hosting/PluginLibrary.cpp
+    src/hosting/clap/ClapFormat.cpp
+    src/hosting/scan/PluginScanner.cpp
+    src/hosting/scan/ScanProtocol.cpp
     src/library/Library.cpp
     src/library/LibraryIndex.cpp
     src/library/PresetPreviews.cpp
@@ -281,7 +300,7 @@ else()
     target_sources(lattice_core PRIVATE src/platform/linux/PlatformLinux.cpp src/platform/linux/FileWatcherLinux.cpp)
 endif()
 target_include_directories(lattice_core PUBLIC src)
-target_link_libraries(lattice_core PUBLIC lattice_juce PRIVATE lattice_binary_data lattice_sqlite)
+target_link_libraries(lattice_core PUBLIC lattice_juce PRIVATE lattice_binary_data lattice_sqlite lattice_clap)
 target_compile_definitions(lattice_core PUBLIC LATTICE_PROFILE=$<BOOL:${LATTICE_PROFILE}>)
 if(LATTICE_PROFILE)
     target_link_libraries(lattice_core PUBLIC Tracy::TracyClient)
@@ -427,6 +446,14 @@ else()
 endif()
 lattice_set_warnings(lattice_app)
 
+# --- The plugin scanner (docs/07-m6-plugins-external.md, 6a) ----------------------------------------
+# Describes plugins in a process of its own, so one that crashes or hangs can't take the app down.
+# The app finds it beside itself.
+add_executable(LatticePluginScanner src/hosting/scan/ScannerMain.cpp)
+target_link_libraries(LatticePluginScanner PRIVATE lattice_core lattice_clap)
+lattice_set_warnings(LatticePluginScanner)
+set_target_properties(LatticePluginScanner PROPERTIES FOLDER "Lattice")
+
 # --- App -----------------------------------------------------------------------------------------
 if(LATTICE_BUILD_APP)
     juce_add_gui_app(Lattice
@@ -442,6 +469,10 @@ if(LATTICE_BUILD_APP)
         JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:Lattice,JUCE_PRODUCT_NAME>"
         JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:Lattice,JUCE_VERSION>")
     target_link_libraries(Lattice PRIVATE lattice_app)
+    add_dependencies(Lattice LatticePluginScanner)
+    add_custom_command(TARGET Lattice POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:LatticePluginScanner>" "$<TARGET_FILE_DIR:Lattice>"
+        VERBATIM)
     if(LATTICE_RT_CHECKS STREQUAL "ON")
         target_link_libraries(Lattice PRIVATE lattice_alloc_hooks)
         target_compile_definitions(Lattice PRIVATE LATTICE_RT_CHECKS_ENABLED=1)

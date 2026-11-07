@@ -1,6 +1,7 @@
 #pragma once
 
 #include "control/ComputerKeyboardInput.h"
+#include "hosting/PluginLibrary.h"
 #include "ui/commands/CommandRegistry.h"
 
 #include <juce_data_structures/juce_data_structures.h>
@@ -44,6 +45,11 @@ constexpr auto pressureKey = "controllers.pressure";                   // 0 off,
 constexpr auto pressureThresholdKey = "controllers.pressureThreshold"; // percent, 0 .. 50
 constexpr auto stripKey = "controllers.strip";                         // 0 pitch bend, 1 mod wheel, 2 scroll
 constexpr auto perNoteKey = "controllers.perNote";                     // bool: MPE pads play per note (5g)
+// The plugin scan (docs/07-m6-plugins-external.md, 6a: hosting::PluginSettings).
+constexpr auto pluginDefaultFoldersKey = "plugins.defaultFolders"; // bool: each format's standard folders
+constexpr auto pluginFoldersKey = "plugins.folders";               // more folders, one per line
+constexpr auto pluginFormatKey = "plugins.preferredFormat";        // a format's name; empty: CLAP, then VST3...
+constexpr auto pluginGroupingKey = "plugins.grouping";             // 0 vendor, 1 format, 2 type
 
 constexpr double minZoom = 0.5, maxZoom = 2.5;
 
@@ -76,6 +82,10 @@ void saveDeviceState(juce::PropertiesFile& settings, AudioEngine& engine);
     made, so a set's tracks find them), and remembering one more. */
 void loadRememberedTunings(TuningRegistry& registry, const juce::PropertiesFile& settings);
 void rememberTuningFile(juce::PropertiesFile& settings, const juce::File& file);
+
+/** The plugin scan's settings, and saving them. */
+hosting::PluginSettings pluginSettings(const juce::PropertiesFile& settings);
+void savePluginSettings(juce::PropertiesFile& settings, const hosting::PluginSettings& plugins);
 
 /** The MIDI inputs (by identifier) MIDI Map and Key Map listen to. */
 juce::StringArray remoteInputs(const juce::PropertiesFile& settings);

@@ -92,7 +92,7 @@ TEST_CASE("MIDI Map: a learnt CC moves the parameter, and the mapping is saved i
     CHECK(!f.mappings.handleMidi("port", cc(21, 5, 2))); // another channel
 
     // Saved and loaded with the set.
-    const auto file = juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("mapped", ".lset");
+    const auto file = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("mapped-" + juce::Uuid().toString() + ".lset");
     REQUIRE(f.session.saveSet(file).wasOk());
     REQUIRE(f.session.loadSet(file).wasOk());
     REQUIRE(f.mappings.all().size() == 1);
@@ -241,7 +241,7 @@ TEST_CASE("Key Map: a key toggles a value; the computer keyboard keeps its keys"
     CHECK(Mappings::sourceText(f.mappings.forTarget(solo)[0]).startsWith("Key "));
 
     // Saved and loaded with the set (track IDs are kept in a set's file).
-    const auto file = juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("keymapped", ".lset");
+    const auto file = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("keymapped-" + juce::Uuid().toString() + ".lset");
     REQUIRE(f.session.saveSet(file).wasOk());
     REQUIRE(f.session.loadSet(file).wasOk());
     file.deleteFile();
@@ -259,7 +259,7 @@ TEST_CASE("MIDI Map in the shell: Ctrl+M, the overlay's targets, the list's menu
     AudioEngine engine;
     SessionController session{engine, tunings, testRegistry()};
     session.newSet(2, 2);
-    const auto settingsFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("lattice-map", ".settings");
+    const auto settingsFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("lattice-map-" + juce::Uuid().toString() + ".settings");
     juce::PropertiesFile::Options options;
     options.applicationName = "LatticeTests";
     juce::PropertiesFile settings(settingsFile, options);

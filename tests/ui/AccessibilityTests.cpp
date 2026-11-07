@@ -22,7 +22,7 @@ struct Fixture
 {
     Fixture()
     {
-        settingsFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("lattice-accessibility", ".settings");
+        settingsFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("lattice-accessibility-" + juce::Uuid().toString() + ".settings");
         juce::PropertiesFile::Options options;
         options.applicationName = "LatticeTests";
         settings = std::make_unique<juce::PropertiesFile>(settingsFile, options);
@@ -299,14 +299,18 @@ TEST_CASE("Accessibility: Tab and Shift+Tab move through controls; in a view Shi
     CHECK(f.shell->detailView().page() == DetailView::Page::device);
 
     // On a knob reached with Tab, Shift+Tab goes back to the control before instead.
+    // The Device view's first knob (the top-left one), so Tab stays among its controls. (The
+    // registry's order is its hash map's: picking the first entry found could pick the last knob,
+    // from which Tab leaves the view.)
     BoundControl* knob = nullptr;
+    const auto before = [](const juce::Component& a, const juce::Component& b) {
+        const auto pa = a.getScreenPosition(), pb = b.getScreenPosition();
+        return pa.y != pb.y ? pa.y < pb.y : pa.x < pb.x;
+    };
     for (const auto* e : f.shell->controlRegistry().entries())
         if (auto* c = dynamic_cast<BoundControl*>(e->component.getComponent());
-            c != nullptr && c->isShowing() && f.shell->deviceView().isParentOf(c))
-        {
+            c != nullptr && c->isShowing() && f.shell->deviceView().isParentOf(c) && (knob == nullptr || before(*c, *knob)))
             knob = c;
-            break;
-        }
     REQUIRE(knob != nullptr);
     knob->grabKeyboardFocus();
     REQUIRE(Fixture::focused() == knob);

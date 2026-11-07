@@ -59,7 +59,7 @@ struct Session
 {
     Session()
     {
-        settingsFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("lattice-files", ".settings");
+        settingsFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("lattice-files-" + juce::Uuid().toString() + ".settings");
         juce::PropertiesFile::Options options;
         options.applicationName = "LatticeTests";
         settings = std::make_unique<juce::PropertiesFile>(settingsFile, options);
@@ -341,7 +341,7 @@ TEST_CASE("Set files: the shell's commands and the File menu's recent sets", "[u
     TuningRegistry tunings;
     AudioEngine engine;
     SessionController session{engine, tunings, testRegistry()};
-    const auto settingsFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("lattice-files", ".settings");
+    const auto settingsFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("lattice-files-" + juce::Uuid().toString() + ".settings");
     juce::PropertiesFile::Options options;
     options.applicationName = "LatticeTests";
     juce::PropertiesFile settings(settingsFile, options);

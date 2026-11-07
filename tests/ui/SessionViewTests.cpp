@@ -446,7 +446,7 @@ TEST_CASE("Session view: a MIDI file dropped on a slot becomes a clip there", "[
     juce::MidiFile midi;
     midi.setTicksPerQuarterNote(480);
     midi.addTrack(seq);
-    const auto file = juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("drop", ".mid");
+    const auto file = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("drop-" + juce::Uuid().toString() + ".mid");
     {
         juce::FileOutputStream out(file);
         REQUIRE(midi.writeTo(out));

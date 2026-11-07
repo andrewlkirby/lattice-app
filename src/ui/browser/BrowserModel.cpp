@@ -12,7 +12,7 @@ using library::Query;
 juce::StringArray BrowserModel::categories()
 {
     return {library::category::instruments, library::category::drums,   library::category::audioEffects,
-            library::category::midiEffects, library::category::samples, presetsCategory,
+            library::category::midiEffects, library::category::plugins, library::category::samples, presetsCategory,
             library::category::tunings};
 }
 
@@ -105,6 +105,9 @@ Query BrowserModel::queryFor() const
             if (shown.category == library::category::instruments || shown.category == library::category::drums ||
                 shown.category == library::category::audioEffects || shown.category == library::category::midiEffects)
                 q.kind = static_cast<int>(Kind::device);
+            // Plugins: the folders grouping them (by vendor, format or type), which open on them.
+            if (shown.category == library::category::plugins)
+                q.kind = static_cast<int>(Kind::folder);
         }
         break;
     }

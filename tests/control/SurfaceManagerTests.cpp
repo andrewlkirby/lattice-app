@@ -69,11 +69,11 @@ struct Fixture
 {
     Fixture()
     {
-        settingsFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("lattice-surfaces", ".settings");
+        settingsFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("lattice-surfaces-" + juce::Uuid().toString() + ".settings");
         juce::PropertiesFile::Options options;
         options.applicationName = "LatticeTests";
         settings = std::make_unique<juce::PropertiesFile>(settingsFile, options);
-        folder = juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("lattice-surface-defs", "");
+        folder = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("lattice-surface-defs-" + juce::Uuid().toString());
         folder.createDirectory();
         session.newSet(4, 4);
         session.set().createClip(0, 0, 4.0);

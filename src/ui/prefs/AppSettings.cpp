@@ -122,4 +122,23 @@ void setRemoteInput(juce::PropertiesFile& settings, const juce::String& identifi
     settings.setValue(remoteInputsKey, all.joinIntoString("\n"));
 }
 
+hosting::PluginSettings pluginSettings(const juce::PropertiesFile& settings)
+{
+    hosting::PluginSettings p;
+    p.useDefaultFolders = settings.getBoolValue(pluginDefaultFoldersKey, true);
+    p.extraFolders = juce::StringArray::fromLines(settings.getValue(pluginFoldersKey));
+    p.extraFolders.removeEmptyStrings();
+    p.preferredFormat = settings.getValue(pluginFormatKey);
+    p.grouping = static_cast<hosting::PluginGrouping>(juce::jlimit(0, 2, settings.getIntValue(pluginGroupingKey, 0)));
+    return p;
+}
+
+void savePluginSettings(juce::PropertiesFile& settings, const hosting::PluginSettings& p)
+{
+    settings.setValue(pluginDefaultFoldersKey, p.useDefaultFolders);
+    settings.setValue(pluginFoldersKey, p.extraFolders.joinIntoString("\n"));
+    settings.setValue(pluginFormatKey, p.preferredFormat);
+    settings.setValue(pluginGroupingKey, static_cast<int>(p.grouping));
+}
+
 } // namespace lattice::ui::prefs

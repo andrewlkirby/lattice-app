@@ -66,7 +66,7 @@ struct Window
 {
     Window(int tracks, int scenes)
     {
-        settingsFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("lattice-ui-bench", ".settings");
+        settingsFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("lattice-ui-bench-" + juce::Uuid().toString() + ".settings");
         juce::PropertiesFile::Options options;
         options.applicationName = "LatticeBench";
         settings = std::make_unique<juce::PropertiesFile>(settingsFile, options);
@@ -433,7 +433,7 @@ Idle measureIdle(double seconds, bool audio, const juce::String& deviceType, boo
 {
     juce::PropertiesFile::Options options;
     options.applicationName = "LatticeBench";
-    const auto settingsFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("lattice-ui-idle", ".settings");
+    const auto settingsFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("lattice-ui-idle-" + juce::Uuid().toString() + ".settings");
     auto settings = std::make_unique<juce::PropertiesFile>(settingsFile, options);
     TuningRegistry tunings;
     auto enginePtr = std::make_unique<AudioEngine>();

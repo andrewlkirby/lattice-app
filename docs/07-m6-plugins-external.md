@@ -148,6 +148,101 @@ The checks:
   - Dragging a plugin in works like a built-in device.
 - **Preferences → Plugins:** folders, rescan, the blocklist, the default isolation mode (6f), and the preferred format when a plugin exists in several formats.
 
+### As built (6a, 2026-11-07)
+- **Where things are:**
+  - `src/hosting/`: `PluginFormats` (the formats hosted here, in their default order) and `PluginLibrary` (the scan in the background, and the browser's rows);
+  - `src/hosting/clap/ClapFormat`: CLAP as a `juce::AudioPluginFormat`;
+  - `src/hosting/scan/`: `ScanProtocol` (what the app and the scanner say to each other), `PluginScanner` (runs the scanner and watches it), and `ScannerMain` (`LatticePluginScanner`).
+  - The scanner is built beside the app and copied next to `Lattice.exe` after each build.
+- **Formats:**
+  - **VST3** everywhere, **LV2** on Linux, **AU** on macOS, through JUCE (`JUCE_PLUGINHOST_*` set in `lattice_juce`).
+  - **CLAP:** JUCE 8.0.15 can't host it, and JUCE hasn't announced plans to. So it's Lattice's own format, from the CLAP 1.2.9 headers (MIT), behind JUCE's interface.
+    - Scanning a file reads each plugin's descriptor. It also makes a short-lived instance, for the audio and note ports the descriptor doesn't give, as JUCE's VST3 scan does.
+    - A file may hold several plugins. Each is identified by a hash (FNV-1a) of its CLAP id, which is the same on every machine.
+    - Loading a CLAP as a device comes in 6b. Until then the format reports that it can't.
+  - **Default order** when a plugin comes in several formats: CLAP, then VST3, then the OS's own. Preferences can choose another first.
+  - **Default folders:**
+    - CLAP: the spec's folders plus `CLAP_PATH`;
+    - VST3 and LV2: JUCE's.
+
+    Folders added in Preferences are searched for every format.
+- **The scanner** (`LatticePluginScanner`):
+  - **Jobs in, results out:** the app writes the files to scan to a jobs file and starts the scanner from a given line. The scanner appends a `begin`, its `plugin` lines and an `end` for each job to a results file, flushing each line to the OS before going on.
+    - A file, not the scanner's output, since plugins print to stdout.
+    - Each field is escaped onto its line, and the app reads only whole lines, so a line cut off by a crash is skipped.
+  - **Each job is one message on the message thread,** so a plugin's own messages are handled in between, as in a host.
+  - **No dialogs:** Windows Error Reporting's and the C runtime's abort and assert dialogs are off. A crash writes a `crash` line saying how ("access violation", "segmentation fault") before the process ends: on Windows from the unhandled-exception filter, on Linux from a signal handler that only calls `write()`.
+  - **The app's side** (`PluginScanner::run`, on a background thread): it polls the results file every 10 ms.
+    - **A crash:** a `begin` with no `end` before the process ends. The job is marked crashed, with the reason from the `crash` line or the exit code.
+    - **A hang:** no `end` within the time limit (30 s by default). The process is killed and the job marked hung.
+    - Either way a new scanner starts from the next job: one bad plugin costs one restart.
+    - Two starts in a row that scan nothing stop the run, with why.
+    - The scan's files are deleted when it ends.
+- **The plugin library** (`PluginLibrary`, its own thread at low priority):
+  - **What's on the disk:** each format's folders are searched, and each file is stamped with its size and modification time. For a bundle, that's its files outside `Resources`, so a changed binary is noticed and new artwork isn't. LV2's identifiers that aren't files are stamped 0, and are scanned once while they're listed.
+  - **What's scanned:**
+    - a new file, or one whose stamp changed;
+    - with Rescan All, every file that isn't blocked;
+    - with Retry, the files asked for, blocked or not.
+
+    Files gone from the disk are forgotten.
+  - **Blocked:** a file that crashed or hung the scanner, kept with the reason and not scanned again until it changes or a retry is asked for. A file the format can't read is kept as failed, by the same rule.
+  - **Where results go:** into the M4 library database, in two tables of their own:
+    - `plugin_files`: each file's stamp, status and reason;
+    - `plugins`: each plugin's description, as JUCE's XML with Lattice's attributes.
+
+    They're created alongside the browser's and kept when the browser's schema changes, since rescanning every plugin takes minutes. As results arrive, the rows are written and the browser's rows are remade, at most once a second.
+  - **Starting:** the app starts a scan once it's ready (after the startup log's "ready"; never under `--soak` or `--quit-when-ready`), so start-up isn't slowed. The tests' shells never scan the machine's plugins.
+- **The browser:**
+  - **Plugins** is a category after MIDI Effects, as in Live. It lists folders that open on their plugins, grouped by vendor (the default), format, or type (Instruments, Audio Effects, MIDI Effects).
+  - A plugin's row reads "Vendor · Format · Type".
+  - **One row for each plugin:** the same name and vendor in several formats is one plugin, shown in the preferred format.
+  - Plugins are found by search ("plugin", the vendor, the format) and can go in collections, keyed by the description's identifier, so they stay through rescans.
+  - **Inserting a plugin** (double-click, drag, Insert) comes with 6b. Its row offers nothing yet.
+- **Preferences → Plugins:**
+  - Folders: the standard folders on or off, and more folders added or removed.
+  - The preferred format, and the grouping.
+  - Scan and Rescan All.
+  - The status: scanning so many of so many files, or how many plugins, with why the last scan stopped if it did.
+  - Blocked and failed files, each with its format and reason, and Retry or Retry All.
+
+  Find finds each setting. The time limit has no setting yet: 30 s, as planned.
+- **Known from the scan, not yet for every format:**
+  - **CLAP** gives MIDI in and out and MPE support at scan time (from its note ports).
+  - **VST3 and LV2** give them only from an instance's buses and controller. They're stored as unknown (-1), to be filled in when a plugin is first loaded (6b).
+- **Tests:**
+  - **The test plugins** (`tests/fixtures/plugins/`, built only into the build folder, never into a system folder):
+    - "Lattice Test Plugin", a JUCE-built sine synth: VST3, and LV2 on Linux;
+    - "Lattice Test Clap", two plugins in one file: a synth with the same name and vendor as the JUCE one, so the two are one plugin in two formats, and a note effect;
+    - CLAP and VST3 files that crash or hang at the host's first call.
+  - **`tests/hosting/PluginScanTests.cpp`:**
+    - the protocol's lines and escaping (damaged lines skipped);
+    - the CLAP file's descriptors, features, ports and MPE;
+    - CLAP files found in subfolders;
+    - one scanner run over nine jobs. Crashes and hangs (CLAP and VST3) get the right outcomes and reasons, the good files after them are still found, and it takes five processes. A file that isn't a plugin, and a format that isn't hosted, fail with why;
+    - a scanner that's missing;
+    - the plugin library end to end:
+      - what's found;
+      - the blocked file, with its reason;
+      - the browser's groups and rows, the same plugin shown once and as the CLAP;
+      - search;
+      - an unchanged rescan scanning nothing, a changed file alone, Rescan All leaving out what's blocked while Retry doesn't;
+      - files gone being forgotten;
+      - the preferred format and the grouping;
+      - built-ins being reset leaving the plugins;
+    - a bundle's stamp;
+    - LV2 on Linux.
+  - **Browser and Preferences tests:**
+    - the Plugins category's groups opening, a plugin not inserted yet, search and Favourites;
+    - the Plugins tab saving the grouping, the format and the folders, and giving them to the scan;
+    - every new setting found by Find.
+  - **Test isolation (from 5g):** a test process's user-data folder, and every test's temporary folder and settings file, now has a name unique to it (a UUID). A name that's merely free when asked for could be taken by another process before it's made, so tests run in parallel (`ctest -j`) had shared files.
+  - **A test that depended on memory addresses:** the Tab and Shift+Tab test took "the first knob in the Device view" from the control registry, a hash map keyed by pointer. So it could pick the device's last knob, from which Tab leaves the view and Shift+Tab rightly switches Clip/Device. The new code moved the addresses, and it failed once on each OS. It now takes the top-left knob.
+- **Checks (2026-11-07):**
+  - **Windows:** all 540 fast tests pass in one process, and with `ctest -j 8`, where the 5g failures are gone.
+  - **Linux:** all 539 pass with warnings as errors, LV2 included.
+  - The scan tests take about 5 s, mostly the two hangs at a 1.5 s limit.
+
 ## 6b: Hosting plugins as devices — `src/hosting/`
 
 ### `HostedPluginDevice : StudioDevice`

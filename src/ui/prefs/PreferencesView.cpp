@@ -2,6 +2,8 @@
 
 #include "control/virtual/VirtualPush.h"
 #include "engine/WorkerPool.h"
+#include "hosting/PluginFormats.h"
+#include "hosting/PluginLibrary.h"
 #include "ui/controllers/LearnWizard.h"
 #include "ui/controllers/SurfaceManager.h"
 #include "ui/prefs/AppSettings.h"
@@ -960,6 +962,220 @@ private:
     juce::TextButton add, remove, rescan;
 };
 
+// --- Plugins -------------------------------------------------------------------------------------
+
+class PluginsPage final : public Page, private juce::ChangeListener
+{
+public:
+    explicit PluginsPage(Context& c) : Page("Plugins"), context(c)
+    {
+        standard.setButtonText("Search each format's standard folders");
+        styleButton(standard, [this] { change([this](hosting::PluginSettings& s) { s.useDefaultFolders = standard.getToggleState(); }); });
+        add.setButtonText("Add Folder...");
+        styleButton(add, [this] {
+            if (context.chooseFolder)
+                context.chooseFolder([this](const juce::File& folder) {
+                    change([&](hosting::PluginSettings& s) { s.extraFolders.addIfNotAlreadyThere(folder.getFullPathName()); });
+                });
+        });
+        remove.setButtonText("Remove Folder");
+        styleButton(remove, [this] {
+            const int i = folderList.getSelectedRow();
+            change([i](hosting::PluginSettings& s) {
+                if (i >= 0 && i < s.extraFolders.size())
+                    s.extraFolders.remove(i);
+            });
+        });
+        scan.setButtonText("Scan");
+        styleButton(scan, [this] {
+            if (context.plugins != nullptr)
+                context.plugins->scan();
+        });
+        rescanAll.setButtonText("Rescan All");
+        styleButton(rescanAll, [this] {
+            if (context.plugins != nullptr)
+                context.plugins->scan(true);
+        });
+        retry.setButtonText("Retry");
+        styleButton(retry, [this] {
+            const int i = problemList.getSelectedRow();
+            if (context.plugins != nullptr && i >= 0 && i < static_cast<int>(problems.size()))
+                context.plugins->retry({problems[static_cast<std::size_t>(i)]});
+        });
+        retryAll.setButtonText("Retry All");
+        styleButton(retryAll, [this] {
+            if (context.plugins != nullptr)
+                context.plugins->retry(problems);
+        });
+
+        format.setTitle("Preferred Format");
+        format.addItem("Automatic (" + hosting::hostedFormatNames().joinIntoString(", then ") + ")", 1);
+        for (const auto& name : hosting::hostedFormatNames())
+            format.addItem(name, format.getNumItems() + 1);
+        format.onChange = [this] {
+            const auto chosen = format.getSelectedId() <= 1 ? juce::String() : format.getText();
+            change([&](hosting::PluginSettings& s) { s.preferredFormat = chosen; });
+        };
+        grouping.setTitle("Browser Groups By");
+        grouping.addItem("Vendor", 1);
+        grouping.addItem("Format", 2);
+        grouping.addItem("Type", 3);
+        grouping.onChange = [this] {
+            const auto g = static_cast<hosting::PluginGrouping>(grouping.getSelectedId() - 1);
+            change([g](hosting::PluginSettings& s) { s.grouping = g; });
+        };
+
+        folderList.setTitle("Plugin Folders");
+        folderModel.page = this;
+        folderList.setModel(&folderModel);
+        problemList.setTitle("Blocked Plugins");
+        problemModel.page = this;
+        problemList.setModel(&problemModel);
+        status.setTitle("Plugin Scan");
+
+        note("Plugins are found in these folders and described in the background by a scanner of their own, so one that crashes "
+             "or hangs can't take Lattice with it. Only new and changed files are scanned again.",
+             2);
+        row("", standard, 14.0f);
+        row("Plugin folders", folderList);
+        rows.back().height = juce::roundToInt(themeOf(*this).controlHeight * 3.0f);
+        row("", add, 6.0f);
+        row("", remove, 6.0f);
+        row("Preferred format", format, 12.0f);
+        row("Browser groups by", grouping, 8.0f);
+        row("", scan, 6.0f);
+        row("", rescanAll, 6.0f);
+        row("", status);
+        note("Blocked plugins crashed or hung the scanner; failed ones couldn't be read. Neither is scanned again until it changes, "
+             "or you retry it.",
+             2);
+        row("", retry, 6.0f);
+        row("", retryAll, 6.0f);
+        row("", problemList, 0.0f, true);
+
+        if (context.plugins != nullptr)
+            context.plugins->addChangeListener(this);
+        refresh();
+    }
+    ~PluginsPage() override
+    {
+        if (context.plugins != nullptr)
+            context.plugins->removeChangeListener(this);
+    }
+
+    void refresh()
+    {
+        const bool have = context.plugins != nullptr;
+        for (auto* c : std::initializer_list<juce::Component*>{&standard, &add, &remove, &scan, &rescanAll, &retry, &retryAll, &format,
+                                                               &grouping})
+            c->setEnabled(have);
+        if (!have)
+        {
+            status.setText("Plugins aren't available here.", juce::dontSendNotification);
+            return;
+        }
+        const auto& s = context.plugins->settings();
+        standard.setToggleState(s.useDefaultFolders, juce::dontSendNotification);
+        const int formatIndex = hosting::hostedFormatNames().indexOf(s.preferredFormat);
+        format.setSelectedId(formatIndex >= 0 ? formatIndex + 2 : 1, juce::dontSendNotification);
+        grouping.setSelectedId(static_cast<int>(s.grouping) + 1, juce::dontSendNotification);
+        folders = s.extraFolders;
+        problems = context.plugins->problems();
+        const auto st = context.plugins->status();
+        juce::String text;
+        if (st.scanning)
+            text = st.total > 0 ? "Scanning: " + juce::String(st.done) + " of " + juce::String(st.total) + " files..."
+                                : juce::String("Looking for plugins...");
+        else
+            text = juce::String(st.plugins) + (st.plugins == 1 ? " plugin" : " plugins");
+        if (st.lastError.isNotEmpty() && !st.scanning)
+            text << " (the last scan stopped: " << st.lastError << ")";
+        status.setText(text, juce::dontSendNotification);
+        retry.setEnabled(!problems.empty());
+        retryAll.setEnabled(!problems.empty());
+        remove.setEnabled(!folders.isEmpty());
+        folderList.updateContent();
+        folderList.repaint();
+        problemList.updateContent();
+        problemList.repaint();
+    }
+
+    const juce::StringArray& shownFolders() const noexcept { return folders; }
+    const std::vector<library::PluginFile>& shownProblems() const noexcept { return problems; }
+    juce::String statusText() const { return status.getText(); }
+
+private:
+    void changeListenerCallback(juce::ChangeBroadcaster*) override { refresh(); }
+
+    template <typename Edit>
+    void change(Edit&& edit)
+    {
+        if (context.plugins == nullptr)
+            return;
+        auto s = context.plugins->settings();
+        edit(s);
+        prefs::savePluginSettings(context.settings, s);
+        context.plugins->setSettings(s);
+        refresh();
+    }
+
+    static juce::String describe(const library::PluginFile& f)
+    {
+        using S = library::PluginFile::Status;
+        const auto* what = f.status == S::crashed ? "crashed" : f.status == S::hung ? "hung" : "failed";
+        juce::String text = juce::File::isAbsolutePath(f.identifier) ? juce::File(f.identifier).getFileName() : f.identifier;
+        text << " (" << f.format << "): " << what;
+        if (f.reason.isNotEmpty())
+            text << ", " << f.reason;
+        return text;
+    }
+
+    struct FolderModel : juce::ListBoxModel
+    {
+        PluginsPage* page = nullptr;
+        int getNumRows() override { return page->folders.size(); }
+        void paintListBoxItem(int row, juce::Graphics& g, int width, int height, bool selected) override
+        {
+            const auto& t = themeOf(page->folderList);
+            if (selected)
+                g.fillAll(t.selection.withAlpha(0.4f));
+            g.setColour(t.text);
+            g.setFont(t.font(t.fontNormal));
+            g.drawText(page->folders[row], 6, 0, width - 12, height, juce::Justification::centredLeft, true);
+        }
+        juce::String getNameForRow(int row) override { return page->folders[row]; }
+    };
+    struct ProblemModel : juce::ListBoxModel
+    {
+        PluginsPage* page = nullptr;
+        int getNumRows() override { return static_cast<int>(page->problems.size()); }
+        void paintListBoxItem(int row, juce::Graphics& g, int width, int height, bool selected) override
+        {
+            const auto& t = themeOf(page->problemList);
+            if (selected)
+                g.fillAll(t.selection.withAlpha(0.4f));
+            g.setColour(t.text);
+            g.setFont(t.font(t.fontNormal));
+            g.drawText(getNameForRow(row), 6, 0, width - 12, height, juce::Justification::centredLeft, true);
+        }
+        juce::String getNameForRow(int row) override
+        {
+            return row >= 0 && row < getNumRows() ? describe(page->problems[static_cast<std::size_t>(row)]) : juce::String();
+        }
+    };
+
+    Context& context;
+    juce::StringArray folders;
+    std::vector<library::PluginFile> problems;
+    FolderModel folderModel;
+    ProblemModel problemModel;
+    juce::ToggleButton standard;
+    juce::ListBox folderList, problemList;
+    juce::TextButton add, remove, scan, rescanAll, retry, retryAll;
+    juce::ComboBox format, grouping;
+    juce::Label status;
+};
+
 // --- CPU -----------------------------------------------------------------------------------------
 
 class CpuPage final : public Page
@@ -1211,6 +1427,7 @@ juce::String PreferencesView::pageName(Page p)
     case Page::controllers: return "Controllers";
     case Page::look: return "Look & Feel";
     case Page::library: return "Library";
+    case Page::plugins: return "Plugins";
     case Page::cpu: return "CPU";
     case Page::tuning: return "Tuning";
     case Page::keyboard: return "Computer Keyboard";
@@ -1241,6 +1458,7 @@ void PreferencesView::show(Page p)
     case Page::controllers: current = std::make_unique<ControllersPage>(context); break;
     case Page::look: current = std::make_unique<LookPage>(context); break;
     case Page::library: current = std::make_unique<LibraryPage>(context); break;
+    case Page::plugins: current = std::make_unique<PluginsPage>(context); break;
     case Page::cpu: current = std::make_unique<CpuPage>(context); break;
     case Page::tuning: current = std::make_unique<TuningPage>(context); break;
     case Page::keyboard: current = std::make_unique<KeyboardPage>(context); break;

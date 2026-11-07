@@ -32,7 +32,7 @@ struct Fixture
 {
     Fixture()
     {
-        settingsFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("lattice-browser", ".settings");
+        settingsFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("lattice-browser-" + juce::Uuid().toString() + ".settings");
         juce::PropertiesFile::Options options;
         options.applicationName = "LatticeTests";
         settings = std::make_unique<juce::PropertiesFile>(settingsFile, options);
@@ -128,18 +128,58 @@ juce::StringArray namesOf(const BrowserModel& m)
 }
 } // namespace
 
+TEST_CASE("Browser: the Plugins category opens on its groups, and a plugin isn't inserted yet", "[ui][browser]")
+{
+    Fixture f;
+    // As the plugin scan sets them (docs/07-m6-plugins-external.md, 6a).
+    library::Item group;
+    group.kind = Kind::folder;
+    group.key = "plugins:0:Some Vendor";
+    group.name = "Some Vendor";
+    library::Item plugin;
+    plugin.kind = Kind::plugin;
+    plugin.key = "plugin:VST3-Some Synth-1234-5678";
+    plugin.name = "Some Synth";
+    plugin.deviceType = "plugin";
+    plugin.folder = group.key;
+    plugin.detail = "Some Vendor \xc2\xb7 VST3 \xc2\xb7 Instrument";
+    f.shell->library().index().setPluginItems({plugin, group});
+    f.settle();
+
+    f.showSource(BrowserModel::Source::Kind::category, "Plugins");
+    CHECK(namesOf(f.model()) == juce::StringArray{"Some Vendor"});
+    REQUIRE(f.model().rows()[0].expandable);
+    f.model().setExpanded(0, true);
+    f.settle();
+    CHECK(namesOf(f.model()) == juce::StringArray{"Some Vendor", "Some Synth"});
+    CHECK(f.model().rows()[1].depth == 1);
+    CHECK_FALSE(f.model().rows()[1].expandable);
+    f.model().select(1);
+    CHECK_FALSE(f.browser().insertSelected()); // hosting comes in 6b
+
+    // Plugins come up in a search, and in the Favourites.
+    f.model().setSearch("some synth");
+    f.settle();
+    CHECK(namesOf(f.model()).contains("Some Synth"));
+    f.shell->library().index().setInCollection(plugin.key, 0, true);
+    f.model().setSearch({});
+    f.showSource(BrowserModel::Source::Kind::collection, "Favourites");
+    CHECK(namesOf(f.model()).contains("Some Synth"));
+}
+
 TEST_CASE("Browser: the sources, and each category's rows", "[ui][browser]")
 {
     Fixture f;
     // Collections, then categories, then places (the User Library first).
     const auto sources = f.model().sources();
-    REQUIRE(sources.size() >= 15);
+    REQUIRE(sources.size() >= 16);
     CHECK(sources[0].kind == BrowserModel::Source::Kind::collection);
     CHECK(sources[0].name == "Favourites");
     CHECK(sources[7].name == "Instruments");
-    CHECK(sources[13].name == "Tunings");
-    CHECK(sources[14].kind == BrowserModel::Source::Kind::place);
-    CHECK(sources[14].name == "User Library");
+    CHECK(sources[11].name == "Plugins"); // after the MIDI effects, as in Live
+    CHECK(sources[14].name == "Tunings");
+    CHECK(sources[15].kind == BrowserModel::Source::Kind::place);
+    CHECK(sources[15].name == "User Library");
 
     f.showSource(BrowserModel::Source::Kind::category, "Instruments");
     auto names = namesOf(f.model());

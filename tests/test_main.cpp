@@ -82,9 +82,12 @@ int main(int argc, char* argv[])
 #endif
     // Some JUCE classes (e.g. AudioDeviceManager) expect a MessageManager to exist.
     const juce::ScopedJuceInitialiser_GUI juceInit;
-    // The window's library (presets, the browser's index) lives in a folder of the tests' own.
+    // The window's library (presets, the browser's index) lives in a folder of the tests' own: one
+    // for each test process, so that tests run in parallel (ctest -j) never share files. A name
+    // that's only free isn't enough, since processes started together would all pick the same one.
     const auto userData = juce::File::getSpecialLocation(juce::File::tempDirectory)
-                              .getNonexistentChildFile("lattice-tests-userdata", "");
+                              .getChildFile("lattice-tests-userdata-" + juce::Uuid().toString());
+    userData.createDirectory();
     lattice::platform::setUserDataFolderForTests(userData);
     const int result = Catch::Session().run(argc, argv);
     userData.deleteRecursively();

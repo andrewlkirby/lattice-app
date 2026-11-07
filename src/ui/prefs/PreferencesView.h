@@ -16,6 +16,10 @@ namespace lattice::ui
 {
 class SurfaceManager;
 }
+namespace lattice::hosting
+{
+class PluginLibrary;
+}
 
 namespace lattice::ui
 {
@@ -31,6 +35,9 @@ namespace lattice::ui
       the control surfaces on MIDI ports, with the Surface Monitor (5e).
     - Look & Feel: the theme (built in, or a JSON file in the Themes folder) and the zoom.
     - Library: the browser's places, adding, removing and rescanning them.
+    - Plugins: the folders the plugin scan searches, scanning, the plugins blocked or failed (with
+      why, and a retry), the preferred format and how the browser groups them
+      (docs/07-m6-plugins-external.md, 6a).
     - CPU: multi-threaded audio and the number of worker threads.
     - Tuning: new tracks' tuning and high-note policy.
     - Computer Keyboard: the 17 note keys (another layout's row) and each tuning's range step.
@@ -58,6 +65,7 @@ public:
         std::function<void(const juce::String& title, const juce::String& patterns, bool save, std::function<void(const juce::File&)>)> chooseFile = {};
         juce::File themesFolder = {};
         SurfaceManager* surfaces = nullptr; // the control surfaces (none in some tests)
+        hosting::PluginLibrary* plugins = nullptr; // the plugin scan (none in some tests)
         juce::String audioError = {}; // why the audio device didn't open, if it didn't
     };
 
@@ -68,12 +76,13 @@ public:
         controllers,
         look,
         library,
+        plugins,
         cpu,
         tuning,
         keyboard,
         shortcuts
     };
-    static constexpr int numPages = 9;
+    static constexpr int numPages = 10;
     static juce::String pageName(Page p);
 
     explicit PreferencesView(Context context);
