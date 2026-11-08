@@ -49,6 +49,9 @@ ClapEditor::ClapEditor(ClapPluginInstance& o, const char* windowApi) : juce::Aud
 
 ClapEditor::~ClapEditor()
 {
+    // JUCE leaves this to the editor (its own hosted formats' editors do it): until then the plugin
+    // thinks this window is still open and won't make another.
+    processor.editorBeingDeleted(this);
     watchPeer(nullptr);
     if (created)
     {

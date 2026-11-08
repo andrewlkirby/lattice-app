@@ -5,6 +5,7 @@
 //   LATTICE_WALKTHROUGH_DIR where to save an image at each step (optional)
 // It adds the crashing test plugins, so the blocked list has something in it.
 
+#include "hosting/clap/ClapEditor.h"
 #include "support/Snapshots.h"
 #include "support/TestDevices.h"
 #include "ui/prefs/AppSettings.h"
@@ -16,8 +17,22 @@
 using namespace lattice;
 using namespace lattice::test;
 
+namespace juce::detail
+{
+bool dispatchNextMessageOnSystemQueue(bool returnIfNoPendingMessages); // juce_events' own message pump
+}
+
 namespace
 {
+/** Runs the message loop for a while, as the app's would (a window's messages, async calls). */
+void pumpFor(double seconds)
+{
+    const auto until = juce::Time::getMillisecondCounterHiRes() + seconds * 1000.0;
+    while (juce::Time::getMillisecondCounterHiRes() < until)
+        if (!juce::detail::dispatchNextMessageOnSystemQueue(true))
+            juce::Thread::sleep(2);
+}
+
 template <typename T>
 T* childTitled(juce::Component& root, const juce::String& title)
 {
@@ -315,6 +330,28 @@ TEST_CASE("Walkthrough: 6b, a real plugin on a track, its panel and its window",
                        << window->getContentComponent()->getWidth() << " x " << window->getContentComponent()->getHeight()
                        << ", display scale " << juce::Desktop::getInstance().getDisplays().getDisplayForRect(window->getBounds())->scale);
         w.shot(*window->getContentComponent(), "6b-window");
+        const auto attached = [&] {
+            auto* open = w.shell->pluginDevices().windows().windowFor(LiveSet::idOf(device));
+            auto* clap = open != nullptr ? dynamic_cast<hosting::ClapEditor*>(open->getContentComponent()) : nullptr;
+            return clap == nullptr || clap->isAttached(); // a VST3's editor attaches itself
+        };
+        pumpFor(0.3);
+        CHECK(attached());
+
+        // Closed with its close button, as a person does, and shown again.
+        for (int round = 0; round < 2; ++round)
+        {
+            w.shell->pluginDevices().windows().windowFor(LiveSet::idOf(device))->closeButtonPressed();
+            pumpFor(0.3);
+            REQUIRE_FALSE(w.shell->pluginDevices().windows().isOpen(LiveSet::idOf(device)));
+            REQUIRE(w.shell->pluginDevices().windows().open(*live, device));
+            pumpFor(0.3);
+            auto* again = w.shell->pluginDevices().windows().windowFor(LiveSet::idOf(device));
+            REQUIRE(again != nullptr);
+            CHECK(again->isShowing());
+            CHECK(attached());
+            WARN("Shown again: " << again->getWidth() << " x " << again->getHeight());
+        }
         w.shell->pluginDevices().windows().close(LiveSet::idOf(device));
     }
 

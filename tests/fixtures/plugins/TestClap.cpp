@@ -7,7 +7,8 @@
 //   semitones), so a host's per-note pitch can be measured in its output. CC 20 sets Level as
 //   if from its own window (with a gesture, reported to the host); a program change sets its
 //   patch number, state that isn't a parameter (reported with mark_dirty). It has the name and
-//   vendor of the JUCE-built VST3, so the two are one plugin in two formats.
+//   vendor of the JUCE-built VST3, so the two are one plugin in two formats. It has a window that
+//   draws nothing, and refuses a second one while the first isn't destroyed, as real plugins do.
 // - "Lattice Test Clap Arp": a note effect (no audio): every note comes out, and the same note an
 //   octave up.
 // - "Lattice Test Latency": an effect that delays its input by its Latency parameter, and reports
@@ -108,6 +109,8 @@ struct Plugin
         std::int32_t id = -1;
     };
     Voice voices[16][128]{};
+
+    bool guiCreated = false;
 
     // Latency effect
     int activeLatency = 0;
@@ -321,6 +324,50 @@ const clap_plugin_state_t stateExt{stateSave, stateLoad};
 // --- Latency --------------------------------------------------------------------------------------
 std::uint32_t latencyGet(const clap_plugin_t* p) { return static_cast<std::uint32_t>(self(p).activeLatency); }
 const clap_plugin_latency_t latencyExt{latencyGet};
+
+// --- The window (the synth's): nothing in it, at a fixed size -------------------------------------
+#if defined(_WIN32)
+constexpr const char* guiApi = CLAP_WINDOW_API_WIN32;
+#elif defined(__APPLE__)
+constexpr const char* guiApi = CLAP_WINDOW_API_COCOA;
+#else
+constexpr const char* guiApi = CLAP_WINDOW_API_X11;
+#endif
+bool guiIsApiSupported(const clap_plugin_t*, const char* api, bool floating) { return !floating && std::strcmp(api, guiApi) == 0; }
+bool guiGetPreferredApi(const clap_plugin_t*, const char** api, bool* floating)
+{
+    *api = guiApi;
+    *floating = false;
+    return true;
+}
+bool guiCreate(const clap_plugin_t* p, const char* api, bool floating)
+{
+    auto& s = self(p);
+    if (s.guiCreated || floating || std::strcmp(api, guiApi) != 0)
+        return false;
+    s.guiCreated = true;
+    return true;
+}
+void guiDestroy(const clap_plugin_t* p) { self(p).guiCreated = false; }
+bool guiSetScale(const clap_plugin_t*, double) { return true; }
+bool guiGetSize(const clap_plugin_t*, std::uint32_t* w, std::uint32_t* h)
+{
+    *w = 320;
+    *h = 200;
+    return true;
+}
+bool guiCanResize(const clap_plugin_t*) { return false; }
+bool guiGetResizeHints(const clap_plugin_t*, clap_gui_resize_hints_t*) { return false; }
+bool guiAdjustSize(const clap_plugin_t*, std::uint32_t*, std::uint32_t*) { return false; }
+bool guiSetSize(const clap_plugin_t*, std::uint32_t, std::uint32_t) { return false; }
+bool guiSetParent(const clap_plugin_t* p, const clap_window_t*) { return self(p).guiCreated; }
+bool guiSetTransient(const clap_plugin_t*, const clap_window_t*) { return false; }
+void guiSuggestTitle(const clap_plugin_t*, const char*) {}
+bool guiShow(const clap_plugin_t* p) { return self(p).guiCreated; }
+bool guiHide(const clap_plugin_t* p) { return self(p).guiCreated; }
+const clap_plugin_gui_t guiExt{guiIsApiSupported, guiGetPreferredApi, guiCreate,      guiDestroy,        guiSetScale,
+                               guiGetSize,        guiCanResize,       guiGetResizeHints, guiAdjustSize,     guiSetSize,
+                               guiSetParent,      guiSetTransient,    guiSuggestTitle,   guiShow,           guiHide};
 
 // --- The plugin ------------------------------------------------------------------------------------
 bool pluginInit(const clap_plugin_t* p)
@@ -578,6 +625,8 @@ const void* pluginExtension(const clap_plugin_t* p, const char* id)
         return &stateExt;
     if (std::strcmp(id, CLAP_EXT_LATENCY) == 0 && kind == Kind::latency)
         return &latencyExt;
+    if (std::strcmp(id, CLAP_EXT_GUI) == 0 && kind == Kind::synth)
+        return &guiExt;
     return nullptr;
 }
 void pluginOnMainThread(const clap_plugin_t*) {}

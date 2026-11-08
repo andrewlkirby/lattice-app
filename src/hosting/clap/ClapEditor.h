@@ -30,6 +30,8 @@ public:
 
     /** The plugin asked for this size (physical pixels on Windows). */
     void pluginAskedForSize(std::uint32_t width, std::uint32_t height);
+    /** Whether the plugin's GUI is in this window (tests). */
+    bool isAttached() const noexcept { return attached; }
 
     void paint(juce::Graphics& g) override;
     void resized() override;

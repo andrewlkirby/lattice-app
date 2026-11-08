@@ -7,6 +7,7 @@
 #include "devices/ChainEditing.h"
 #include "devices/framework/ParameterPager.h"
 #include "hosting/PluginHost.h"
+#include "hosting/PluginWindows.h"
 #include "hosting/clap/ClapFormat.h"
 #include "hosting/clap/ClapInstance.h"
 #include "support/OfflineRenderer.h"
@@ -378,6 +379,28 @@ TEST_CASE("Removing a plugin and undoing it brings it back with its state", "[ho
     REQUIRE(hosted != nullptr);
     f.render(256);
     CHECK(hosted->plugin().getParameters()[1]->getValue() == Catch::Approx(1.0f));
+}
+
+TEST_CASE("A plugin's window closed with its close button opens again", "[hosting][plugins]")
+{
+    Fixture f;
+    const auto device = f.insert(clapPlugin("Lattice Test Plugin"));
+    f.load();
+    auto* hosted = f.live(device);
+    REQUIRE(hosted != nullptr);
+    REQUIRE(hosted->plugin().hasEditor());
+    auto& windows = f.host.windows();
+    const auto id = LiveSet::idOf(device);
+    for (int round = 0; round < 3; ++round)
+    {
+        INFO("Round " << round);
+        REQUIRE(windows.open(*hosted, device)); // the plugin refuses a second window while one is open
+        REQUIRE(windows.windowFor(id) != nullptr);
+        CHECK(windows.windowFor(id)->isShowing());
+        windows.windowFor(id)->closeButtonPressed();
+        CHECK(pumpUntil([&] { return !windows.isOpen(id); }, 5.0));
+        CHECK(hosted->plugin().getActiveEditor() == nullptr);
+    }
 }
 
 // --- Pages and the plugin's own changes -----------------------------------------------------------------------
