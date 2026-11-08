@@ -9,6 +9,9 @@
 //   patch number, state that isn't a parameter (reported with mark_dirty). It has the name and
 //   vendor of the JUCE-built VST3, so the two are one plugin in two formats. It has a window that
 //   draws nothing, and refuses a second one while the first isn't destroyed, as real plugins do.
+//   When LATTICE_TEST_MTS_LIBRARY names libMTS, it's an MTS-ESP client: a note takes its frequency
+//   from the master (its channel's table, if it has one) and a filtered note doesn't sound, as
+//   ODDSound's client code does it.
 // - "Lattice Test Clap Arp": a note effect (no audio): every note comes out, and the same note an
 //   octave up.
 // - "Lattice Test Latency": an effect that delays its input by its Latency parameter, and reports
@@ -17,6 +20,18 @@
 // - "Lattice Test Allocator": passes audio through, and allocates on the audio thread every block.
 
 #include <clap/clap.h>
+
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -82,6 +97,88 @@ const Param latencyParams[] = {
     {1, "Latency", "", 0.0, 4000.0, 64.0, CLAP_PARAM_IS_AUTOMATABLE | CLAP_PARAM_IS_STEPPED},
 };
 
+/** libMTS as a client uses it (ODDSound's Client/libMTSClient.cpp), loaded from the file the
+    tests name; once per process, never unloaded. */
+struct MtsClient
+{
+    void (*registerClient)() = nullptr;
+    void (*deregisterClient)() = nullptr;
+    bool (*hasMaster)() = nullptr;
+    const double* (*tuning)() = nullptr;
+    const double* (*multiTuning)(signed char) = nullptr;
+    bool (*useMulti)(signed char) = nullptr;
+    bool (*filter)(char, signed char) = nullptr;
+    bool (*filterMulti)(char, signed char) = nullptr;
+
+    /** Null until a test names the library: only MTS-ESP's tests make it a client, so another test
+        process's master (libMTS shares it between processes) never retunes the rest. */
+    static const MtsClient* get()
+    {
+        static std::atomic<const MtsClient*> loaded{nullptr};
+        if (const auto* c = loaded.load(std::memory_order_acquire))
+            return c;
+        if (std::getenv("LATTICE_TEST_MTS_LIBRARY") == nullptr)
+            return nullptr;
+        static const MtsClient client = load(); // once: the first time it's named
+        if (client.registerClient == nullptr)
+            return nullptr;
+        loaded.store(&client, std::memory_order_release);
+        return &client;
+    }
+
+    bool online() const { return hasMaster != nullptr && hasMaster() && tuning != nullptr && tuning() != nullptr; }
+    bool channelTable(int channel) const { return useMulti != nullptr && useMulti(static_cast<signed char>(channel)) && multiTuning != nullptr; }
+    bool shouldFilter(int key, int channel) const
+    {
+        if (!online())
+            return false;
+        if (channelTable(channel))
+            return filterMulti != nullptr && filterMulti(static_cast<char>(key), static_cast<signed char>(channel));
+        return filter != nullptr && filter(static_cast<char>(key), static_cast<signed char>(channel));
+    }
+    double hz(int key, int channel) const
+    {
+        if (!online())
+            return 440.0 * std::pow(2.0, (key - 69) / 12.0);
+        if (channelTable(channel))
+            if (const double* t = multiTuning(static_cast<signed char>(channel)))
+                return t[key];
+        return tuning()[key];
+    }
+
+private:
+    static MtsClient load()
+    {
+        MtsClient c;
+        const char* path = std::getenv("LATTICE_TEST_MTS_LIBRARY");
+        if (path == nullptr || *path == 0)
+            return c;
+#if defined(_WIN32)
+        const int wide = MultiByteToWideChar(CP_UTF8, 0, path, -1, nullptr, 0);
+        std::wstring file(static_cast<std::size_t>(wide), wchar_t{});
+        MultiByteToWideChar(CP_UTF8, 0, path, -1, file.data(), wide);
+        HMODULE library = LoadLibraryW(file.c_str());
+        const auto find = [library](const char* name) { return reinterpret_cast<void*>(GetProcAddress(library, name)); };
+#else
+        void* library = dlopen(path, RTLD_NOW);
+        const auto find = [library](const char* name) { return dlsym(library, name); };
+#endif
+        if (library == nullptr)
+            return c;
+        c.registerClient = reinterpret_cast<void (*)()>(find("MTS_RegisterClient"));
+        c.deregisterClient = reinterpret_cast<void (*)()>(find("MTS_DeregisterClient"));
+        c.hasMaster = reinterpret_cast<bool (*)()>(find("MTS_HasMaster"));
+        c.tuning = reinterpret_cast<const double* (*)()>(find("MTS_GetTuningTable"));
+        c.multiTuning = reinterpret_cast<const double* (*)(signed char)>(find("MTS_GetMultiChannelTuningTable"));
+        c.useMulti = reinterpret_cast<bool (*)(signed char)>(find("MTS_UseMultiChannelTuning"));
+        c.filter = reinterpret_cast<bool (*)(char, signed char)>(find("MTS_ShouldFilterNote"));
+        c.filterMulti = reinterpret_cast<bool (*)(char, signed char)>(find("MTS_ShouldFilterNoteMultiChannel"));
+        if (c.deregisterClient == nullptr || c.hasMaster == nullptr || c.tuning == nullptr)
+            c.registerClient = nullptr;
+        return c;
+    }
+};
+
 struct Plugin
 {
     clap_plugin_t clap{};
@@ -104,6 +201,7 @@ struct Plugin
         bool on = false;
         double phase = 0.0;
         double tuning = 0.0; // semitones, from note expressions
+        double hz = 0.0;     // its note's frequency (12-TET, or the MTS-ESP master's)
         int key = 0;
         int channel = 0;
         std::int32_t id = -1;
@@ -111,6 +209,7 @@ struct Plugin
     Voice voices[16][128]{};
 
     bool guiCreated = false;
+    bool mtsClient = false; // registered with libMTS
 
     // Latency effect
     int activeLatency = 0;
@@ -376,9 +475,19 @@ bool pluginInit(const clap_plugin_t* p)
     s.hostParams = static_cast<const clap_host_params_t*>(s.host->get_extension(s.host, CLAP_EXT_PARAMS));
     s.hostState = static_cast<const clap_host_state_t*>(s.host->get_extension(s.host, CLAP_EXT_STATE));
     s.hostLatency = static_cast<const clap_host_latency_t*>(s.host->get_extension(s.host, CLAP_EXT_LATENCY));
+    if (const auto* mts = MtsClient::get(); mts != nullptr && s.kind == Kind::synth)
+    {
+        mts->registerClient();
+        s.mtsClient = true;
+    }
     return true;
 }
-void pluginDestroy(const clap_plugin_t* p) { delete &self(p); }
+void pluginDestroy(const clap_plugin_t* p)
+{
+    if (self(p).mtsClient)
+        MtsClient::get()->deregisterClient();
+    delete &self(p);
+}
 bool pluginActivate(const clap_plugin_t* p, double rate, std::uint32_t, std::uint32_t)
 {
     auto& s = self(p);
@@ -488,6 +597,10 @@ void handleNote(Plugin& s, const clap_event_header_t* h, const clap_output_event
     auto& v = s.voices[channel][key];
     if (type == 0x90)
     {
+        const auto* mts = s.mtsClient ? MtsClient::get() : nullptr;
+        if (mts != nullptr && mts->shouldFilter(key, channel))
+            return; // the master's tuning doesn't play it
+        v.hz = mts != nullptr ? mts->hz(key, channel) : 440.0 * std::pow(2.0, (key - 69) / 12.0);
         if (!v.on)
             v.phase = 0.0;
         v.on = true;
@@ -551,7 +664,7 @@ clap_process_status pluginProcess(const clap_plugin_t* p, const clap_process_t* 
             {
                 if (!v.on)
                     continue;
-                const double hz = 440.0 * std::pow(2.0, (v.key - 69 + v.tuning) / 12.0);
+                const double hz = v.hz * std::pow(2.0, v.tuning / 12.0);
                 const double step = hz / s.rate;
                 for (std::uint32_t i = 0; i < n; ++i)
                 {

@@ -203,7 +203,12 @@ private:
         }
         m.addSeparator();
         const bool mpe = host->mpeOf(node);
-        m.addItem("MPE", true, mpe, [safe = juce::Component::SafePointer<PluginBody>(this), mpe] {
+        const auto* live = host->liveDevice(id());
+        const int mtsChannel = live != nullptr ? live->mtsChannel() : -1;
+        // Tracks with different tunings: MTS-ESP gives this one's a channel, which MPE would need.
+        const auto mpeName = mtsChannel >= 0 ? "MPE (off while its tuning is on MTS-ESP channel " + juce::String(mtsChannel + 1) + ")"
+                                             : juce::String("MPE");
+        m.addItem(mpeName, true, mpe, [safe = juce::Component::SafePointer<PluginBody>(this), mpe] {
             if (safe != nullptr && safe->context.plugins != nullptr)
                 safe->context.plugins->setMpe(safe->node, !mpe);
         });

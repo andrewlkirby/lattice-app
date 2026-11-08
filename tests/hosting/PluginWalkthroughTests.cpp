@@ -9,6 +9,7 @@
 #include "support/Snapshots.h"
 #include "support/TestDevices.h"
 #include "ui/prefs/AppSettings.h"
+#include "ui/prefs/PreferencesView.h"
 #include "ui/shell/MainShell.h"
 
 #include <catch2/catch_approx.hpp>
@@ -366,4 +367,45 @@ TEST_CASE("Walkthrough: 6b, a real plugin on a track, its panel and its window",
     REQUIRE(back != nullptr);
     CHECK(back->plugin().getParameters()[0]->getValue() == Catch::Approx(0.123f).margin(0.001f));
     file.deleteFile();
+}
+
+TEST_CASE("Walkthrough: 6c, plugins in Colundi through MTS-ESP, and the exports", "[.walkthrough][plugins][mts]")
+{
+    Walk w;
+    w.session.set().setTrackTuning(0, TuningRegistry::colundiId);
+    w.session.flush();
+
+    // Where a person turns it on, and what it says on this machine.
+    w.shell->tuningMaster().setEnabled(true);
+    {
+        ui::PreferencesView prefs(w.shell->preferencesContext());
+        prefs.setSize(1000, 760);
+        prefs.show(ui::PreferencesView::Page::tuning);
+        WARN("MTS-ESP: " << w.shell->tuningMaster().statusText());
+        w.shot(prefs, "6c-preferences");
+    }
+    // The Tuning view, with Export.
+    w.shell->selection().set({ui::SessionSelection::Kind::track, 0, 0});
+    w.shell->showTuningView();
+    w.shell->tuningView().flushUpdates();
+    w.shot(*w.shell, "6c-tuning-view");
+
+    // A real plugin, if MTS-ESP is installed and a folder of plugins is named.
+    const juce::File folder(juce::SystemStats::getEnvironmentVariable("LATTICE_PLUGIN_FOLDER", {}));
+    if (w.shell->tuningMaster().status() != mts::Master::Status::active || !folder.isDirectory())
+    {
+        WARN("For the plugin part: install MTS-ESP (MTS-ESP Mini) and set LATTICE_PLUGIN_FOLDER");
+        return;
+    }
+    hosting::PluginSettings s;
+    s.useDefaultFolders = false;
+    s.extraFolders = {folder.getFullPathName()};
+    w.shell->plugins().setSettings(s, false);
+    w.shell->startPluginScan();
+    w.settle();
+    const auto name = juce::SystemStats::getEnvironmentVariable("LATTICE_WALKTHROUGH_PLUGIN", "Surge XT");
+    CHECK(insertPlugin(w, name).isValid());
+    w.shell->pluginTunings().update();
+    WARN(name << ": " << w.shell->tuningMaster().statusText());
+    CHECK(w.shell->tuningMaster().clients() >= 1);
 }

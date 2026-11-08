@@ -24,7 +24,7 @@ enum class Kind
     device = 0, // a built-in device type
     preset = 1, // a factory preset (built in) or a .lpreset file
     sample = 2, // an audio file
-    tuning = 3, // a built-in tuning, or a .scl or Colundi-format .txt file
+    tuning = 3, // a built-in tuning, or a .scl, .tun or Colundi-format .txt file
     folder = 4, // a folder inside a place, or a group of plugins
     plugin = 5, // a plugin found by the plugin scan (docs/07-m6-plugins-external.md, 6a)
 };

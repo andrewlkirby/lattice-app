@@ -55,7 +55,8 @@ const std::vector<FindIndex::Setting>& FindIndex::settings()
         {"Plugin Scan", "Plugins", 5},
         {"Multi-threaded Audio", "CPU", 6},    {"Worker Threads", "CPU", 6},
         {"New Tracks' Tuning", "Tuning", 7},   {"Default Tuning", "Tuning", 7},
-        {"New Tracks' High Notes", "Tuning", 7}, {"Computer Keyboard Keys", "Computer Keyboard", 8},
+        {"New Tracks' High Notes", "Tuning", 7}, {"MTS-ESP", "Tuning", 7},
+        {"Tune Plugins", "Tuning", 7},         {"Computer Keyboard Keys", "Computer Keyboard", 8},
         {"Note Keys", "Computer Keyboard", 8}, {"Range Step", "Computer Keyboard", 8},
         {"Shortcuts", "Shortcuts", 9},         {"Key Commands", "Shortcuts", 9},
     };

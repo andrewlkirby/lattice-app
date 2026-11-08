@@ -202,6 +202,8 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
     pluginHost->windows().setAlwaysOnTop(settings.getBoolValue(prefs::pluginWindowsOnTopKey, false));
     pluginHost->windows().onAlwaysOnTopChanged = [this](bool on) { settings.setValue(prefs::pluginWindowsOnTopKey, on); };
     deviceSpecs.setDescriber([host = pluginHost.get()](const juce::ValueTree& device) { return host->describe(device); });
+    mtsMaster = std::make_unique<mts::Master>();
+    pluginTuning = std::make_unique<hosting::PluginTuning>(session, *pluginHost, *mtsMaster);
     deviceShared = std::make_unique<DeviceContext>(DeviceContext{.session = session,
                                                                  .feed = stateFeed,
                                                                  .specs = deviceSpecs,
@@ -252,6 +254,16 @@ MainShell::MainShell(SessionController& s, AudioEngine& e, juce::PropertiesFile&
     tuningActions.ask = [this](const juce::String& title, const juce::String& message, const juce::String& initial,
                                std::function<void(const juce::String&)> answer) { askText(title, message, initial, std::move(answer)); };
     tuningActions.loadFile = [this](int track) { chooseTuningFile(track); };
+    tuningActions.chooseSaveFile = [this](const juce::String& title, const juce::String& pattern, const juce::File& suggested,
+                                          std::function<void(const juce::File&)> chosen) {
+        chooser = std::make_unique<juce::FileChooser>(title, suggested, pattern);
+        chooser->launchAsync(juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
+                             [this, chosen = std::move(chosen), before = focusToRestore()](const juce::FileChooser& fc) {
+                                 if (fc.getResult() != juce::File())
+                                     chosen(fc.getResult());
+                                 restoreFocusLater(before);
+                             });
+    };
     tuningActions.userTunings = userTuningsFolder();
     tunings_ = std::make_unique<TuningView>(session, tunings, selected, std::move(tuningActions));
     detail = std::make_unique<DetailView>(*clip, *devices, *tunings_);
@@ -820,6 +832,7 @@ PreferencesView::Context MainShell::preferencesContext()
                                .keyboard = computerKeyboard,
                                .audioError = audioError};
     c.plugins = pluginLibrary.get();
+    c.tuningMaster = mtsMaster.get();
     c.setTheme = [this](const Theme& t) { setTheme(t); };
     c.controllersChanged = [this] { applyVirtualPushSettings(); };
     c.theme = [this]() -> const Theme& { return theme(); };
@@ -1021,7 +1034,7 @@ void MainShell::chooseTuningFile(int track)
         return;
     const auto trackId = session.set().trackId(track);
     chooser = std::make_unique<juce::FileChooser>("Load a tuning file", juce::File::getSpecialLocation(juce::File::userMusicDirectory),
-                                                  "*.scl;*.txt");
+                                                  "*.scl;*.tun;*.txt");
     chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                          [this, trackId, before = focusToRestore()](const juce::FileChooser& fc) {
                              // By ID: the set may have changed while the dialog was open.

@@ -169,9 +169,20 @@ HostedPluginDevice::~HostedPluginDevice()
 
 void HostedPluginDevice::setMpe(bool on) noexcept
 {
-    mpeOn.store(on, std::memory_order_relaxed);
+    mpeWanted = on;
+    const bool effective = on && mtsOn.load(std::memory_order_relaxed) < 0;
+    mpeOn.store(effective, std::memory_order_relaxed);
     if (auto* clap = dynamic_cast<ClapPluginInstance*>(instance.get()))
-        clap->setMpeInput(on);
+        clap->setMpeInput(effective);
+}
+
+void HostedPluginDevice::setMtsChannel(int channel) noexcept
+{
+    channel = channel >= 0 && channel < 16 ? channel : -1;
+    if (mtsOn.exchange(channel, std::memory_order_relaxed) == channel)
+        return;
+    notesOff.store(true, std::memory_order_relaxed); // what sounds is on the old channel
+    setMpe(mpeWanted);
 }
 
 juce::MemoryBlock HostedPluginDevice::saveState()
@@ -210,7 +221,7 @@ void HostedPluginDevice::stateChanged(const juce::ValueTree& state)
 {
     // Its own state is the host's to restore (once, when the device is made); MPE follows STATE.
     const int wanted = state.getProperty(pluginTypes::mpe, -1);
-    setMpe(wanted < 0 ? mpeDefault : wanted == 1);
+    setMpe(wanted < 0 ? mpeDefault : wanted == 1); // as asked; an MTS-ESP channel may hold it off
 }
 
 int HostedPluginDevice::latencyReserve() const noexcept
@@ -329,20 +340,22 @@ void HostedPluginDevice::process(DeviceBuffers& io, const DeviceTimeInfo& time) 
     if (io.midiIn != nullptr)
     {
         const bool perNote = mpeOn.load(std::memory_order_relaxed);
+        const int mts = mtsOn.load(std::memory_order_relaxed);
         for (const auto& e : *io.midiIn)
         {
             if (e.size == 0 || e.size > 3)
                 continue;
+            std::uint8_t bytes[3]{e.bytes[0], e.size > 1 ? e.bytes[1] : std::uint8_t{0}, e.size > 2 ? e.bytes[2] : std::uint8_t{0}};
             if (!perNote && (e.flags & TimedMidi::perNote) != 0)
             {
                 const int type = e.bytes[0] & 0xf0;
                 if (type != 0x90 && type != 0x80)
                     continue; // a member channel's own bend, pressure or timbre: not for a plugin without MPE
-                std::uint8_t bytes[3]{static_cast<std::uint8_t>(type), e.bytes[1], e.bytes[2]};
-                midi.addEvent(bytes, 3, juce::jlimit(0, n - 1, e.sampleOffset));
-                continue;
+                bytes[0] = static_cast<std::uint8_t>(type);
             }
-            midi.addEvent(e.bytes, e.size, juce::jlimit(0, n - 1, e.sampleOffset));
+            if (mts >= 0 && bytes[0] >= 0x80 && bytes[0] < 0xf0)
+                bytes[0] = static_cast<std::uint8_t>((bytes[0] & 0xf0) | mts); // its tuning's channel
+            midi.addEvent(bytes, e.size, juce::jlimit(0, n - 1, e.sampleOffset));
         }
     }
 

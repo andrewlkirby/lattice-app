@@ -52,6 +52,7 @@ constexpr auto pluginFormatKey = "plugins.preferredFormat";        // a format's
 constexpr auto pluginGroupingKey = "plugins.grouping";             // 0 vendor, 1 format, 2 type
 constexpr auto pluginPagesKey = "plugins.pages.";                    // + a plugin's key: its devices' default pages
 constexpr auto pluginWindowsOnTopKey = "plugins.windowsOnTop";      // bool: plugin windows stay above the app
+constexpr auto mtsEspMasterKey = "tuning.mtsEspMaster";            // bool (default on): Lattice is the MTS-ESP master
 
 constexpr double minZoom = 0.5, maxZoom = 2.5;
 

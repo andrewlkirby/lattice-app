@@ -57,8 +57,10 @@ add_executable(lattice_tests
     platform/PathsTests.cpp
     resources/ResourceTests.cpp
     tuning/ColundiParserTests.cpp
+    tuning/MtsEspTests.cpp
     tuning/ScalaAndRegistryTests.cpp
     tuning/TuningEditsTests.cpp
+    tuning/TuningExportTests.cpp
     tuning/TrackTuningTests.cpp
     ui/BrowserTests.cpp
     ui/ClipViewTests.cpp
@@ -129,6 +131,26 @@ function(lattice_test_plugin target kind name source)
 endfunction()
 
 lattice_test_plugin(test_clap CLAP "Lattice Test Clap" fixtures/plugins/TestClap.cpp)
+target_link_libraries(test_clap PRIVATE ${CMAKE_DL_LIBS}) # it loads libMTS as an MTS-ESP client
+
+# MTS-ESP (docs/07-m6-plugins-external.md, 6c): ODDSound's SDK (0BSD), for its copy of libMTS. The
+# tests' master and the test plugin's client load that copy, so they run whether MTS-ESP is
+# installed or not; the app only ever loads the installed one.
+CPMAddPackage(
+    NAME mtsesp
+    GITHUB_REPOSITORY ODDSound/MTS-ESP
+    GIT_TAG f214739b8832e7f297cb9970d0c0efbf783f1462
+    DOWNLOAD_ONLY YES)
+if(WIN32)
+    set(_lattice_libmts "${mtsesp_SOURCE_DIR}/libMTS/Win/64bit/LIBMTS.dll")
+elseif(APPLE)
+    set(_lattice_libmts "${mtsesp_SOURCE_DIR}/libMTS/Mac/x86_64_ARM/libMTS.dylib")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+    set(_lattice_libmts "${mtsesp_SOURCE_DIR}/libMTS/Linux/arm64/libMTS.so")
+else()
+    set(_lattice_libmts "${mtsesp_SOURCE_DIR}/libMTS/Linux/x86_64/libMTS.so")
+endif()
+target_compile_definitions(lattice_tests PRIVATE "LATTICE_TEST_MTS_LIBRARY=\"${_lattice_libmts}\"")
 lattice_test_plugin(crash_clap CLAP "Lattice Crash Clap" fixtures/plugins/BrokenPlugin.cpp LATTICE_BROKEN_CLAP LATTICE_BROKEN_CRASH)
 lattice_test_plugin(hang_clap CLAP "Lattice Hang Clap" fixtures/plugins/BrokenPlugin.cpp LATTICE_BROKEN_CLAP LATTICE_BROKEN_HANG)
 lattice_test_plugin(crash_vst3 VST3 "Lattice Crash VST3" fixtures/plugins/BrokenPlugin.cpp LATTICE_BROKEN_VST3 LATTICE_BROKEN_CRASH)

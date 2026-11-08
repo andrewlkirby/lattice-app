@@ -276,6 +276,7 @@ add_library(lattice_core STATIC
     src/hosting/PluginFormats.cpp
     src/hosting/PluginHost.cpp
     src/hosting/PluginLibrary.cpp
+    src/hosting/PluginTuning.cpp
     src/hosting/PluginWindows.cpp
     src/hosting/clap/ClapEditor.cpp
     src/hosting/clap/ClapFormat.cpp
@@ -295,9 +296,12 @@ add_library(lattice_core STATIC
     src/tuning/TuningEdits.cpp
     src/tuning/TuningRegistry.cpp
     src/tuning/TuningTable.cpp
+    src/tuning/external/MtsEsp.cpp
+    src/tuning/external/TuningExport.cpp
     src/tuning/parsers/ColundiTextParser.cpp
     src/tuning/parsers/NumberParsing.cpp
-    src/tuning/parsers/ScalaParser.cpp)
+    src/tuning/parsers/ScalaParser.cpp
+    src/tuning/parsers/TunParser.cpp)
 if(WIN32)
     target_sources(lattice_core PRIVATE src/platform/windows/PlatformWindows.cpp src/platform/windows/FileWatcherWindows.cpp)
     target_link_libraries(lattice_core PRIVATE avrt) # MMCSS for the audio worker threads

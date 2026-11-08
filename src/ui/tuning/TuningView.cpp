@@ -3,6 +3,7 @@
 #include "core/model/UndoNames.h"
 
 #include "tuning/TrackTuning.h"
+#include "tuning/external/TuningExport.h"
 #include "tuning/parsers/ColundiTextParser.h"
 #include "tuning/parsers/NumberParsing.h"
 #include "ui/theme/LatticeLookAndFeel.h"
@@ -416,7 +417,7 @@ TuningView::TuningView(SessionController& s, TuningRegistry& tunings, SessionSel
     };
     button(duplicateBtn, "Makes a copy of this tuning to edit; the track plays the copy while it's open.", [this] { duplicate(); });
     button(editBtn, "Edits this tuning (one you saved from the editor).", [this] { editInPlace(); });
-    button(loadBtn, "Loads a .scl or Colundi .txt tuning file for this track.", [this] {
+    button(loadBtn, "Loads a .scl, .tun or Colundi .txt tuning file for this track.", [this] {
         if (actions.loadFile && track() >= 0)
             actions.loadFile(track());
     });
@@ -443,6 +444,8 @@ TuningView::TuningView(SessionController& s, TuningRegistry& tunings, SessionSel
     button(keepAnchorsBtn, "Keeps only the anchors (whole multiples of the base), on consecutive keys around middle C.",
            [this] { keepAnchors(); });
     button(copyBtn, "Copies the rows shown (or the selected ones) as tab-separated text.", [this] { copyToClipboard(); });
+    button(exportBtn, "Saves this tuning for synths outside Lattice: as a .tun or .scl + .kbm file, or as an MTS bulk dump (.syx).",
+           [this] { showExportMenu(); });
 
     filterBox.setTitle("Filter");
     filterBox.setTextToShowWhenEmpty("Filter: index, Hz or label", themeOf(*this).textDim);
@@ -1053,6 +1056,67 @@ void TuningView::updateButtons()
         b->setVisible(editing);
     saveBtn.setEnabled(editing && problems().ok());
     keepSelectedBtn.setEnabled(editing && !selectedEntries().empty());
+    exportBtn.setEnabled(shown() != nullptr);
+}
+
+// --- Exporting -----------------------------------------------------------------------------------
+
+bool TuningView::exportTo(ExportFormat format, const juce::File& file)
+{
+    const auto tuning = shown();
+    if (tuning == nullptr)
+        return false;
+    const auto fail = [this](const juce::String& why) {
+        if (actions.confirm)
+            actions.confirm("Export", why, {}, nullptr);
+        return false;
+    };
+    switch (format)
+    {
+    case ExportFormat::tun:
+        if (!file.withFileExtension("tun").replaceWithText(tuning_export::toTun(*tuning)))
+            return fail("Couldn't write " + file.getFullPathName() + ".");
+        return true;
+    case ExportFormat::scala:
+    {
+        const auto files = tuning_export::toScala(*tuning);
+        if (!files)
+            return fail("A Scala scale needs two mapped notes, the last above the first.");
+        if (!file.withFileExtension("scl").replaceWithText(files->scl) || !file.withFileExtension("kbm").replaceWithText(files->kbm))
+            return fail("Couldn't write " + file.withFileExtension("scl").getFullPathName() + ".");
+        return true;
+    }
+    case ExportFormat::mtsDump:
+    {
+        const auto bytes = tuning_export::bulkDump(*tuning);
+        if (!file.withFileExtension("syx").replaceWithData(bytes.data(), bytes.size()))
+            return fail("Couldn't write " + file.getFullPathName() + ".");
+        return true;
+    }
+    }
+    return false;
+}
+
+void TuningView::showExportMenu()
+{
+    const auto tuning = shown();
+    if (tuning == nullptr || !actions.chooseSaveFile)
+        return;
+    const auto choose = [safe = juce::Component::SafePointer<TuningView>(this), name = juce::File::createLegalFileName(tuning->name)](
+                            ExportFormat format, const juce::String& title, const juce::String& extension) {
+        if (safe == nullptr)
+            return;
+        const auto suggested = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile(name + "." + extension);
+        safe->actions.chooseSaveFile(title, "*." + extension, suggested, [safe, format](const juce::File& file) {
+            if (safe != nullptr)
+                safe->exportTo(format, file);
+        });
+    };
+    juce::PopupMenu m;
+    m.addItem("AnaMark .tun (every note's exact frequency)...", [choose] { choose(ExportFormat::tun, "Export as .tun", "tun"); });
+    m.addItem("Scala .scl + .kbm...", [choose] { choose(ExportFormat::scala, "Export as .scl (with its .kbm)", "scl"); });
+    m.addItem("MTS Bulk Dump .syx...", [choose] { choose(ExportFormat::mtsDump, "Export as an MTS bulk dump", "syx"); });
+    m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&exportBtn));
 }
 
 // --- Commands ------------------------------------------------------------------------------------
@@ -1132,6 +1196,7 @@ void TuningView::resized()
     anchorsToggle.setBounds(take(tools, 3.0f));
     playableToggle.setBounds(take(tools, 3.0f));
     copyBtn.setBounds(take(tools, 2.5f));
+    exportBtn.setBounds(take(tools, 3.0f));
     if (editing)
     {
         tools.removeFromLeft(gap * 2);

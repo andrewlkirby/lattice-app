@@ -68,7 +68,14 @@ public:
         takes its own note events, as note expressions). Off: notes come on channel 1, with no
         per-note bend, pressure or timbre. */
     void setMpe(bool on) noexcept;
+    /** Whether it gets MPE now: as set, unless it has an MTS-ESP channel. */
     bool mpe() const noexcept { return mpeOn.load(std::memory_order_relaxed); }
+    /** Message thread: the MIDI channel (0..15) of its track's tuning while the MTS-ESP master gives
+        each tuning a channel (docs/07-m6-plugins-external.md, 6c), or -1. With one, every note and
+        controller it gets is on that channel, and MPE is off (it needs the channels); a change
+        ends the notes sounding, which were on the old channel. */
+    void setMtsChannel(int channel) noexcept;
+    int mtsChannel() const noexcept { return mtsOn.load(std::memory_order_relaxed); }
     /** Whether it gets MPE when its STATE doesn't say (what its scan found). */
     void setMpeDefault(bool on) { mpeDefault = on; }
     /** Message thread: a latency the plugin reported (takeLatencyChange()), for delay compensation.
@@ -174,7 +181,8 @@ private:
     std::vector<int> mainIn, sideIn, mainOut; // channel indices in `buffer`
     DeviceTimeInfo blockTime;                 // for the play head, during process()
     std::atomic<bool> mpeOn{false}, notesOff{false};
-    bool mpeDefault = false;
+    std::atomic<int> mtsOn{-1};
+    bool mpeWanted = false, mpeDefault = false;
     std::atomic<std::uint64_t> allocations{0};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HostedPluginDevice)

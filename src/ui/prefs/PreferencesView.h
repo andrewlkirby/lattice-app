@@ -20,6 +20,10 @@ namespace lattice::hosting
 {
 class PluginLibrary;
 }
+namespace lattice::mts
+{
+class Master;
+}
 
 namespace lattice::ui
 {
@@ -66,6 +70,7 @@ public:
         juce::File themesFolder = {};
         SurfaceManager* surfaces = nullptr; // the control surfaces (none in some tests)
         hosting::PluginLibrary* plugins = nullptr; // the plugin scan (none in some tests)
+        mts::Master* tuningMaster = nullptr;       // MTS-ESP (none in some tests)
         juce::String audioError = {}; // why the audio device didn't open, if it didn't
     };
 

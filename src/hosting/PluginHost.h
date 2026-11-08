@@ -96,6 +96,12 @@ public:
     /** Every parameter the live plugin has (for adding to its pages), or empty. */
     std::vector<ParameterSpec> allParameters(const juce::ValueTree& device);
     HostedPluginDevice* liveDevice(std::int64_t deviceId) const;
+    /** Every loaded plugin's device and its node (which may have left the set: undo can bring it back). */
+    void forEachLive(const std::function<void(HostedPluginDevice&, const juce::ValueTree& node)>& visit) const
+    {
+        for (const auto& [id, l] : live)
+            visit(*l.device, l.node);
+    }
 
     /** Configure mode: parameters touched in the plugin's window join its pages. */
     void setConfiguring(std::int64_t deviceId, bool on);

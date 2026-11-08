@@ -374,6 +374,40 @@ The checks:
   - Each frequency is encoded as a semitone plus a 14-bit fraction: about 0.006 cent resolution.
   - Can be saved as a `.syx` file or sent straight to a hardware port (6d).
 
+### As built (6c, 2026-11-08)
+- **The SDK and the library.**
+  - ODDSound's MTS-ESP SDK is 0BSD-licensed, so it can ship. Its repository includes libMTS for Windows, macOS and Linux (x86_64, arm64, arm32): Linux gets MTS-ESP too, so no CLAP-only path is needed there.
+  - **Lattice loads libMTS itself** (`tuning/external/MtsEsp`, `mts::Library`) instead of compiling `libMTSMaster.cpp`, which can only look in the system folder. The functions are the same exports, called the same way.
+  - **The app** only ever loads the installed copy, where every client looks. **The tests** load the SDK's copy (fetched by CPM for the tests only), so they run on both OSes whether MTS-ESP is installed or not.
+  - A loaded library is never unloaded, because clients keep pointers into it.
+- **The master** (`mts::Master`):
+  - It's **off in the shell** and turned on by the app, from Preferences → Tuning → MTS-ESP (on by default). So a test's shell never takes the machine's master.
+  - **Its status** is shown there: off, not installed (with where MTS-ESP Mini puts the library), another master, or active with the number of plugins connected.
+  - **Another master** is left alone. It tries again every two seconds, so it takes over when the other one goes, and finds MTS-ESP once it's installed. A **Reset MTS-ESP** button, shown only while another master seems to be there, calls `MTS_Reinitialize`, for a master that crashed without letting go.
+  - **Filtered notes** are sent at 12-TET's pitch and filtered, so a client that ignores filtering still gets a sensible number.
+- **What's sent** (`hosting::PluginTuning`, 30 times a second):
+  - The tuning of each **track with a plugin instrument**: what the track's own instruments play, `TrackTuning::hzFor(0..127)`. That includes the note offset and Fold Down, with Mute's notes filtered at the current sample rate. Plugin effects and MIDI effects don't play notes and are left alone.
+  - A track's 128 frequencies are worked out again only when its table, offset, policy or sample rate changes. A tick is otherwise a walk over the plugins. A tuning change reaches the plugins within a tick (33 ms).
+  - **One tuning in use:** the master table, and no channels.
+  - **Several:** each gets a channel. A tuning keeps its channel while it's in use, so held notes don't move. The master table is the first one's, for clients that don't ask by channel. Past 16 the rest get none, and the status says how many.
+  - **On a channel**, `HostedPluginDevice::setMtsChannel` moves every channel message the plugin gets onto that channel, on the audio thread. MPE is held off while it has one, and comes back as it was asked for when it doesn't. A change ends the notes sounding, since they were on the old channel. The Pages menu's MPE item says why it's off.
+  - Channels are only given while Lattice is the master. Otherwise plugins get their notes as before.
+- **CLAP tuning:** the extension is still a draft in CLAP 1.2.9 (`clap.tuning.draft/2`), so it isn't used, as planned.
+- **Exports** (`tuning/external/TuningExport`), from **Export...** in the Tuning view (the tuning shown, or the copy being edited):
+  - `.tun` writes both `[Exact Tuning]` (decimal cents above its BaseFreq, to ten decimals) and `[Tuning]` (whole cents, for version 1 readers).
+  - `.scl` + `.kbm` writes one step per key from the first mapped note to the last. For Colundi that's 127 steps with the period `hz[127]/hz[0]`, as planned. Unmapped keys are `x` in the `.kbm`.
+  - An MTS bulk dump goes to `.syx`. `noteChanges()` builds the real-time single-note messages, split at 127 notes, for 6d's hardware ports.
+  - **Notes a format can't hold:**
+    - `.tun` can't leave a note out, so an unmapped note is written between its neighbours.
+    - MTS can't reach above note 127 + 16382/16384 (about 13,290 Hz), so Colundi's top notes, and unmapped ones, are written as "no change" (7F 7F 7F).
+  - **Importing `.tun`** was added (`TunParser`), for the read-back tests and because it's the format other tools write. The tuning loader, the browser's Tunings and the file chooser take it.
+- **Tests:**
+  - **Exports:** `.tun` and `.scl` + `.kbm` read back within 1e-6 cents (Colundi, 12-TET, and a subset with unmapped notes).
+  - **MTS bytes:** checked against the standard, including fraction rounding, carrying into the next semitone, the reserved top value, and the dump's layout and checksum.
+  - **The master:** a client reads back exactly the doubles sent (Colundi with Mute's notes filtered, 12-TET, a user tuning, a note offset). Channels are given, kept and freed as tunings come and go; over 16 get none; another master is left alone and then taken over.
+  - **End to end:** the test CLAP synth is now an MTS-ESP client when a test names libMTS. Two tracks, Colundi and 12-TET, each play their own pitch, measured from the audio within 0.5 cents. With one tuning they share the master table, and a note the track mutes doesn't sound.
+  - **Taking turns:** a machine has one master (libMTS shares it between processes), so MTS-ESP's tests take turns through a lock between processes. They stop with a warning if something else is the master.
+
 ## 6d: MIDI out, retuning hardware, External Instrument — `src/engine/midiout/`, `src/devices/external/`
 
 ### Sending MIDI to hardware with accurate timing

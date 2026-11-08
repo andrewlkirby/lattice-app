@@ -7,6 +7,7 @@
 #include "devices/samples/SamplePool.h"
 #include "tuning/parsers/ColundiTextParser.h"
 #include "tuning/parsers/ScalaParser.h"
+#include "tuning/parsers/TunParser.h"
 
 #include <map>
 
@@ -410,6 +411,16 @@ bool LibraryIndex::describe(const juce::File& file, const juce::File& place, Ite
         out.detail = juce::String(static_cast<int>(scale.scale->ratios.size())) + " notes";
         if (scale.scale->description.isNotEmpty())
             out.detail << " \xc2\xb7 " << scale.scale->description;
+        return true;
+    }
+    if (file.hasFileExtension("tun"))
+    {
+        const auto tuning = TunParser::parse(file.loadFileAsString(), {}, file.getFileNameWithoutExtension(), {});
+        if (!tuning.ok())
+            return false;
+        out.kind = Kind::tuning;
+        out.category = category::tunings;
+        out.detail = "128 notes \xc2\xb7 AnaMark .tun";
         return true;
     }
     if (file.hasFileExtension("txt") && out.size < 256 * 1024)

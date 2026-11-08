@@ -13,6 +13,7 @@
 #include "devices/racks/RackEditing.h"
 #include "support/OfflineRenderer.h"
 #include "support/TestDevices.h"
+#include "ui/prefs/AppSettings.h"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -30,6 +31,7 @@ struct App
         juce::PropertiesFile::Options options;
         options.applicationName = "LatticeTests";
         settings = std::make_unique<juce::PropertiesFile>(settingsFile, options);
+        settings->setValue(ui::prefs::mtsEspMasterKey, false); // not the machine's MTS-ESP master
         session.newSet(4, 8); // as File > New: track 1 armed
         for (int t = 0; t < 4; ++t)
         {

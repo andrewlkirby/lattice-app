@@ -217,6 +217,21 @@ TEST_CASE("Preferences: every tab opens; the tabs apply what's chosen", "[ui][pr
         f.session.newSet(1, 1);
         CHECK(f.session.set().track(0)[ids::tuningId].toString() == TuningRegistry::colundiId);
     }
+    SECTION("Tuning: the MTS-ESP switch, saved, and its status")
+    {
+        v->show(PreferencesView::Page::tuning);
+        auto* mts = childTitled<juce::ToggleButton>(*v->pageComponent(), "MTS-ESP");
+        REQUIRE(mts != nullptr);
+        CHECK_FALSE(mts->getToggleState()); // the shell's master starts off; the app turns it on
+        // On: whatever this machine has (installed or not, another master or not), it says so.
+        mts->setToggleState(true, juce::sendNotificationSync);
+        CHECK(f.props->getBoolValue(prefs::mtsEspMasterKey, false));
+        CHECK(f.shell->tuningMaster().isEnabled());
+        CHECK(f.shell->tuningMaster().status() != mts::Master::Status::off);
+        mts->setToggleState(false, juce::sendNotificationSync);
+        CHECK_FALSE(f.props->getBoolValue(prefs::mtsEspMasterKey, true));
+        CHECK(f.shell->tuningMaster().status() == mts::Master::Status::off);
+    }
     SECTION("Plugins: the grouping, the format and the folders are saved and given to the scan")
     {
         v->show(PreferencesView::Page::plugins);

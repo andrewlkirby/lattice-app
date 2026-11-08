@@ -7,9 +7,11 @@
 #include "devices/ChainEditing.h"
 #include "devices/framework/ParameterPager.h"
 #include "hosting/PluginHost.h"
+#include "hosting/PluginTuning.h"
 #include "hosting/PluginWindows.h"
 #include "hosting/clap/ClapFormat.h"
 #include "hosting/clap/ClapInstance.h"
+#include "support/MtsEspSupport.h"
 #include "support/OfflineRenderer.h"
 #include "support/Spectrum.h"
 #include "support/TestDevices.h"
@@ -401,6 +403,101 @@ TEST_CASE("A plugin's window closed with its close button opens again", "[hostin
         CHECK(pumpUntil([&] { return !windows.isOpen(id); }, 5.0));
         CHECK(hosted->plugin().getActiveEditor() == nullptr);
     }
+}
+
+// --- Tuning through MTS-ESP (6c) -----------------------------------------------------------------------------
+
+TEST_CASE("Plugins play their tracks' tunings through MTS-ESP, a channel each when they differ", "[hosting][plugins][mts]")
+{
+    test::MtsEspTurn turn; // before the plugins load: the test synth becomes a client
+    if (!turn.ours())
+        return;
+    mts::Master master(test::mtsLibraryFile());
+    master.setEnabled(true);
+    REQUIRE(master.status() == mts::Master::Status::active);
+
+    Fixture f(2);
+    f.set().setTrackTuning(0, TuningRegistry::colundiId); // track 2 stays 12-TET
+    f.session.flush();
+    const auto onColundi = f.insert(clapPlugin("Lattice Test Plugin"), 0);
+    const auto onTet = f.insert(clapPlugin("Lattice Test Plugin"), 1);
+    f.load();
+    f.render(256); // the tracks' tunings, at the engine's sample rate
+    hosting::PluginTuning tunings(f.session, f.host, master);
+    tunings.update();
+    CHECK(master.clients() == 2);
+    CHECK(f.live(onColundi)->mtsChannel() == 0);
+    CHECK(f.live(onTet)->mtsChannel() == 1);
+
+    const auto colundi = TuningRegistry::makeBuiltinColundi();
+    const int note = colundi->nearestNoteTo(440.0);
+    const double expected = colundi->hz[static_cast<std::size_t>(note)];
+    REQUIRE(std::abs(1200.0 * std::log2(expected / (440.0 * std::pow(2.0, (note - 69) / 12.0)))) > 50.0); // 12-TET's would be far off
+    addClip(f.set(), 0, 0, 8.0, {NoteData{note, 0.0, 8.0, 127, false}});
+    addClip(f.set(), 1, 1, 8.0, {NoteData{note, 0.0, 8.0, 127, false}});
+    const auto measure = [&](int track, int scene, double hz) {
+        f.session.stopAllClips();
+        f.render(OfflineRenderer::samplesForBeats(1.0)); // the other track's note ends
+        f.session.launchSlot(track, scene);
+        f.renderer.captureAudio = true;
+        f.render(OfflineRenderer::samplesForBeats(0.25));
+        f.renderer.audioLeft.clear();
+        f.render(1 << 16);
+        f.renderer.captureAudio = false;
+        const auto [measured, strength] = measureFundamental(f.renderer.audioLeft, hz);
+        CHECK(std::abs(1200.0 * std::log2(measured / hz)) < 0.5);
+        CHECK(strength > 0.9);
+    };
+    SECTION("Two tunings: each plugin its own, on its own channel")
+    {
+        measure(0, 0, expected);
+        measure(1, 1, 440.0 * std::pow(2.0, (note - 69) / 12.0));
+    }
+    SECTION("One tuning: the master table, and no channels")
+    {
+        f.set().setTrackTuning(1, TuningRegistry::colundiId);
+        f.session.flush();
+        f.render(256);
+        tunings.update();
+        CHECK(f.live(onColundi)->mtsChannel() == -1);
+        CHECK(f.live(onTet)->mtsChannel() == -1);
+        measure(1, 1, expected);
+    }
+    SECTION("A note the track mutes doesn't sound")
+    {
+        int high = 127;
+        while (high > 0 && f.session.snapshots().processorFor(f.set().trackId(0))->tuning().hzFor(high) <= 0.0)
+            --high;
+        ++high; // the lowest muted note
+        REQUIRE(high <= 127);
+        addClip(f.set(), 0, 2, 8.0, {NoteData{high, 0.0, 8.0, 127, false}});
+        f.session.stopAllClips();
+        f.render(OfflineRenderer::samplesForBeats(1.0));
+        f.session.launchSlot(0, 2);
+        f.renderer.captureAudio = true;
+        f.render(1 << 14);
+        float peak = 0.0f;
+        for (const float x : f.renderer.audioLeft)
+            peak = std::max(peak, std::abs(x));
+        CHECK(peak < 1e-6f);
+    }
+}
+
+TEST_CASE("MPE is held off while a plugin's tuning has an MTS-ESP channel", "[hosting][plugins]")
+{
+    auto device = hostedAlone("Lattice Test Plugin");
+    device->setMpe(true);
+    CHECK(device->mpe());
+    device->setMtsChannel(3);
+    CHECK_FALSE(device->mpe());
+    // A member channel's note arrives on the tuning's channel, without its own bend.
+    const auto bend = static_cast<int>(8192 + 8191 / 4);
+    const std::vector<TimedMidi> notes{midi(0xe1, static_cast<std::uint8_t>(bend & 127), static_cast<std::uint8_t>(bend >> 7), TimedMidi::perNote),
+                                       midi(0x91, 69, 127, TimedMidi::perNote)};
+    const auto out = runAlone(*device, (1 << 16) + 64, notes);
+    CHECK(measureFundamental(out, 440.0).first == Catch::Approx(440.0).margin(0.5));
+    device->setMtsChannel(-1);
+    CHECK(device->mpe()); // as it was asked for
 }
 
 // --- Pages and the plugin's own changes -----------------------------------------------------------------------

@@ -420,6 +420,41 @@ TEST_CASE("Tuning commands: the view, and the editor's", "[ui][tuning]")
     CHECK(!f.view().isEditing());
 }
 
+TEST_CASE("Tuning view: Export writes the tuning shown, as .tun, .scl + .kbm, or an MTS dump", "[ui][tuning][export]")
+{
+    Fixture f;
+    auto& v = f.view();
+    const auto folder = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("lattice-export-" + juce::Uuid().toString());
+    REQUIRE(folder.createDirectory());
+    CHECK(v.exportTo(TuningView::ExportFormat::tun, folder.getChildFile("Colundi.tun")));
+    CHECK(v.exportTo(TuningView::ExportFormat::scala, folder.getChildFile("Colundi.scl")));
+    CHECK(v.exportTo(TuningView::ExportFormat::mtsDump, folder.getChildFile("Colundi.syx")));
+    CHECK(folder.getChildFile("Colundi.kbm").existsAsFile()); // beside its .scl
+    CHECK(folder.getChildFile("Colundi.syx").getSize() == 408);
+
+    // Loaded back, each is the same tuning.
+    TuningRegistry registry;
+    for (const auto* name : {"Colundi.tun", "Colundi.scl"})
+    {
+        INFO(name);
+        const auto back = registry.loadFile(folder.getChildFile(name));
+        REQUIRE(back.ok());
+        for (int n = 0; n < 128; ++n)
+            CHECK(back.table->hz[static_cast<std::size_t>(n)] == Approx(f.colundi()->hz[static_cast<std::size_t>(n)]).epsilon(1e-9));
+    }
+
+    // While editing: the copy, as it is now.
+    v.duplicate();
+    REQUIRE(v.isEditing());
+    v.multiplyBy("2");
+    CHECK(v.exportTo(TuningView::ExportFormat::tun, folder.getChildFile("Copy.tun")));
+    const auto copy = registry.loadFile(folder.getChildFile("Copy.tun"));
+    REQUIRE(copy.ok());
+    CHECK(copy.table->hz[47] == Approx(880.0).epsilon(1e-9));
+    v.discard(true);
+    folder.deleteRecursively();
+}
+
 TEST_CASE("Tuning view snapshot: in every theme at 100% and 200%", "[.ui-snapshot]")
 {
     const auto dir = juce::SystemStats::getEnvironmentVariable("LATTICE_SNAPSHOT_DIR", {});

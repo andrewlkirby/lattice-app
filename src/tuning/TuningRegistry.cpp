@@ -4,6 +4,7 @@
 #include "tuning/Tet12.h"
 #include "tuning/parsers/ColundiTextParser.h"
 #include "tuning/parsers/ScalaParser.h"
+#include "tuning/parsers/TunParser.h"
 
 #include <LatticeBinaryData.h>
 
@@ -103,9 +104,13 @@ TuningLoadResult TuningRegistry::loadFile(const juce::File& file)
         options.sourceDescription = file.getFullPathName();
         result = ColundiTextParser::parse(text, options);
     }
+    else if (ext == ".tun")
+    {
+        result = TunParser::parse(text, id, file.getFileNameWithoutExtension(), file.getFullPathName());
+    }
     else
     {
-        return TuningLoadResult::failure("Unsupported tuning file type '" + ext + "' (use .scl or .txt).");
+        return TuningLoadResult::failure("Unsupported tuning file type '" + ext + "' (use .scl, .tun or .txt).");
     }
 
     if (result.ok())
@@ -116,7 +121,7 @@ TuningLoadResult TuningRegistry::loadFile(const juce::File& file)
 int TuningRegistry::loadFolder(const juce::File& folder, juce::StringArray* errors)
 {
     int added = 0;
-    for (const auto& entry : juce::RangedDirectoryIterator(folder, false, "*.scl;*.txt"))
+    for (const auto& entry : juce::RangedDirectoryIterator(folder, false, "*.scl;*.tun;*.txt"))
     {
         const auto before = tunings.size();
         const auto result = loadFile(entry.getFile());

@@ -4,6 +4,7 @@
 #include "engine/WorkerPool.h"
 #include "hosting/PluginFormats.h"
 #include "hosting/PluginLibrary.h"
+#include "tuning/external/MtsEsp.h"
 #include "ui/controllers/LearnWizard.h"
 #include "ui/controllers/SurfaceManager.h"
 #include "ui/prefs/AppSettings.h"
@@ -1226,7 +1227,7 @@ private:
 
 // --- Tuning --------------------------------------------------------------------------------------
 
-class TuningPage final : public Page
+class TuningPage final : public Page, private juce::Timer
 {
 public:
     explicit TuningPage(Context& c) : Page("Tuning"), context(c)
@@ -1258,15 +1259,59 @@ public:
         row("New tracks' tuning", tuning, 10.0f);
         row("New tracks' high notes", highNotes, 10.0f);
         note("For tracks made from now on (and new sets). A track's own tuning is changed in its header, the mixer or the Tuning view.", 2);
+
+        if (context.tuningMaster != nullptr)
+        {
+            master.setButtonText("Tune plugins through MTS-ESP");
+            master.setToggleState(context.tuningMaster->isEnabled(), juce::dontSendNotification);
+            styleButton(master, [this] {
+                context.settings.setValue(prefs::mtsEspMasterKey, master.getToggleState());
+                context.tuningMaster->setEnabled(master.getToggleState());
+                refreshMaster();
+            });
+            reset.setButtonText("Reset MTS-ESP");
+            reset.setTooltip("If no other program is the master (Lattice closed without letting go), this frees MTS-ESP for Lattice.");
+            styleButton(reset, [this] {
+                context.tuningMaster->reset();
+                refreshMaster();
+            });
+            masterStatus.setJustificationType(juce::Justification::topLeft);
+            row("MTS-ESP", master, 12.0f);
+            row("", masterStatus);
+            rows.back().height = juce::roundToInt(themeOf(*this).controlHeight * 2.0f);
+            row("", reset, 6.0f);
+            note("Plugins that follow MTS-ESP (Surge XT, and many others) play each track's tuning: the table its own instruments play, "
+                 "with its note offset, and the notes it mutes left out. Tracks with different tunings each get a MIDI channel of their "
+                 "own (up to 16); a plugin on one gets its notes on that channel, without MPE. Other plugins can load the tuning as a "
+                 "file: Export in the Tuning view.",
+                 4);
+            refreshMaster();
+            startTimerHz(2);
+        }
     }
 
     juce::ComboBox& tuningBox() noexcept { return tuning; }
     juce::ComboBox& highNotesBox() noexcept { return highNotes; }
+    juce::ToggleButton& masterSwitch() noexcept { return master; }
+    juce::String masterText() const { return masterStatus.getText(); }
 
 private:
+    void timerCallback() override { refreshMaster(); }
+    void refreshMaster()
+    {
+        const auto* m = context.tuningMaster;
+        masterStatus.setFont(themeOf(*this).font(themeOf(*this).fontNormal));
+        masterStatus.setText(m->statusText(), juce::dontSendNotification);
+        masterStatus.setTooltip(m->statusText());
+        reset.setVisible(m->status() == mts::Master::Status::otherMaster);
+    }
+
     Context& context;
     juce::StringArray ids;
     juce::ComboBox tuning, highNotes;
+    juce::ToggleButton master;
+    juce::Label masterStatus;
+    juce::TextButton reset;
 };
 
 // --- Computer keyboard ---------------------------------------------------------------------------

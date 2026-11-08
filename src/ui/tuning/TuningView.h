@@ -60,6 +60,10 @@ public:
             ask;
         /** "Load Tuning File..." for a track. */
         std::function<void(int track)> loadFile;
+        /** A file to save to (Export): a title, a pattern and the suggested file. */
+        std::function<void(const juce::String& title, const juce::String& pattern, const juce::File& suggested,
+                           std::function<void(const juce::File&)>)>
+            chooseSaveFile;
         juce::File userTunings; // where copies are saved
     };
 
@@ -97,6 +101,19 @@ public:
     /** The rows shown (or the selected ones), with a header line, tab-separated. */
     juce::String tableText(bool selectedOnly) const;
     void copyToClipboard();
+
+    // --- Exporting (docs/07-m6-plugins-external.md, 6c) --------------------------------------------
+    enum class ExportFormat
+    {
+        tun,     // AnaMark .tun: every note's exact frequency
+        scala,   // .scl, with a .kbm of the same name beside it
+        mtsDump  // a MIDI Tuning Standard bulk dump (.syx)
+    };
+    /** Writes the tuning shown (the copy while editing) to a file in that format; a .scl gets its
+        .kbm beside it. False (and why, through confirm) if it couldn't. */
+    bool exportTo(ExportFormat format, const juce::File& file);
+    /** The Export menu: a format, then a file to save to. */
+    void showExportMenu();
 
     std::vector<int> selectedEntries() const;
     void selectEntries(const std::vector<int>& entries);
@@ -193,7 +210,7 @@ private:
     std::unique_ptr<TrackTuningControls> controls;
     juce::TextButton duplicateBtn{"Duplicate"}, editBtn{"Edit"}, loadBtn{"Load File..."}, saveBtn{"Save"}, discardBtn{"Discard"};
     juce::TextButton shiftBtn{"Shift..."}, multiplyBtn{"Multiply..."}, keepSelectedBtn{"Keep Selected"},
-        keepAnchorsBtn{"Keep Anchors"}, copyBtn{"Copy"};
+        keepAnchorsBtn{"Keep Anchors"}, copyBtn{"Copy"}, exportBtn{"Export..."};
     juce::TextEditor filterBox, nameBox;
     Toggle anchorsToggle{"Anchors"}, playableToggle{"Playable"};
     std::unique_ptr<NumberBox> periodBox, pageBox;
