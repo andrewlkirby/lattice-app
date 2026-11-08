@@ -334,6 +334,9 @@ The checks:
   - **The window** is 1597 × 995 at a display scale of 1.5 in both formats. So the CLAP scale handling gives the same size as JUCE's VST3 host.
   - **Save and reload** brings a value back exactly.
   - **For the hands-on check:** Surge's first 64 automatable parameters include many empty FX slots ("FX A1 -"). Configure, or a saved default, is the way to good pages.
+- **The user's hands-on check passed (2026-11-08)** with Surge XT, after one fix.
+  - **The fix:** a CLAP plugin's window wouldn't open again once closed. The CLAP editor never called `editorBeingDeleted()`, so JUCE still counted the first editor as active and refused another; JUCE's own hosted formats' editors make that call.
+  - **Tests for it:** the test CLAP synth has a blank window and refuses a second while the first exists. A test opens and closes it three times with its close button, and the Surge walkthrough reopens its window.
 - **Not done, and why.**
   - **Multi-out routing waits for audio tracks** (M8), since Live sends extra outputs to audio tracks. Until then, the extra outputs are turned off.
   - **Allocations inside a plugin can only be counted on Linux.** On Windows each plugin DLL has its own `operator new`, which Lattice's hooks don't see.
